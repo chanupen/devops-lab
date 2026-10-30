@@ -2,16 +2,23 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	// Ctrl-C cancels the context: the engine stops before the next step.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := newRootCmd().ExecuteContext(ctx)
+	stop()
+	if err != nil {
 		var exit exitError
 		if errors.As(err, &exit) {
 			os.Exit(exit.code)

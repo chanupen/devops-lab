@@ -9,18 +9,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
-	"github.com/chanupen/devops-lab/internal/state"
 )
 
 func newPlanCmd() *cobra.Command {
 	var (
-		cfgPath   string
-		statePath string
-		destroy   bool
-		prune     bool
-		asJSON    bool
+		flags   labFlags
+		destroy bool
+		prune   bool
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "plan",
@@ -30,20 +27,11 @@ func newPlanCmd() *cobra.Command {
 			"unless --prune is given, matching lab up --prune.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load(cfgPath)
+			cfg, store, g, err := flags.load()
 			if err != nil {
 				return err
 			}
-			if statePath == "" {
-				if statePath, err = state.DefaultPath(); err != nil {
-					return err
-				}
-			}
-			g, err := engine.NewGraph(engine.Catalog())
-			if err != nil {
-				return err
-			}
-			eng := engine.New(g, state.NewStore(statePath), nil)
+			eng := engine.New(g, store, nil)
 			var p engine.Plan
 			if destroy {
 				p, err = eng.PlanDown(cfg)
@@ -62,8 +50,7 @@ func newPlanCmd() *cobra.Command {
 			return writePlan(out, lipgloss.NewRenderer(out), p)
 		},
 	}
-	cmd.Flags().StringVar(&cfgPath, "config", "lab.yaml", "path to lab.yaml")
-	cmd.Flags().StringVar(&statePath, "state", "", "path to the state file (default ~/.lab/state.json)")
+	flags.register(cmd)
 	cmd.Flags().BoolVar(&destroy, "destroy", false, "plan lab down instead of lab up")
 	cmd.Flags().BoolVar(&prune, "prune", false, "plan destroying deployed stacks that are not in the profile")
 	cmd.MarkFlagsMutuallyExclusive("destroy", "prune")

@@ -12,14 +12,15 @@ import (
 // ObjectStore() when a stack such as secrets needs those APIs.
 func Catalog() []Stack {
 	return []Stack{
+		// Zot locally (pull-through cache), ECR in cloud. It comes before the
+		// cluster so node containerd mirrors resolve from the first pull.
+		{Name: "registry"},
 		// Provider work: kind or EKS, CNI, StorageClass.
-		{Name: "cluster"},
+		{Name: "cluster", DependsOn: []string{"registry"}},
 		// Argo CD (or Flux) via the Helm SDK. Every stack after this is a GitOps Application.
 		{Name: "gitops", DependsOn: []string{"cluster"}},
 		// metrics-server, Envoy Gateway (Gateway API), cert-manager as Argo CD apps.
 		{Name: "core", DependsOn: []string{"gitops"}},
-		// Zot locally (also a pull-through cache, so it comes up early), ECR in cloud.
-		{Name: "registry", DependsOn: []string{"cluster"}},
 		{Name: "secrets", DependsOn: []string{"gitops"}},
 		{Name: "obs", DependsOn: []string{"gitops"}},
 		{Name: "policy", DependsOn: []string{"gitops"}},
@@ -36,9 +37,9 @@ func Catalog() []Stack {
 // profileStacks lists the stacks each memory profile asks for; Order adds
 // their dependencies.
 var profileStacks = map[string][]string{
-	"minimal":  {"cluster", "gitops", "core", "registry", "sample-app"},
-	"standard": {"cluster", "gitops", "core", "registry", "secrets", "obs", "policy", "scaling", "sample-app"},
-	"full":     {"cluster", "gitops", "core", "registry", "secrets", "obs", "policy", "scaling", "ci", "chaos", "ai", "sample-app"},
+	"minimal":  {"registry", "cluster", "gitops", "core", "sample-app"},
+	"standard": {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "sample-app"},
+	"full":     {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "ci", "chaos", "ai", "sample-app"},
 }
 
 // ProfileStacks returns the stacks a profile asks for.

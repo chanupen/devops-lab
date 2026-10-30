@@ -64,8 +64,8 @@ The G14 has 22 GiB of RAM and 8 GiB of swap, so the default `standard` profile k
 
 | Profile | Stacks | Estimated RAM |
 | --- | --- | --- |
-| minimal | core, gitops, sample-app | About 4 GiB |
-| standard (default) | minimal + obs, policy, secrets, registry (Zot), LocalStack | About 10 to 12 GiB |
+| minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
+| standard (default) | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 
 Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
@@ -156,21 +156,22 @@ Keys follow k9s habits so there is nothing new to learn.
 
 ## Lab catalog
 
-The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. Core and gitops come up with `lab up`; everything else is switched on per lab.
+The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. LocalStack is not a stack: the local provider starts it when a stack such as secrets needs its APIs. `lab up` applies the profile; deployed stacks outside it are removed only with `lab up --prune`.
 
 | Stack | Installs | Depends on | Practises |
 | --- | --- | --- | --- |
-| core | Cluster (kind or EKS), CNI, metrics-server, Gateway API, cert-manager | — | Cluster bootstrap, CKA topics |
-| gitops | Argo CD (app-of-apps); Flux as the second option, chosen per lab | core | GitOps, promotion between environments |
-| registry | Zot or Harbor locally, ECR in cloud | core | Image build, scan, retag-to-promote |
-| ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry | Pipelines, shared libraries, runners on Kubernetes |
+| registry | Zot pull-through cache (Harbor optional) locally, ECR in cloud | — | Image build, scan, retag-to-promote |
+| cluster | kind (1 control plane, 2 workers, containerd mirrors to Zot) or EKS; CNI, StorageClass | registry | Cluster bootstrap, CKA topics |
+| gitops | Argo CD (app-of-apps) via the Helm SDK; Flux as the second option, chosen per lab | cluster | GitOps, promotion between environments |
+| core | metrics-server, Envoy Gateway (Gateway API), cert-manager, as Argo CD apps | gitops | Cluster add-ons, ingress, TLS |
+| ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
 | secrets | External Secrets Operator, LocalStack or AWS Secrets Manager | gitops | Secret sync, rotation, Pod Identity |
 | obs | kube-prometheus-stack, Loki, Tempo, OpenTelemetry Collector, Grafana | gitops | Metrics, logs, traces, SLOs with burn-rate alerts (Sloth) |
 | policy | Kyverno with baseline policies | gitops | Admission control, policy as code |
-| scaling | KEDA locally; Karpenter in cloud | gitops | Autoscaling, spot handling |
-| chaos | Chaos Mesh | gitops | Fault injection for drills |
-| ai | Ollama locally (G14 GPU), small model on a GPU spot node in cloud; Langfuse | obs | Model serving, LLM observability, the AI On-Call Assistant |
-| sample-app | A small multi-service demo app with a database | gitops, obs | Target for every lab and drill |
+| scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
+| chaos | Chaos Mesh | obs | Fault injection for drills |
+| ai | Ollama locally (G14 GPU), small model on a GPU spot node in cloud; Langfuse | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
+| sample-app | A small multi-service demo app with a database; ServiceMonitor only when obs is present | core, registry | Target for every lab and drill |
 
 ### Labs
 

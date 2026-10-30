@@ -36,9 +36,14 @@ type Plan struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// PlanOptions change how PlanUp treats deployed stacks outside the profile.
+// PlanOptions narrow PlanUp or change how it treats deployed stacks outside
+// the profile.
 type PlanOptions struct {
-	// Prune destroys them. Without it they are kept and the plan warns.
+	// Stacks replaces the profile with these stacks and their dependencies.
+	// Deployed stacks outside the selection are kept, without a warning.
+	Stacks []string
+	// Prune destroys deployed stacks outside the profile. Without it they are
+	// kept and the plan warns. It cannot be combined with Stacks.
 	Prune bool
 }
 
@@ -65,16 +70,22 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	if err := checkState(g, cfg, st); err != nil {
 		return Plan{}, err
 	}
+	if opts.Prune && len(opts.Stacks) > 0 {
+		return Plan{}, fmt.Errorf("prune applies to the whole profile; it cannot be combined with a stack selection")
+	}
 	want, err := ProfileStacks(cfg.Profile)
 	if err != nil {
 		return Plan{}, err
+	}
+	if len(opts.Stacks) > 0 {
+		want = opts.Stacks
 	}
 	desired, err := g.Order(want...)
 	if err != nil {
 		return Plan{}, err
 	}
 	all, _ := g.Order(g.Names()...) // NewGraph proved this has no cycles
-	var extra []string              // deployed, not in profile, dependency order
+	var extra []string              // deployed but not wanted, dependency order
 	for _, s := range all {
 		if deployed(st, s) && !slices.Contains(desired, s) {
 			extra = append(extra, s)
@@ -97,7 +108,11 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 			p.Steps = append(p.Steps, Step{s, Apply, "not deployed"})
 		}
 	}
-	if !opts.Prune && len(extra) > 0 {
+	if len(opts.Stacks) > 0 {
+		for _, s := range extra {
+			p.Steps = append(p.Steps, Step{s, Keep, "not selected"})
+		}
+	} else if !opts.Prune && len(extra) > 0 {
 		// Desired stacks never depend on extras (desired is closed under
 		// dependencies), so listing extras last keeps the order valid.
 		for _, s := range extra {

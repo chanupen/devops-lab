@@ -138,7 +138,7 @@ func TestPlanCmdJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &p); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if p.K8sVersion != "1.37" || len(p.Steps) != 5 || p.Steps[0].Stack != "cluster" || p.Steps[0].Action != "apply" {
+	if p.K8sVersion != "1.37" || len(p.Steps) != 5 || p.Steps[0].Stack != "registry" || p.Steps[0].Action != "apply" {
 		t.Errorf("unexpected plan: %+v", p)
 	}
 }
