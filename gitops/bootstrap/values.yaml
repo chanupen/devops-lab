@@ -2,6 +2,6 @@
 mode: local          # local | cloud; selects gitops/overlays/<mode>
 repo:
   url: ""
-  revision: main
+  revision: main     # always main; lab-bootstrap passes it to in-repo apps
 stacks:
   core: false

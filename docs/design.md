@@ -247,8 +247,7 @@ profiles:
     owner: chanupen
 
 repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
-  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key
-  revision: main
+  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap always tracks main
   sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 

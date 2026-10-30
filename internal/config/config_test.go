@@ -59,14 +59,14 @@ cloud:
 		{name: "not yaml", yaml: "mode: [", wantErr: []string{"yaml"}},
 		{name: "repo with deploy key", yaml: "repo:\n  url: git@github.com:o/r.git\n  sshKeyFile: ~/.ssh/k\n",
 			check: func(t *testing.T, c Config) {
-				if c.Repo.Revision != "main" || c.Repo.SSHKeyFile != "~/.ssh/k" {
+				if c.Repo.URL != "git@github.com:o/r.git" || c.Repo.SSHKeyFile != "~/.ssh/k" {
 					t.Errorf("repo = %+v", c.Repo)
 				}
 			}},
 		{name: "deploy key needs an SSH URL", yaml: "repo:\n  url: https://github.com/o/r.git\n  sshKeyFile: ~/.ssh/k\n",
 			wantErr: []string{"needs an SSH URL"}},
-		{name: "empty revision", yaml: "repo:\n  url: git@github.com:o/r.git\n  revision: \"\"\n",
-			wantErr: []string{"repo.revision must not be empty"}},
+		{name: "revision is not configurable", yaml: "repo:\n  url: git@github.com:o/r.git\n  revision: feat/x\n",
+			wantErr: []string{"revision"}},
 		{name: "unknown repo key", yaml: "repo:\n  branch: main\n", wantErr: []string{"branch"}},
 	}
 	for _, tt := range tests {

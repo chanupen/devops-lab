@@ -52,8 +52,8 @@ func repoSecret(url string, key []byte) *corev1.Secret {
 	}
 }
 
-// rootApp is the app-of-apps: the bootstrap chart at repo.Revision, with the
-// mode, repo and enabled stacks as values.
+// rootApp is the app-of-apps: the bootstrap chart on main, with the mode,
+// repo and enabled stacks as values.
 func rootApp(mode string, repo config.Repo, stacks map[string]any) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1",
@@ -68,11 +68,11 @@ func rootApp(mode string, repo config.Repo, stacks map[string]any) *unstructured
 			"project": "default",
 			"source": map[string]any{
 				"repoURL":        repo.URL,
-				"targetRevision": repo.Revision,
+				"targetRevision": Revision,
 				"path":           BootstrapPath,
 				"helm": map[string]any{"valuesObject": map[string]any{
 					"mode":   mode,
-					"repo":   map[string]any{"url": repo.URL, "revision": repo.Revision},
+					"repo":   map[string]any{"url": repo.URL, "revision": Revision},
 					"stacks": stacks,
 				}},
 			},

@@ -126,7 +126,7 @@ func newEnv(t *testing.T, argo bool, objs ...runtime.Object) *env {
 	h := &fakeHelm{}
 	r := newRunner(Options{
 		Mode:    "local",
-		Repo:    config.Repo{URL: "git@github.com:o/r.git", Revision: "main", SSHKeyFile: "~/.ssh/deploy"},
+		Repo:    config.Repo{URL: "git@github.com:o/r.git", SSHKeyFile: "~/.ssh/deploy"},
 		Timeout: 3 * time.Second,
 	}, h, func(io.Writer) (*kube.Clients, error) { return &kube.Clients{Core: core, Dynamic: dyn}, nil })
 	r.home = func() (string, error) { return "/home/u", nil }
@@ -223,7 +223,11 @@ func TestApplyGitOps(t *testing.T) {
 }
 
 func TestApplyGitOpsKeepsEnabledStacks(t *testing.T) {
-	existing := rootApp("local", config.Repo{URL: "git@github.com:o/old.git", Revision: "v1"}, map[string]any{"core": true})
+	existing := rootApp("local", config.Repo{URL: "git@github.com:o/old.git"}, map[string]any{"core": true})
+	// A root created while it could point at a branch is moved back to main.
+	if err := unstructured.SetNestedField(existing.Object, "feat/x", "spec", "source", "targetRevision"); err != nil {
+		t.Fatal(err)
+	}
 	e := newEnv(t, true, existing)
 	if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
 		t.Fatal(err)
@@ -231,8 +235,9 @@ func TestApplyGitOpsKeepsEnabledStacks(t *testing.T) {
 	root := e.root(t)
 	core, _, _ := unstructured.NestedBool(root.Object, "spec", "source", "helm", "valuesObject", "stacks", "core")
 	url, _, _ := unstructured.NestedString(root.Object, "spec", "source", "repoURL")
-	if !core || url != "git@github.com:o/r.git" {
-		t.Errorf("core = %v, repoURL = %s; want core kept and the repo refreshed", core, url)
+	rev, _, _ := unstructured.NestedString(root.Object, "spec", "source", "targetRevision")
+	if !core || url != "git@github.com:o/r.git" || rev != "main" {
+		t.Errorf("core = %v, repoURL = %s, targetRevision = %s; want core kept, repo refreshed, main", core, url, rev)
 	}
 }
 
@@ -315,7 +320,7 @@ func TestCoreStack(t *testing.T) {
 }
 
 func TestSetStackAddsAllowEmpty(t *testing.T) {
-	old := rootApp("local", config.Repo{URL: "git@github.com:o/r.git", Revision: "main"}, map[string]any{"core": true})
+	old := rootApp("local", config.Repo{URL: "git@github.com:o/r.git"}, map[string]any{"core": true})
 	unstructured.RemoveNestedField(old.Object, "spec", "syncPolicy", "automated", "allowEmpty")
 	e := newEnv(t, true, old)
 	if err := e.runner.Destroy(context.Background(), "core", io.Discard); err != nil {

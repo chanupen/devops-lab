@@ -31,7 +31,11 @@ const (
 	RootApp       = "lab-bootstrap"
 	RepoSecret    = "lab-repo"
 	BootstrapPath = "gitops/bootstrap"
-	stackLabel    = "lab.stack"
+	// Revision is the branch lab-bootstrap and the in-repo apps it renders
+	// always track. Work reaches the lab by merging to main, never by
+	// pointing the lab at a feature branch.
+	Revision   = "main"
+	stackLabel = "lab.stack"
 )
 
 // Argo CD chart, pinned.
@@ -162,14 +166,14 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 	existing, err := apps.Get(ctx, RootApp, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		logf(log, "creating Application %s (%s at %s)", RootApp, repo.URL, repo.Revision)
+		logf(log, "creating Application %s (%s at %s)", RootApp, repo.URL, Revision)
 		if _, err := apps.Create(ctx, rootApp(r.opts.Mode, repo, map[string]any{}), metav1.CreateOptions{}); err != nil {
 			return err
 		}
 	case err != nil:
 		return err
 	default:
-		// Keep the stacks already turned on; refresh repo and mode.
+		// Keep the stacks already turned on; refresh repo, revision and mode.
 		stacks, _, _ := unstructured.NestedMap(existing.Object, "spec", "source", "helm", "valuesObject", "stacks")
 		want := rootApp(r.opts.Mode, repo, stacks)
 		existing.Object["spec"] = want.Object["spec"]

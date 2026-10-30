@@ -38,10 +38,10 @@ type Config struct {
 	Cloud      Cloud  `yaml:"cloud"`
 }
 
-// Repo is the Git repository Argo CD (or Flux) syncs from.
+// Repo is the Git repository Argo CD (or Flux) syncs from. The lab always
+// syncs its main branch, so there is no revision setting.
 type Repo struct {
-	URL      string `yaml:"url"`      // SSH URL when SSHKeyFile is set
-	Revision string `yaml:"revision"` // branch, tag or commit
+	URL string `yaml:"url"` // SSH URL when SSHKeyFile is set
 	// SSHKeyFile is a read-only deploy key on this host. The gitops stack loads
 	// it into the cluster as a Secret; it is never written to the repo.
 	SSHKeyFile string `yaml:"sshKeyFile"`
@@ -77,7 +77,6 @@ func Default() Config {
 		Profile:    "standard",
 		GitOps:     "argocd",
 		K8sVersion: K8sVersion,
-		Repo:       Repo{Revision: "main"},
 		Cloud:      Cloud{Region: CloudRegion, TTL: Duration(4 * time.Hour)},
 	}
 }
@@ -132,9 +131,6 @@ func (c Config) Validate() error {
 	}
 	if c.Repo.SSHKeyFile != "" && !IsSSHURL(c.Repo.URL) {
 		errs = append(errs, fmt.Errorf("repo.url %q: a deploy key needs an SSH URL such as git@github.com:owner/repo.git", c.Repo.URL))
-	}
-	if c.Repo.URL != "" && c.Repo.Revision == "" {
-		errs = append(errs, fmt.Errorf("repo.revision must not be empty"))
 	}
 	if c.Mode == "cloud" && c.Cloud.Owner == "" {
 		errs = append(errs, fmt.Errorf("cloud.owner is required in cloud mode (it becomes the owner tag)"))
