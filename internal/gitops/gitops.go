@@ -19,6 +19,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/kube"
@@ -182,7 +184,7 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 		return err
 	}
 	apps := c.Dynamic.Resource(kube.AppGVR).Namespace(Namespace)
-	existing, err := apps.Get(ctx, RootApp, metav1.GetOptions{})
+	_, err = apps.Get(ctx, RootApp, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		logf(log, "creating Application %s (%s at %s)", RootApp, repo.URL, r.opts.Revision)
@@ -192,12 +194,14 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 	case err != nil:
 		return err
 	default:
-		// Keep the stacks already turned on; refresh repo, revision and mode.
-		stacks, _, _ := unstructured.NestedMap(existing.Object, "spec", "source", "helm", "valuesObject", "stacks")
-		want := rootApp(r.opts.Mode, repo, r.opts.Revision, stacks)
-		existing.Object["spec"] = want.Object["spec"]
 		logf(log, "updating Application %s (%s at %s)", RootApp, repo.URL, r.opts.Revision)
-		if _, err := apps.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		err := updateRoot(ctx, apps, func(u *unstructured.Unstructured) error {
+			// Keep the stacks already turned on; refresh repo, revision and mode.
+			stacks, _, _ := unstructured.NestedMap(u.Object, "spec", "source", "helm", "valuesObject", "stacks")
+			u.Object["spec"] = rootApp(r.opts.Mode, repo, r.opts.Revision, stacks).Object["spec"]
+			return nil
+		})
+		if err != nil {
 			return err
 		}
 	}
@@ -212,7 +216,7 @@ func (r *Runner) setStack(ctx context.Context, stack string, on bool, log io.Wri
 		return err
 	}
 	apps := c.Dynamic.Resource(kube.AppGVR).Namespace(Namespace)
-	root, err := apps.Get(ctx, RootApp, metav1.GetOptions{})
+	_, err = apps.Get(ctx, RootApp, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		if !on {
 			logf(log, "Application %s is gone; nothing to remove", RootApp)
@@ -228,21 +232,37 @@ func (r *Runner) setStack(ctx context.Context, stack string, on bool, log io.Wri
 			return err
 		}
 	}
-	if err := unstructured.SetNestedField(root.Object, on, "spec", "source", "helm", "valuesObject", "stacks", stack); err != nil {
-		return err
-	}
-	// Roots created before allowEmpty was set could never prune the last stack.
-	if err := unstructured.SetNestedField(root.Object, true, "spec", "syncPolicy", "automated", "allowEmpty"); err != nil {
-		return err
-	}
 	logf(log, "setting stacks.%s=%v on Application %s", stack, on, RootApp)
-	if _, err := apps.Update(ctx, root, metav1.UpdateOptions{}); err != nil {
+	err = updateRoot(ctx, apps, func(u *unstructured.Unstructured) error {
+		if err := unstructured.SetNestedField(u.Object, on, "spec", "source", "helm", "valuesObject", "stacks", stack); err != nil {
+			return err
+		}
+		// Roots created before allowEmpty was set could never prune the last stack.
+		return unstructured.SetNestedField(u.Object, true, "spec", "syncPolicy", "automated", "allowEmpty")
+	})
+	if err != nil {
 		return err
 	}
 	if err := r.waitApps(ctx, c, stack, on, log); err != nil || on {
 		return err
 	}
 	return r.deleteNamespaces(ctx, c, stackNamespaces[stack], log)
+}
+
+// updateRoot re-reads the app-of-apps, applies mutate and updates it,
+// retrying on conflict: Argo CD writes the app's status all the time.
+func updateRoot(ctx context.Context, apps dynamic.ResourceInterface, mutate func(*unstructured.Unstructured) error) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		u, err := apps.Get(ctx, RootApp, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if err := mutate(u); err != nil {
+			return err
+		}
+		_, err = apps.Update(ctx, u, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 // prepare creates what a stack needs before its apps sync: the obs stack's

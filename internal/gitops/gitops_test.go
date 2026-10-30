@@ -8,10 +8,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/kube"
@@ -656,5 +659,39 @@ func TestRandomPassword(t *testing.T) {
 	b, _ := randomPassword()
 	if len(a) != 32 || a == b || strings.ContainsAny(a, "+/=") {
 		t.Errorf("passwords %q, %q: want 32 distinct URL-safe characters", a, b)
+	}
+}
+
+// Argo CD updates the root app's status constantly; a stale write must be
+// retried, not fail the step.
+func TestRootUpdateRetriesOnConflict(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(e *env) error
+	}{
+		{"setStack", func(e *env) error { return e.runner.Apply(context.Background(), "core", io.Discard) }},
+		{"gitops re-apply", func(e *env) error { return e.runner.Apply(context.Background(), "gitops", io.Discard) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, true)
+			if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			var conflicts atomic.Int32
+			e.dyn.PrependReactor("update", "applications", func(a k8stesting.Action) (bool, runtime.Object, error) {
+				u := a.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
+				if u.GetName() == RootApp && conflicts.Add(1) == 1 {
+					return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "argoproj.io", Resource: "applications"}, RootApp, errors.New("the object has been modified"))
+				}
+				return false, nil, nil
+			})
+			if err := tt.apply(e); err != nil {
+				t.Fatalf("err = %v; a single conflict should be retried", err)
+			}
+			if conflicts.Load() < 2 {
+				t.Errorf("root app updated %d times, want a retry after the conflict", conflicts.Load())
+			}
+		})
 	}
 }
