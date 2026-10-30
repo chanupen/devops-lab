@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -11,9 +12,10 @@ import (
 
 func newDownCmd(newProvider providerFactory) *cobra.Command {
 	var (
-		flags labFlags
-		purge bool
-		yes   bool
+		flags   labFlags
+		purge   bool
+		yes     bool
+		timeout time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "down",
@@ -48,11 +50,16 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			if purge {
 				command += " --purge"
 			}
-			return run(cmd, newProvider, cfg, homeOf(store), g, store, p, purge, command)
+			prov, err := newProvider(cfg, homeOf(store), runOptions{Purge: purge, Timeout: timeout})
+			if err != nil {
+				return err
+			}
+			return run(cmd, prov, g, store, p, command)
 		},
 	}
 	flags.register(cmd)
 	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the registry's image cache volume")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
+	registerTimeout(cmd, &timeout)
 	return cmd
 }

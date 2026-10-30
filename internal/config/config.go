@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -33,7 +34,17 @@ type Config struct {
 	Profile    string `yaml:"profile"`
 	GitOps     string `yaml:"gitops"`
 	K8sVersion string `yaml:"k8sVersion"`
+	Repo       Repo   `yaml:"repo"`
 	Cloud      Cloud  `yaml:"cloud"`
+}
+
+// Repo is the Git repository Argo CD (or Flux) syncs from. The lab always
+// syncs its main branch, so there is no revision setting.
+type Repo struct {
+	URL string `yaml:"url"` // SSH URL when SSHKeyFile is set
+	// SSHKeyFile is a read-only deploy key on this host. The gitops stack loads
+	// it into the cluster as a Secret; it is never written to the repo.
+	SSHKeyFile string `yaml:"sshKeyFile"`
 }
 
 // Cloud holds settings used only in cloud mode.
@@ -118,8 +129,20 @@ func (c Config) Validate() error {
 	if c.Cloud.TTL <= 0 {
 		errs = append(errs, fmt.Errorf("cloud.ttl must be positive"))
 	}
+	if c.Repo.SSHKeyFile != "" && !IsSSHURL(c.Repo.URL) {
+		errs = append(errs, fmt.Errorf("repo.url %q: a deploy key needs an SSH URL such as git@github.com:owner/repo.git", c.Repo.URL))
+	}
 	if c.Mode == "cloud" && c.Cloud.Owner == "" {
 		errs = append(errs, fmt.Errorf("cloud.owner is required in cloud mode (it becomes the owner tag)"))
 	}
 	return errors.Join(errs...)
+}
+
+// IsSSHURL reports whether url is an scp-style (git@host:path) or ssh:// URL.
+func IsSSHURL(url string) bool {
+	if strings.HasPrefix(url, "ssh://") {
+		return true
+	}
+	user, rest, ok := strings.Cut(url, "@")
+	return ok && user != "" && !strings.Contains(user, "/") && strings.Contains(rest, ":") && !strings.Contains(url, "://")
 }

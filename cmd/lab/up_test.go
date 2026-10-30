@@ -10,22 +10,33 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
-// fakeProvider supports registry and cluster, like the local provider today.
+// fakeProvider supports registry and cluster, and lists app URLs.
 type fakeProvider struct {
-	calls []string
-	fail  map[string]bool
+	calls   []string
+	fail    map[string]bool
+	urls    []string
+	urlsErr error
 }
+
+func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.urls, f.urlsErr }
+
+func (f *fakeProvider) AccessHint() string { return "On the Mac, run ssh -N fedora-lab first." }
 
 func (f *fakeProvider) Supports(s string) bool { return s == "registry" || s == "cluster" }
 
-func (f *fakeProvider) Apply(_ context.Context, s string) error { return f.do("apply " + s) }
+func (f *fakeProvider) Apply(_ context.Context, s string, _ io.Writer) error {
+	return f.do("apply " + s)
+}
 
-func (f *fakeProvider) Destroy(_ context.Context, s string) error { return f.do("destroy " + s) }
+func (f *fakeProvider) Destroy(_ context.Context, s string, _ io.Writer) error {
+	return f.do("destroy " + s)
+}
 
 func (f *fakeProvider) do(c string) error {
 	f.calls = append(f.calls, c)
@@ -53,10 +64,11 @@ func TestUpDown(t *testing.T) {
 		wantOp     string   // command of the last op
 	}{
 		{
-			name:       "up cluster and registry",
-			args:       []string{"up", "--stacks", "cluster,registry"},
-			wantCalls:  []string{"apply registry", "apply cluster"},
-			wantOut:    []string{"$ lab up --stacks cluster,registry", "● registry: applied in", "● cluster: applied in", "done in"},
+			name:      "up cluster and registry",
+			args:      []string{"up", "--stacks", "cluster,registry"},
+			wantCalls: []string{"apply registry", "apply cluster"},
+			wantOut: []string{"$ lab up --stacks cluster,registry", "◐ registry: applying (log: " + "", "● registry: applied in",
+				"● cluster: applied in", "done in"},
 			wantStacks: []string{"cluster", "registry"},
 			wantOp:     "lab up --stacks cluster,registry",
 		},
@@ -77,7 +89,7 @@ func TestUpDown(t *testing.T) {
 		{
 			name:    "up of the whole profile names unsupported stacks before running",
 			args:    []string{"up"},
-			wantErr: "the local provider cannot run gitops, core, sample-app yet",
+			wantErr: "the local provider cannot run gitops, core, sample-app yet", // the fake routes only registry and cluster
 		},
 		{
 			name:       "failed step is reported and recorded",
@@ -147,8 +159,11 @@ func TestUpDown(t *testing.T) {
 			}
 			fp := &fakeProvider{fail: tt.fail}
 			var gotPurge, built bool
-			factory := func(_ config.Config, home string, purge bool, _ io.Writer) (provider, error) {
-				built, gotPurge = true, purge
+			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
+				built, gotPurge = true, opts.Purge
+				if opts.Timeout != 30*time.Minute && !slices.Contains(tt.args, "--timeout") {
+					t.Errorf("timeout = %s, want the 30m default", opts.Timeout)
+				}
 				if home != dir {
 					t.Errorf("provider home = %s, want the state file's directory %s", home, dir)
 				}
@@ -214,9 +229,121 @@ func TestDefaultProviderModes(t *testing.T) {
 	for _, tt := range tests {
 		cfg := config.Default()
 		cfg.Mode = tt.mode
-		_, err := defaultProvider(cfg, t.TempDir(), false, io.Discard)
+		_, err := defaultProvider(cfg, t.TempDir(), runOptions{})
 		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 			t.Errorf("%s: err = %v, want %q", tt.mode, err, tt.wantErr)
+		}
+	}
+}
+
+func TestDefaultProviderRoutes(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // the Podman socket is only dialled when used
+	tests := []struct {
+		gitops     string
+		wantGitOps bool
+	}{
+		{"argocd", true},
+		{"flux", false},
+	}
+	for _, tt := range tests {
+		cfg := config.Default()
+		cfg.GitOps = tt.gitops
+		p, err := defaultProvider(cfg, t.TempDir(), runOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []string{"registry", "cluster"} {
+			if !p.Supports(s) {
+				t.Errorf("%s: %s not routed", tt.gitops, s)
+			}
+		}
+		for _, s := range []string{"gitops", "core"} {
+			if p.Supports(s) != tt.wantGitOps {
+				t.Errorf("%s: Supports(%s) = %v, want %v", tt.gitops, s, p.Supports(s), tt.wantGitOps)
+			}
+		}
+		if p.Supports("obs") {
+			t.Errorf("%s: obs should not be routed yet", tt.gitops)
+		}
+	}
+}
+
+const deployedWithCore = `{"version":1,"mode":"local","stacks":{
+	"registry":{"status":"applied"},"cluster":{"status":"applied"},
+	"gitops":{"status":"applied"},"core":{"status":"applied"}},"ops":[]}`
+
+func TestUpPrintsApps(t *testing.T) {
+	tests := []struct {
+		name    string
+		state   string
+		urls    []string
+		urlsErr error
+		want    []string
+		wantNot []string
+	}{
+		{"core applied lists URLs and the tunnel", deployedWithCore,
+			[]string{"https://argocd.localtest.me:8443", "https://shop.localtest.me:8443"},
+			nil, []string{"nothing to do", "Apps:\n  https://argocd.localtest.me:8443\n  https://shop.localtest.me:8443\nOn the Mac, run ssh -N fedora-lab first.\n"}, nil},
+		{"no routes yet", deployedWithCore, nil, nil,
+			[]string{"Apps:\n  none yet (no HTTPRoutes on the lab Gateway)\nOn the Mac, run ssh -N fedora-lab first."}, nil},
+		{"listing fails is a warning", deployedWithCore, nil, errors.New("connection refused"),
+			[]string{"warning: could not list app URLs: connection refused"}, []string{"Apps:"}},
+		{"without core there is no Gateway", deployedClusterRegistry, []string{"https://x.localtest.me:8443"}, nil,
+			nil, []string{"Apps:", "fedora-lab"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(statePath, []byte(tt.state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fp := &fakeProvider{urls: tt.urls, urlsErr: tt.urlsErr}
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { return fp, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"up", "--stacks", "cluster", "--config", cfgPath, "--state", statePath})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("output lacks %q:\n%s", w, out.String())
+				}
+			}
+			for _, w := range tt.wantNot {
+				if strings.Contains(out.String(), w) {
+					t.Errorf("output should not contain %q:\n%s", w, out.String())
+				}
+			}
+		})
+	}
+}
+
+func TestLabRunnerAppURLs(t *testing.T) {
+	url := func(h string) string { return "https://" + h + ":8443" }
+	tests := []struct {
+		name    string
+		l       labRunner
+		want    []string
+		wantErr string
+	}{
+		{"no GitOps runner", labRunner{url: url}, nil, ""},
+		{"hosts become URLs", labRunner{url: url, hosts: func(context.Context) ([]string, error) {
+			return []string{"argocd.localtest.me"}, nil
+		}}, []string{"https://argocd.localtest.me:8443"}, ""},
+		{"error passes through", labRunner{url: url, hosts: func(context.Context) ([]string, error) {
+			return nil, errors.New("no cluster")
+		}}, nil, "no cluster"},
+	}
+	for _, tt := range tests {
+		got, err := tt.l.AppURLs(context.Background())
+		if (tt.wantErr == "") != (err == nil) || !slices.Equal(got, tt.want) {
+			t.Errorf("%s: got %v, %v; want %v, %q", tt.name, got, err, tt.want, tt.wantErr)
 		}
 	}
 }

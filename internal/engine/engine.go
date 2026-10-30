@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
@@ -11,16 +12,19 @@ import (
 )
 
 // Runner deploys and removes single stacks. Providers implement it; the
-// engine only decides order and records results.
+// engine only decides order and records results. Everything a step prints
+// (tool output, progress) goes to log, which the engine keeps in the ops log.
 type Runner interface {
-	Apply(ctx context.Context, stack string) error
-	Destroy(ctx context.Context, stack string) error
+	Apply(ctx context.Context, stack string, log io.Writer) error
+	Destroy(ctx context.Context, stack string, log io.Writer) error
 }
 
 // Store is the state persistence the engine needs. *state.Store implements it.
 type Store interface {
 	Load() (state.State, error)
 	Update(fn func(*state.State) error) error
+	// OpenStepLog creates the log file for one step and returns its path.
+	OpenStepLog(stack, action string, started time.Time) (io.WriteCloser, string, error)
 }
 
 // Phase marks where a step is in its run.
@@ -38,6 +42,7 @@ type Event struct {
 	Step  Step
 	Phase Phase
 	Err   error
+	Log   string // path of the step's log file
 }
 
 // ErrNoRunner is returned by Execute when no provider is configured.
@@ -93,33 +98,56 @@ func (e *Engine) Execute(ctx context.Context, p Plan, command string, events fun
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		emit(Event{Step: step, Phase: Started})
 		started := e.now()
-		var runErr error
-		if step.Action == Apply {
-			runErr = e.runner.Apply(ctx, step.Stack)
-		} else {
-			runErr = e.runner.Destroy(ctx, step.Stack)
+		w, path, err := e.store.OpenStepLog(step.Stack, string(step.Action), started)
+		if err != nil {
+			return fmt.Errorf("open log for %s %s: %w", step.Action, step.Stack, err)
 		}
-		if err := e.record(p, step, command, started, runErr); err != nil {
+		emit(Event{Step: step, Phase: Started, Log: path})
+		runErr := e.runStep(ctx, step, command, w)
+		_ = w.Close() // the log is best effort; it never fails a step
+		if err := e.record(p, step, command, started, path, runErr); err != nil {
 			return errors.Join(runErr, fmt.Errorf("record %s %s: %w", step.Action, step.Stack, err))
 		}
 		if runErr != nil {
-			emit(Event{Step: step, Phase: Failed, Err: runErr})
-			return fmt.Errorf("%s %s: %w", step.Action, step.Stack, runErr)
+			emit(Event{Step: step, Phase: Failed, Err: runErr, Log: path})
+			return fmt.Errorf("%s %s: %w (log: %s)", step.Action, step.Stack, runErr, path)
 		}
-		emit(Event{Step: step, Phase: Finished})
+		emit(Event{Step: step, Phase: Finished, Log: path})
 	}
 	return nil
 }
 
+// runStep calls the runner with a timestamped log and writes a header and
+// a result line around its output.
+func (e *Engine) runStep(ctx context.Context, step Step, command string, w io.Writer) error {
+	tw := newTimestampWriter(w, e.now)
+	start := e.now()
+	_, _ = fmt.Fprintf(tw, "%s: %s %s\n", command, step.Action, step.Stack)
+	var err error
+	if step.Action == Apply {
+		err = e.runner.Apply(ctx, step.Stack, tw)
+	} else {
+		err = e.runner.Destroy(ctx, step.Stack, tw)
+	}
+	d := e.now().Sub(start).Round(100 * time.Millisecond)
+	if err != nil {
+		_, _ = fmt.Fprintf(tw, "failed after %s: %v\n", d, err)
+	} else {
+		_, _ = fmt.Fprintf(tw, "ok in %s\n", d)
+	}
+	_ = tw.Flush()
+	return err
+}
+
 // record writes the step's outcome to the stack state and the ops log.
-func (e *Engine) record(p Plan, step Step, command string, started time.Time, runErr error) error {
-	return e.store.Update(func(s *state.State) error {
+func (e *Engine) record(p Plan, step Step, command string, started time.Time, log string, runErr error) error {
+	var dropped []state.Op
+	err := e.store.Update(func(s *state.State) error {
 		now := e.now()
 		op := state.Op{
 			Command: command, Stack: step.Stack, Action: string(step.Action),
-			Status: "ok", Started: started, Finished: now,
+			Status: "ok", Started: started, Finished: now, Log: log,
 		}
 		ss := state.StackState{Status: state.Applied, UpdatedAt: now}
 		if runErr != nil {
@@ -127,7 +155,7 @@ func (e *Engine) record(p Plan, step Step, command string, started time.Time, ru
 			// A failed destroy may leave resources behind, so it stays Failed too.
 			ss.Status, ss.Error = state.Failed, runErr.Error()
 		}
-		s.AppendOp(op)
+		dropped = s.AppendOp(op)
 		if step.Action == Destroy && runErr == nil {
 			delete(s.Stacks, step.Stack)
 		} else {
@@ -140,4 +168,8 @@ func (e *Engine) record(p Plan, step Step, command string, started time.Time, ru
 		}
 		return nil
 	})
+	if r, ok := e.store.(interface{ RemoveLogs([]state.Op) }); ok && err == nil {
+		r.RemoveLogs(dropped)
+	}
+	return err
 }

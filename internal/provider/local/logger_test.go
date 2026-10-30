@@ -3,6 +3,8 @@ package local
 import (
 	"bytes"
 	"testing"
+
+	"sigs.k8s.io/kind/pkg/log"
 )
 
 func TestKindLogger(t *testing.T) {
@@ -11,14 +13,15 @@ func TestKindLogger(t *testing.T) {
 		log  func(l *kindLogger)
 		want string
 	}{
-		{"info at V(0)", func(l *kindLogger) { l.V(0).Info(" ✓ Preparing nodes ") }, "    ✓ Preparing nodes\n"},
-		{"infof at V(0)", func(l *kindLogger) { l.V(0).Infof("Ready after %ds", 10) }, "    Ready after 10s\n"},
-		{"debug dropped", func(l *kindLogger) { l.V(1).Info("debug detail") }, ""},
+		{"info at V(0)", func(l *kindLogger) { l.V(0).Info(" ✓ Preparing nodes") }, "kind:  ✓ Preparing nodes\n"},
+		{"infof at V(0)", func(l *kindLogger) { l.V(0).Infof("Ready after %ds", 10) }, "kind: Ready after 10s\n"},
+		{"debug kept with its level", func(l *kindLogger) { l.V(1).Info("Running: podman ps") }, "kind: [v1] Running: podman ps\n"},
+		{"multi-line message split", func(l *kindLogger) { l.V(2).Info("a\nb\n") }, "kind: [v2] a\nkind: [v2] b\n"},
 		{"blank dropped", func(l *kindLogger) { l.V(0).Info("  ") }, ""},
-		{"warning", func(l *kindLogger) { l.Warn("disk low") }, "    warning: disk low\n"},
-		{"podman notice dropped", func(l *kindLogger) { l.Warn("enabling experimental podman provider") }, ""},
-		{"podman notice via Warnf dropped", func(l *kindLogger) { l.Warnf("%s", "enabling experimental podman provider") }, ""},
-		{"error", func(l *kindLogger) { l.Errorf("failed: %s", "x") }, "    error: failed: x\n"},
+		{"podman notice kept", func(l *kindLogger) { l.Warn("enabling experimental podman provider") },
+			"kind: warning: enabling experimental podman provider\n"},
+		{"warnf", func(l *kindLogger) { l.Warnf("disk %s", "low") }, "kind: warning: disk low\n"},
+		{"error", func(l *kindLogger) { l.Errorf("failed: %s", "x") }, "kind: error: failed: x\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -29,7 +32,11 @@ func TestKindLogger(t *testing.T) {
 			}
 		})
 	}
-	if newKindLogger(nil).V(1).Enabled() || !newKindLogger(nil).V(0).Enabled() {
-		t.Error("Enabled should be true only for V(0)")
+	for _, lvl := range []int32{0, 1, 5} {
+		if !newKindLogger(nil).V(levelOf(lvl)).Enabled() {
+			t.Errorf("V(%d) disabled; every level should reach the ops log", lvl)
+		}
 	}
 }
+
+func levelOf(n int32) log.Level { return log.Level(n) }

@@ -18,7 +18,7 @@ Design doc: "DevOps Lab Control Center — Plan and Design" (Claude Docs). Expor
   - GPU: GeForce GTX 1650 Mobile (TU117, Turing), 4 GB VRAM, next to an AMD iGPU. Driver `akmod-nvidia` (RPM Fusion), working.
   - Rootless Podman gets the GPU through CDI: `--device nvidia.com/gpu=all`. SELinux boolean `container_use_devices` is on.
   - Ollama runs as a Quadlet user service: `~/.config/containers/systemd/ollama.container`, port 11434 (localhost only, no auth). Models must fit about 3.6 GiB VRAM (1B–3B, 4-bit).
-- MacBook Pro (Intel, `macbookprosys`): client only. Reaches the TUI with `ssh -t fedora lab`.
+- MacBook Pro (Intel, `macbookprosys`): client only. Reaches the TUI with `ssh -t fedora lab`, and lab apps (`https://<app>.localtest.me:8443`) through `ssh -N fedora-lab`, which forwards 8080/8443 to Fedora's 127.0.0.1. The Gateway never listens on the LAN.
 
 ## Architecture
 
@@ -60,7 +60,8 @@ internal/tui/            Bubble Tea models, one per screen
 internal/engine/         plan, apply, destroy, dependency order
 internal/provider/local  kind, Podman, LocalStack, Zot
 internal/provider/aws    Terraform runner, EKS, ECR, cost, TTL
-internal/kube/           client-go informers, health
+internal/kube/           client-go informers, health, waits (nodes, Argo CD apps)
+internal/gitops/         Argo CD install (Helm SDK), app-of-apps, in-cluster stacks
 internal/state/          ~/.lab/state.json, ops history
 internal/config/         lab.yaml loading and validation
 internal/drills/         fault injection and timers

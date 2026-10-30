@@ -12,7 +12,7 @@ Build one lab with one control center: a Go terminal app called `lab` that bring
 - **Cloud mode** runs on real AWS (EKS, ECR, Secrets Manager, Karpenter) in ap-south-1, built with Terraform, with hard cost guardrails: every environment has a TTL and is destroyed automatically.
 - **The control center** is a k9s-style TUI built with Go and Bubble Tea. It never blocks on a command, watches the cluster instead of polling it, and opens in well under a second. Every TUI action is also a CLI command, so labs can be scripted and run in CI.
 
-The Mac stays the keyboard and screen. The TUI runs on Fedora and is reached with `ssh -t fedora lab`, which keeps all workloads on Linux as planned.
+The Mac stays the keyboard and screen. The TUI runs on Fedora and is reached with `ssh -t fedora lab`, which keeps all workloads on Linux as planned. Lab web apps are reached from the Mac browser through an SSH tunnel (`ssh -N fedora-lab`); nothing listens on the LAN.
 
 ## Goals, non-goals and principles
 
@@ -50,7 +50,7 @@ Both modes provide the same capabilities; only the provider behind each one chan
 | Infrastructure as code | Terraform against LocalStack | Terraform against AWS, state in S3 with lock |
 | Container registry | Zot (light) or Harbor (optional module) | ECR |
 | Secrets | External Secrets Operator + LocalStack Secrets Manager | External Secrets Operator + AWS Secrets Manager via EKS Pod Identity |
-| Ingress and DNS | Gateway API (Envoy Gateway), `*.<fedora-ip>.nip.io` so the Mac browser reaches it | Gateway API + AWS Load Balancer Controller, Route 53 sub-zone (optional) |
+| Ingress and DNS | Gateway API (Envoy Gateway) on `127.0.0.1:8080/8443` of the Fedora box only; apps are `https://<app>.localtest.me:8443`, reached from the Mac through `ssh -N fedora-lab` | Gateway API + AWS Load Balancer Controller, Route 53 sub-zone (optional) |
 | Object storage | LocalStack S3 (or MinIO) | S3 |
 | Load and AI | Ollama on the G14 GPU, small models | GPU spot node via Karpenter, only when a lab asks for it |
 | Cost | Zero | Pay per hour; TTL and budget enforced (see guardrails) |
@@ -79,6 +79,27 @@ The TUI is a thin view over one engine; the engine hands work to a local or an A
 - **Engine** resolves stack dependencies, runs plan, apply and destroy in order, and writes state to `~/.lab/state.json`. The CLI and the TUI both call it, so they never disagree.
 - **Providers** implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`. Adding a third target later (for example k3s on a spare machine) means one new provider.
 - **Remote use:** the binary runs on Fedora; from the Mac, `ssh -t fedora lab` opens it. A later option is serving the TUI over SSH with Charm's Wish, so no shell login is needed.
+
+### Reaching lab apps from the Mac
+
+The Gateway is never exposed on the LAN. The kind control plane publishes Envoy's NodePorts 30080 and 30443 on `127.0.0.1:8080` and `127.0.0.1:8443` of the Fedora box, and the Mac forwards those two ports over SSH.
+
+- **Names:** every app is `https://<app>.localtest.me:8443`. `localtest.me` and all its subdomains resolve to `127.0.0.1` in public DNS, so the same URL works on Fedora and, through the tunnel, on the Mac, with no DNS server or hosts-file edits. If a network's DNS refuses answers that point at `127.0.0.1` (rebinding protection), add the names to the Mac's `/etc/hosts`.
+- **TLS:** cert-manager issues a self-signed certificate for `localtest.me` and `*.localtest.me`; the HTTPS listener terminates TLS with it. Browsers warn until the lab CA is trusted on the Mac.
+- **Routes:** each app attaches an HTTPRoute to the `lab` Gateway (`envoy-gateway-system`) with its `*.localtest.me` hostname. The first is Argo CD's UI at `https://argocd.localtest.me:8443`. The domain lives only in `gitops/overlays/local`; cloud mode uses its own.
+- **`lab up` output:** once the core stack is up, `lab up` lists the URL of every HTTPRoute on the Gateway and prints a one-line reminder to run `ssh -N fedora-lab` on the Mac.
+- **Tunnel:** a dedicated entry in the Mac's `~/.ssh/config`, separate from `fedora` so the TUI session never competes for the ports. Run `ssh -N fedora-lab` and leave it open while browsing.
+
+```text
+Host fedora-lab
+  HostName asuszephyrus          # the Fedora box; same address as the fedora entry
+  LocalForward 8080 127.0.0.1:8080
+  LocalForward 8443 127.0.0.1:8443
+  ExitOnForwardFailure yes       # fail fast if 8080/8443 are taken on the Mac
+  ServerAliveInterval 30
+```
+
+`LocalForward` listens on the Mac's loopback for both IPv4 and IPv6, so browsers that try `::1` first (localtest.me has both records) still reach the tunnel.
 
 ## TUI design
 
@@ -225,10 +246,9 @@ profiles:
     budgetMonthlyUSD: 30
     owner: chanupen
 
-gitops:
-  repo: https://github.com/chanupen/devops-lab.git   # private
-  revision: main
-  auth: deploy-key         # read-only key, loaded as a Secret at bootstrap
+repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
+  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap always tracks main
+  sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.

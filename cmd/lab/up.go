@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -9,16 +10,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
 )
 
 func newUpCmd(newProvider providerFactory) *cobra.Command {
 	var (
-		flags  labFlags
-		stacks []string
-		prune  bool
-		yes    bool
+		flags   labFlags
+		stacks  []string
+		prune   bool
+		yes     bool
+		timeout time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -43,22 +44,32 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err := writePlan(out, r, p); err != nil {
 				return err
 			}
-			if p.Changes() == 0 {
-				_, err := fmt.Fprintln(out, "\nnothing to do")
+			prov, err := newProvider(cfg, homeOf(store), runOptions{Timeout: timeout})
+			if err != nil {
 				return err
 			}
-			if destroys := countAction(p, engine.Destroy); destroys > 0 {
-				if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
+			if p.Changes() == 0 {
+				if _, err := fmt.Fprintln(out, "\nnothing to do"); err != nil {
+					return err
+				}
+			} else {
+				if destroys := countAction(p, engine.Destroy); destroys > 0 {
+					if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
+						return err
+					}
+				}
+				if err := run(cmd, prov, g, store, p, upCommand(stacks, prune)); err != nil {
 					return err
 				}
 			}
-			return run(cmd, newProvider, cfg, homeOf(store), g, store, p, false, upCommand(stacks, prune))
+			return printApps(cmd, prov, store)
 		},
 	}
 	flags.register(cmd)
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "apply only these stacks and their dependencies")
 	cmd.Flags().BoolVar(&prune, "prune", false, "destroy deployed stacks that are not in the profile")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks")
+	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
 	return cmd
 }
@@ -85,15 +96,10 @@ func countAction(p engine.Plan, a engine.Action) int {
 	return n
 }
 
-// run builds the provider, checks it can handle every changed stack, then
-// executes the plan and prints each step with its duration.
-func run(cmd *cobra.Command, newProvider providerFactory, cfg config.Config, home string, g *engine.Graph,
-	store engine.Store, p engine.Plan, purge bool, command string) error {
+// run checks the provider can handle every changed stack, then executes the
+// plan and prints each step with its duration.
+func run(cmd *cobra.Command, prov provider, g *engine.Graph, store engine.Store, p engine.Plan, command string) error {
 	out := cmd.OutOrStdout()
-	prov, err := newProvider(cfg, home, purge, out)
-	if err != nil {
-		return err
-	}
 	if missing := unsupported(p, prov); len(missing) > 0 {
 		return fmt.Errorf("the %s provider cannot run %s yet; use --stacks to pick supported stacks",
 			p.Mode, strings.Join(missing, ", "))
@@ -104,13 +110,48 @@ func run(cmd *cobra.Command, newProvider providerFactory, cfg config.Config, hom
 	}
 	start := time.Now()
 	stepStart := map[string]time.Time{}
-	err = engine.New(g, store, prov).Execute(cmd.Context(), p, command, func(e engine.Event) {
+	err := engine.New(g, store, prov).Execute(cmd.Context(), p, command, func(e engine.Event) {
 		writeEvent(out, r, e, stepStart)
 	})
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "\ndone in %s\n", time.Since(start).Round(100*time.Millisecond))
+	return err
+}
+
+// gatewayStack is the stack that creates the shared Gateway apps route through.
+const gatewayStack = "core"
+
+// printApps lists app URLs and how to reach them once the Gateway exists.
+// Listing is best effort: a failure is a warning, not a failed lab up.
+func printApps(cmd *cobra.Command, prov provider, store engine.Store) error {
+	st, err := store.Load()
+	if err != nil || !st.IsApplied(gatewayStack) {
+		return nil
+	}
+	a, ok := prov.(appAccess)
+	if !ok {
+		return nil
+	}
+	out := cmd.OutOrStdout()
+	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+	defer cancel()
+	urls, err := a.AppURLs(ctx)
+	if err != nil {
+		_, err = fmt.Fprintf(out, "\nwarning: could not list app URLs: %v\n", err)
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("\nApps:\n")
+	if len(urls) == 0 {
+		b.WriteString("  none yet (no HTTPRoutes on the lab Gateway)\n")
+	}
+	for _, u := range urls {
+		b.WriteString("  " + u + "\n")
+	}
+	b.WriteString(a.AccessHint() + "\n")
+	_, err = io.WriteString(out, b.String())
 	return err
 }
 
@@ -127,7 +168,8 @@ func writeEvent(w io.Writer, r *lipgloss.Renderer, e engine.Event, starts map[st
 	switch e.Phase {
 	case engine.Started:
 		starts[e.Step.Stack] = time.Now()
-		_, _ = fmt.Fprintf(w, "%s %s: %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("◐"), e.Step.Stack, ing)
+		_, _ = fmt.Fprintf(w, "%s %s: %s %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("◐"), e.Step.Stack, ing,
+			r.NewStyle().Faint(true).Render("(log: "+e.Log+")"))
 	case engine.Finished:
 		d := time.Since(starts[e.Step.Stack]).Round(100 * time.Millisecond)
 		_, _ = fmt.Fprintf(w, "%s %s: %s in %s\n", r.NewStyle().Foreground(lipgloss.Color("2")).Render("●"), e.Step.Stack, past, d)

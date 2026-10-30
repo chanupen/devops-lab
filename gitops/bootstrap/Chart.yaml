@@ -1,0 +1,7 @@
+apiVersion: v2
+name: lab-bootstrap
+description: >-
+  App-of-apps for the lab. The gitops stack creates the lab-bootstrap
+  Application from this chart; lab up turns stacks on with stacks.<name>=true.
+type: application
+version: 0.1.0

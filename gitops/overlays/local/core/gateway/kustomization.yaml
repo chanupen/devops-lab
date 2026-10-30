@@ -1,0 +1,23 @@
+# Local mode: Envoy's service is a NodePort on 30080/30443, which the kind
+# control plane publishes on 127.0.0.1:8080/8443 of the Fedora host only. Apps
+# are https://<app>.localtest.me:8443; the Mac reaches them through an SSH
+# tunnel (ssh -N fedora-lab), never over the LAN.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../stacks/core/gateway
+  - envoyproxy.yaml
+  - certificate.yaml
+  - argocd-route.yaml
+patches:
+  - target:
+      kind: GatewayClass
+      name: lab
+    patch: |-
+      - op: add
+        path: /spec/parametersRef
+        value:
+          group: gateway.envoyproxy.io
+          kind: EnvoyProxy
+          name: lab-nodeport
+          namespace: envoy-gateway-system

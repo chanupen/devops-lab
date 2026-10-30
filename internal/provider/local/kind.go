@@ -35,6 +35,13 @@ const (
 	GatewayHTTPSHostPort = 8443
 )
 
+// AppDomain resolves, with every subdomain, to 127.0.0.1 in public DNS, so
+// https://<app>.localtest.me:8443 works on this host and through the tunnel.
+const AppDomain = "localtest.me"
+
+// TunnelHost is the Mac's ssh config entry that forwards 8080 and 8443 here.
+const TunnelHost = "fedora-lab"
+
 // containerdPatch points containerd at per-registry hosts.toml files.
 const containerdPatch = `[plugins."io.containerd.grpc.v1.cri".registry]
   config_path = "` + certsDirInNode + `"`
@@ -46,6 +53,8 @@ type Clusters interface {
 	NodeCount(name string) (int, error)
 	Create(cfg *v1alpha4.Cluster, image string) error
 	Delete(name string) error
+	// KubeConfig returns the external kubeconfig for the cluster.
+	KubeConfig(name string) (string, error)
 }
 
 // kindConfig returns 1 control plane and 2 workers. Every node mounts certsDir
@@ -118,6 +127,8 @@ func (k *kindClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 		cluster.CreateWithDisplaySalutation(false),
 	)
 }
+
+func (k *kindClusters) KubeConfig(name string) (string, error) { return k.p.KubeConfig(name, false) }
 
 // Delete removes the cluster and its kubeconfig context ("" = default kubeconfig).
 func (k *kindClusters) Delete(name string) error { return k.p.Delete(name, "") }
