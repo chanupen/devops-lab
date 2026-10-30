@@ -206,6 +206,7 @@ func TestApplyGitOps(t *testing.T) {
 		{[]string{"spec", "source", "helm", "valuesObject", "mode"}, "local"},
 		{[]string{"spec", "source", "helm", "valuesObject", "repo", "revision"}, "main"},
 		{[]string{"spec", "syncPolicy", "automated", "prune"}, true},
+		{[]string{"spec", "syncPolicy", "automated", "allowEmpty"}, true},
 	}
 	for _, c := range checks {
 		got, _, _ := unstructured.NestedFieldNoCopy(root.Object, c.field...)
@@ -313,6 +314,18 @@ func TestCoreStack(t *testing.T) {
 	}
 }
 
+func TestSetStackAddsAllowEmpty(t *testing.T) {
+	old := rootApp("local", config.Repo{URL: "git@github.com:o/r.git", Revision: "main"}, map[string]any{"core": true})
+	unstructured.RemoveNestedField(old.Object, "spec", "syncPolicy", "automated", "allowEmpty")
+	e := newEnv(t, true, old)
+	if err := e.runner.Destroy(context.Background(), "core", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := unstructured.NestedBool(e.root(t).Object, "spec", "syncPolicy", "automated", "allowEmpty"); !v {
+		t.Error("allowEmpty not set on an existing root app")
+	}
+}
+
 func TestCoreStackWithoutGitOps(t *testing.T) {
 	e := newEnv(t, true)
 	if err := e.runner.Apply(context.Background(), "core", io.Discard); err == nil ||
@@ -386,6 +399,9 @@ func TestAppsDone(t *testing.T) {
 		{"core still present when off", []kube.App{root, ready("cert-manager", "core")}, "core", false, false,
 			"apps ready: 2/2; 1 core apps still present"},
 		{"core gone", []kube.App{root}, "core", false, true, "apps ready: 1/1"},
+		{"stuck root names its error", []kube.App{{Name: RootApp, Sync: "OutOfSync", Health: "Healthy", Current: true,
+			Problems: []string{"SyncError: auto-sync will wipe out all resources"}}}, "", true, false,
+			"apps ready: 0/1 (waiting for lab-bootstrap OutOfSync/Healthy [SyncError: auto-sync will wipe out all resources])"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

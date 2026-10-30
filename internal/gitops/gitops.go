@@ -203,6 +203,10 @@ func (r *Runner) setStack(ctx context.Context, stack string, on bool, log io.Wri
 	if err := unstructured.SetNestedField(root.Object, on, "spec", "source", "helm", "valuesObject", "stacks", stack); err != nil {
 		return err
 	}
+	// Roots created before allowEmpty was set could never prune the last stack.
+	if err := unstructured.SetNestedField(root.Object, true, "spec", "syncPolicy", "automated", "allowEmpty"); err != nil {
+		return err
+	}
 	logf(log, "setting stacks.%s=%v on Application %s", stack, on, RootApp)
 	if _, err := apps.Update(ctx, root, metav1.UpdateOptions{}); err != nil {
 		return err
@@ -234,7 +238,11 @@ func appsDone(apps []kube.App, stack string, on bool) (bool, string) {
 			stackApps++
 		}
 		if !a.Ready() {
-			waiting = append(waiting, fmt.Sprintf("%s %s/%s%s", a.Name, orUnknown(a.Sync), orUnknown(a.Health), staleNote(a)))
+			w := fmt.Sprintf("%s %s/%s%s", a.Name, orUnknown(a.Sync), orUnknown(a.Health), staleNote(a))
+			if len(a.Problems) > 0 {
+				w += " [" + strings.Join(a.Problems, "; ") + "]"
+			}
+			waiting = append(waiting, w)
 		}
 	}
 	status := fmt.Sprintf("apps ready: %d/%d", len(apps)-len(waiting), len(apps))

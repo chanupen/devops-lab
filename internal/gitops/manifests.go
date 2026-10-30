@@ -78,7 +78,9 @@ func rootApp(mode string, repo config.Repo, stacks map[string]any) *unstructured
 			},
 			"destination": map[string]any{"server": "https://kubernetes.default.svc", "namespace": Namespace},
 			"syncPolicy": map[string]any{
-				"automated": map[string]any{"prune": true, "selfHeal": true},
+				// allowEmpty: with every stack off the chart renders nothing, and
+				// Argo CD refuses to auto-sync to an empty set without it.
+				"automated": map[string]any{"prune": true, "selfHeal": true, "allowEmpty": true},
 				"retry": map[string]any{"limit": int64(10), "backoff": map[string]any{
 					"duration": "10s", "factor": int64(2), "maxDuration": "3m",
 				}},

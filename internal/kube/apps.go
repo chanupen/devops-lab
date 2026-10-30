@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"reflect"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,6 +28,9 @@ type App struct {
 	// app's current source, so a just-changed spec is not reported as Synced
 	// on the strength of the previous comparison.
 	Current bool
+	// Problems are Argo CD error conditions (SyncError, ComparisonError, ...)
+	// as "Type: message", so a wait can say why it is stuck.
+	Problems []string
 }
 
 // Ready reports Synced, Healthy and Current.
@@ -38,9 +42,19 @@ func AppFrom(u *unstructured.Unstructured) App {
 	health, _, _ := unstructured.NestedString(u.Object, "status", "health", "status")
 	src, _, _ := unstructured.NestedMap(u.Object, "spec", "source")
 	compared, ok, _ := unstructured.NestedMap(u.Object, "status", "sync", "comparedTo", "source")
+	var problems []string
+	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	for _, c := range conds {
+		m, _ := c.(map[string]any)
+		typ, _ := m["type"].(string)
+		msg, _ := m["message"].(string)
+		if strings.HasSuffix(typ, "Error") {
+			problems = append(problems, typ+": "+msg)
+		}
+	}
 	return App{
 		Name: u.GetName(), Labels: u.GetLabels(), Sync: sync, Health: health,
-		Current: ok && reflect.DeepEqual(src, compared),
+		Current: ok && reflect.DeepEqual(src, compared), Problems: problems,
 	}
 }
 

@@ -154,6 +154,14 @@ func TestAppFrom(t *testing.T) {
 		{"out of sync", app("a", nil, "OutOfSync", "Healthy", src, src), "OutOfSync", "Healthy", true, false},
 		{"no status yet", app("a", nil, "", "", src, nil), "", "", false, false},
 	}
+	stuck := app("root", nil, "OutOfSync", "Healthy", src, src)
+	stuck.Object["status"].(map[string]any)["conditions"] = []any{
+		map[string]any{"type": "SyncError", "message": "auto-sync will wipe out all resources"},
+		map[string]any{"type": "OrphanedResourceWarning", "message": "ignored"},
+	}
+	if got := AppFrom(stuck).Problems; len(got) != 1 || got[0] != "SyncError: auto-sync will wipe out all resources" {
+		t.Errorf("problems = %q", got)
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := AppFrom(tt.u)
