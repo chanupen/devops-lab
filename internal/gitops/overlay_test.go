@@ -96,3 +96,41 @@ func TestLocalAppDomain(t *testing.T) {
 		}
 	}
 }
+
+// The obs and sample-app values and routes keep the settings the lab relies on.
+func TestObsAndSampleAppFiles(t *testing.T) {
+	tests := []struct {
+		file    string
+		want    []string
+		wantNot []string
+	}{
+		{"stacks/obs/kube-prometheus-stack/values.yaml", []string{"retention: 24h", "fullnameOverride: kps",
+			"alertmanager:\n  enabled: true", "nodeExporter:\n  enabled: true", "kubeStateMetrics:\n  enabled: true",
+			"existingSecret: grafana-admin", "serviceMonitorSelectorNilUsesHelmValues: false", "url: http://loki.monitoring.svc:3100"},
+			[]string{"adminPassword"}},
+		{"overlays/local/obs/kube-prometheus-stack/values.yaml", []string{"kubeEtcd:\n  enabled: false", "kubeScheduler:\n  enabled: false",
+			"kubeControllerManager:\n  enabled: false", "kubeProxy:\n  enabled: false"}, nil},
+		{"stacks/obs/loki/values.yaml", []string{"deploymentMode: SingleBinary", "type: filesystem", "replication_factor: 1",
+			"read: {replicas: 0}", "gateway: {enabled: false}"}, nil},
+		{"overlays/local/obs/loki/values.yaml", []string{"persistence:\n    enabled: false"}, nil},
+		{"stacks/obs/alloy/values.yaml", []string{`loki.source.kubernetes "pods"`, `url = "http://loki.monitoring.svc:3100/loki/api/v1/push"`}, nil},
+		{"overlays/local/obs/routes/grafana-route.yaml", []string{"- grafana.localtest.me", "name: kps-grafana", "port: 80", "sectionName: https"}, nil},
+		{"overlays/local/sample-app/routes/podinfo-route.yaml", []string{"- podinfo.localtest.me", "name: podinfo-frontend", "port: 9898", "sectionName: https"}, nil},
+	}
+	for _, tt := range tests {
+		b, err := os.ReadFile("../../gitops/" + tt.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range tt.want {
+			if !strings.Contains(string(b), w) {
+				t.Errorf("%s lacks %q", tt.file, w)
+			}
+		}
+		for _, w := range tt.wantNot {
+			if strings.Contains(string(b), w) {
+				t.Errorf("%s should not contain %q", tt.file, w)
+			}
+		}
+	}
+}

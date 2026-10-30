@@ -40,8 +40,13 @@ func (a App) Ready() bool { return a.Sync == "Synced" && a.Health == "Healthy" &
 func AppFrom(u *unstructured.Unstructured) App {
 	sync, _, _ := unstructured.NestedString(u.Object, "status", "sync", "status")
 	health, _, _ := unstructured.NestedString(u.Object, "status", "health", "status")
-	src, _, _ := unstructured.NestedMap(u.Object, "spec", "source")
-	compared, ok, _ := unstructured.NestedMap(u.Object, "status", "sync", "comparedTo", "source")
+	// Single-source apps compare spec.source; multi-source apps spec.sources.
+	src, _, _ := unstructured.NestedFieldNoCopy(u.Object, "spec", "source")
+	compared, ok, _ := unstructured.NestedFieldNoCopy(u.Object, "status", "sync", "comparedTo", "source")
+	if srcs, found, _ := unstructured.NestedFieldNoCopy(u.Object, "spec", "sources"); found {
+		src = srcs
+		compared, ok, _ = unstructured.NestedFieldNoCopy(u.Object, "status", "sync", "comparedTo", "sources")
+	}
 	var problems []string
 	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
 	for _, c := range conds {

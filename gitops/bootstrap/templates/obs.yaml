@@ -1,0 +1,55 @@
+{{- if .Values.stacks.obs }}
+# obs: metrics (kube-prometheus-stack with Grafana) and logs (Loki, Alloy).
+# Charts come from their Helm repos; values from this repo, base then overlay.
+{{- $repo := .Values.repo }}
+{{- $mode := .Values.mode }}
+{{- range $app := list
+      (dict "name" "kube-prometheus-stack" "wave" "0" "repo" "https://prometheus-community.github.io/helm-charts" "version" "92.10.1" "release" "kps")
+      (dict "name" "loki" "wave" "0" "repo" "https://grafana.github.io/helm-charts" "version" "7.3.0" "release" "loki")
+      (dict "name" "alloy" "wave" "1" "repo" "https://grafana.github.io/helm-charts" "version" "1.13.1" "release" "alloy") }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list $ $app.name "obs" $app.wave) | nindent 2 }}
+spec:
+  project: default
+  sources:
+    - repoURL: {{ $app.repo }}
+      chart: {{ $app.name }}
+      targetRevision: {{ $app.version }}
+      helm:
+        releaseName: {{ $app.release }}
+        ignoreMissingValueFiles: true # an overlay may have nothing to add
+        valueFiles:
+          - $values/gitops/stacks/obs/{{ $app.name }}/values.yaml
+          - $values/gitops/overlays/{{ $mode }}/obs/{{ $app.name }}/values.yaml
+    - repoURL: {{ required "repo.url is required" $repo.url }}
+      targetRevision: {{ $repo.revision }}
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    {{- include "lab.syncPolicy" $ | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # the Prometheus operator CRDs exceed the client-side apply limit
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "obs-routes" "obs" "1") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision }}
+    path: gitops/overlays/{{ .Values.mode }}/obs/routes
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+{{- end }}

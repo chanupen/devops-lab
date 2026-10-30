@@ -1,0 +1,4 @@
+# Local mode: the lab is disposable, so Loki keeps its data in emptyDir.
+singleBinary:
+  persistence:
+    enabled: false

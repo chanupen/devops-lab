@@ -14,10 +14,11 @@ import (
 
 func newPlanCmd() *cobra.Command {
 	var (
-		flags   labFlags
-		destroy bool
-		prune   bool
-		asJSON  bool
+		flags    labFlags
+		destroy  bool
+		prune    bool
+		asJSON   bool
+		revision string
 	)
 	cmd := &cobra.Command{
 		Use:   "plan",
@@ -36,7 +37,7 @@ func newPlanCmd() *cobra.Command {
 			if destroy {
 				p, err = eng.PlanDown(cfg)
 			} else {
-				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune})
+				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune, Revision: revision})
 			}
 			if err != nil {
 				return err
@@ -53,7 +54,9 @@ func newPlanCmd() *cobra.Command {
 	flags.register(cmd)
 	cmd.Flags().BoolVar(&destroy, "destroy", false, "plan lab down instead of lab up")
 	cmd.Flags().BoolVar(&prune, "prune", false, "plan destroying deployed stacks that are not in the profile")
+	cmd.Flags().StringVar(&revision, "revision", "", "plan lab up --revision (default main)")
 	cmd.MarkFlagsMutuallyExclusive("destroy", "prune")
+	cmd.MarkFlagsMutuallyExclusive("destroy", "revision")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the plan as JSON")
 	return cmd
 }
@@ -69,7 +72,11 @@ var planMark = map[engine.Action]struct {
 
 func writePlan(w io.Writer, r *lipgloss.Renderer, p engine.Plan) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n\n", p.Mode, p.Profile, p.K8sVersion)
+	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s", p.Mode, p.Profile, p.K8sVersion)
+	if p.Revision != "" {
+		fmt.Fprintf(&b, ", gitops revision %s", p.Revision)
+	}
+	b.WriteString("\n\n")
 	width := 0
 	for _, s := range p.Steps {
 		width = max(width, len(s.Stack))

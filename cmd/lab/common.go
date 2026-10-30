@@ -98,8 +98,9 @@ func (l labRunner) AccessHint() string { return l.hint }
 
 // runOptions are the lab up/down flags that reach runners.
 type runOptions struct {
-	Purge   bool          // lab down --purge
-	Timeout time.Duration // per-stack wait (Argo CD install, apps healthy)
+	Revision string        // lab up --revision; empty means main
+	Purge    bool          // lab down --purge
+	Timeout  time.Duration // per-stack wait (Argo CD install, apps healthy)
 }
 
 // providerFactory builds the runner for cfg.Mode. home is the directory
@@ -123,8 +124,10 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
 	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
-		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
-		l.Router["gitops"], l.Router["core"] = g, g
+		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
+		for _, s := range []string{"gitops", "core", "obs", "sample-app"} {
+			l.Router[s] = g
+		}
 		l.hosts = g.AppHosts
 	}
 	return l, nil

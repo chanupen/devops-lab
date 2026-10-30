@@ -1,6 +1,9 @@
 package gitops
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -41,6 +44,26 @@ func argoValues() map[string]any {
 	}
 }
 
+// grafanaSecret holds the Grafana admin login the obs stack's Grafana reads.
+func grafanaSecret(password string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: GrafanaSecret, Namespace: ObsNamespace,
+			Labels: map[string]string{"lab": "true", "lab.stack": "obs"},
+		},
+		StringData: map[string]string{"admin-user": "admin", "admin-password": password},
+	}
+}
+
+// randomPassword returns 32 URL-safe characters from crypto/rand.
+func randomPassword() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
 // repoSecret is the Argo CD repository credential for the GitOps repo.
 func repoSecret(url string, key []byte) *corev1.Secret {
 	return &corev1.Secret{
@@ -52,9 +75,9 @@ func repoSecret(url string, key []byte) *corev1.Secret {
 	}
 }
 
-// rootApp is the app-of-apps: the bootstrap chart on main, with the mode,
-// repo and enabled stacks as values.
-func rootApp(mode string, repo config.Repo, stacks map[string]any) *unstructured.Unstructured {
+// rootApp is the app-of-apps: the bootstrap chart at revision, with the mode,
+// repo, revision and enabled stacks as values.
+func rootApp(mode string, repo config.Repo, revision string, stacks map[string]any) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1",
 		"kind":       "Application",
@@ -68,11 +91,11 @@ func rootApp(mode string, repo config.Repo, stacks map[string]any) *unstructured
 			"project": "default",
 			"source": map[string]any{
 				"repoURL":        repo.URL,
-				"targetRevision": Revision,
+				"targetRevision": revision,
 				"path":           BootstrapPath,
 				"helm": map[string]any{"valuesObject": map[string]any{
 					"mode":   mode,
-					"repo":   map[string]any{"url": repo.URL, "revision": Revision},
+					"repo":   map[string]any{"url": repo.URL, "revision": revision},
 					"stacks": stacks,
 				}},
 			},

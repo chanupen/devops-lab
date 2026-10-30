@@ -15,6 +15,10 @@ import (
 // renderBootstrap renders the repo's gitops/bootstrap chart with the values
 // the gitops stack sets, and returns the objects by kind/name.
 func renderBootstrap(t *testing.T, core bool) map[string]map[string]any {
+	return renderStacks(t, map[string]any{"core": core})
+}
+
+func renderStacks(t *testing.T, stacks map[string]any) map[string]map[string]any {
 	t.Helper()
 	ch, err := loader.Load("../../gitops/bootstrap")
 	if err != nil {
@@ -23,7 +27,7 @@ func renderBootstrap(t *testing.T, core bool) map[string]map[string]any {
 	vals := map[string]any{
 		"mode":   "local",
 		"repo":   map[string]any{"url": "git@github.com:o/r.git", "revision": "feat/x"},
-		"stacks": map[string]any{"core": core},
+		"stacks": stacks,
 	}
 	rv, err := util.ToRenderValues(ch, vals, common.ReleaseOptions{Name: RootApp, Namespace: Namespace}, common.DefaultCapabilities)
 	if err != nil {
@@ -143,4 +147,89 @@ func keys(m map[string]map[string]any) []string {
 	}
 	slices.Sort(k)
 	return k
+}
+
+func TestBootstrapChartObs(t *testing.T) {
+	objs := renderStacks(t, map[string]any{"core": true, "obs": true})
+	tests := []struct {
+		app, chart, version, release, wave string
+	}{
+		{"kube-prometheus-stack", "kube-prometheus-stack", "92.10.1", "kps", "0"},
+		{"loki", "loki", "7.3.0", "loki", "0"},
+		{"alloy", "alloy", "1.13.1", "alloy", "1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.app, func(t *testing.T) {
+			o, ok := objs["Application/"+tt.app]
+			if !ok {
+				t.Fatalf("not rendered; have %v", keys(objs))
+			}
+			if field(o, "metadata", "labels", "lab.stack") != "obs" || field(o, "metadata", "annotations", "argocd.argoproj.io/sync-wave") != tt.wave {
+				t.Errorf("metadata = %v", o["metadata"])
+			}
+			srcs, _ := field(o, "spec", "sources").([]any)
+			if len(srcs) != 2 {
+				t.Fatalf("sources = %v", srcs)
+			}
+			chart, values := srcs[0].(map[string]any), srcs[1].(map[string]any)
+			if chart["chart"] != tt.chart || chart["targetRevision"] != tt.version || field(chart, "helm", "releaseName") != tt.release {
+				t.Errorf("chart source = %v", chart)
+			}
+			files, _ := field(chart, "helm", "valueFiles").([]any)
+			want := []any{"$values/gitops/stacks/obs/" + tt.app + "/values.yaml", "$values/gitops/overlays/local/obs/" + tt.app + "/values.yaml"}
+			if !slices.Equal(files, want) || field(chart, "helm", "ignoreMissingValueFiles") != true {
+				t.Errorf("valueFiles = %v", files)
+			}
+			if values["ref"] != "values" || values["targetRevision"] != "feat/x" || values["repoURL"] != "git@github.com:o/r.git" {
+				t.Errorf("values source = %v", values)
+			}
+			if field(o, "spec", "destination", "namespace") != "monitoring" {
+				t.Errorf("namespace = %v", field(o, "spec", "destination", "namespace"))
+			}
+			opts, _ := field(o, "spec", "syncPolicy", "syncOptions").([]any)
+			if !slices.Contains(opts, any("ServerSideApply=true")) {
+				t.Errorf("syncOptions = %v", opts)
+			}
+		})
+	}
+	if got := field(objs["Application/obs-routes"], "spec", "source", "path"); got != "gitops/overlays/local/obs/routes" {
+		t.Errorf("obs-routes path = %v", got)
+	}
+}
+
+func TestBootstrapChartSampleApp(t *testing.T) {
+	tests := []struct {
+		name string
+		obs  bool
+	}{{"without obs", false}, {"with obs", true}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objs := renderStacks(t, map[string]any{"core": true, "obs": tt.obs, "sample-app": true})
+			for _, app := range []string{"podinfo-backend", "podinfo-frontend"} {
+				o, ok := objs["Application/"+app]
+				if !ok {
+					t.Fatalf("%s not rendered", app)
+				}
+				if field(o, "spec", "source", "chart") != "podinfo" || field(o, "spec", "source", "targetRevision") != "6.15.0" ||
+					field(o, "spec", "source", "helm", "releaseName") != app || field(o, "spec", "destination", "namespace") != "podinfo" {
+					t.Errorf("%s source = %v", app, field(o, "spec", "source"))
+				}
+				if got := field(o, "spec", "source", "helm", "valuesObject", "serviceMonitor", "enabled"); got != tt.obs {
+					t.Errorf("%s serviceMonitor.enabled = %v, want %v", app, got, tt.obs)
+				}
+			}
+			if got := field(objs["Application/podinfo-frontend"], "spec", "source", "helm", "valuesObject", "backend"); got != "http://podinfo-backend.podinfo:9898/echo" {
+				t.Errorf("frontend backend = %v", got)
+			}
+			if got := field(objs["Application/podinfo-backend"], "spec", "source", "helm", "valuesObject", "backend"); got != nil {
+				t.Errorf("backend should not call another backend, got %v", got)
+			}
+			if got := field(objs["Application/sample-app-routes"], "spec", "source", "path"); got != "gitops/overlays/local/sample-app/routes" {
+				t.Errorf("routes path = %v", got)
+			}
+		})
+	}
+	if objs := renderStacks(t, map[string]any{"core": false, "obs": false, "sample-app": false}); len(objs) != 0 {
+		t.Errorf("all off renders %v", keys(objs))
+	}
 }

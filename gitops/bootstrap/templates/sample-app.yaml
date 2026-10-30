@@ -1,0 +1,57 @@
+{{- if index .Values.stacks "sample-app" }}
+# sample-app: podinfo as a frontend that calls a backend. Images come from
+# ghcr.io through the node mirrors, so pulls hit the Zot cache. The
+# ServiceMonitors exist only when obs (and its CRDs) is on.
+{{- $obs := .Values.stacks.obs | default false }}
+{{- range $app := list
+      (dict "name" "podinfo-backend" "message" "backend")
+      (dict "name" "podinfo-frontend" "message" "lab sample-app" "backend" "http://podinfo-backend.podinfo:9898/echo") }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list $ $app.name "sample-app" "0") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: https://stefanprodan.github.io/podinfo
+    chart: podinfo
+    targetRevision: 6.15.0
+    helm:
+      releaseName: {{ $app.name }}
+      valuesObject:
+        {{- with $app.backend }}
+        backend: {{ . }}
+        {{- end }}
+        ui:
+          message: {{ $app.message | quote }}
+        resources:
+          requests: {cpu: 5m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        serviceMonitor:
+          enabled: {{ $obs }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podinfo
+  syncPolicy:
+    {{- include "lab.syncPolicy" $ | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "sample-app-routes" "sample-app" "1") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision }}
+    path: gitops/overlays/{{ .Values.mode }}/sample-app/routes
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podinfo
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+{{- end }}

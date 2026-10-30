@@ -173,6 +173,7 @@ func TestCatalogShape(t *testing.T) {
 		{"gitops", []string{"cluster"}, []string{"registry", "cluster", "gitops"}},
 		{"core", []string{"gitops"}, []string{"registry", "cluster", "gitops", "core"}},
 		{"sample-app", []string{"core", "registry"}, []string{"registry", "cluster", "gitops", "core", "sample-app"}},
+		{"obs", []string{"gitops", "core"}, []string{"registry", "cluster", "gitops", "core", "obs"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.stack, func(t *testing.T) {

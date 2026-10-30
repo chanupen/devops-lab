@@ -208,3 +208,31 @@ func TestWaitAppsWatches(t *testing.T) {
 		t.Errorf("log = %q", got)
 	}
 }
+
+func TestAppFromMultiSource(t *testing.T) {
+	chart := map[string]any{"chart": "loki", "targetRevision": "7.3.0"}
+	values := map[string]any{"ref": "values", "targetRevision": "main"}
+	multi := func(spec, compared []any) *unstructured.Unstructured {
+		u := app("loki", nil, "Synced", "Healthy", nil, nil)
+		delete(u.Object["spec"].(map[string]any), "source")
+		u.Object["spec"].(map[string]any)["sources"] = spec
+		if compared != nil {
+			u.Object["status"].(map[string]any)["sync"].(map[string]any)["comparedTo"] = map[string]any{"sources": compared}
+		}
+		return u
+	}
+	tests := []struct {
+		name string
+		u    *unstructured.Unstructured
+		want bool
+	}{
+		{"compared current sources", multi([]any{chart, values}, []any{chart, values}), true},
+		{"compared an older revision", multi([]any{chart, values}, []any{chart, map[string]any{"ref": "values", "targetRevision": "feat/x"}}), false},
+		{"not compared yet", multi([]any{chart, values}, nil), false},
+	}
+	for _, tt := range tests {
+		if got := AppFrom(tt.u); got.Current != tt.want || got.Ready() != tt.want {
+			t.Errorf("%s: current = %v, ready = %v; want %v", tt.name, got.Current, got.Ready(), tt.want)
+		}
+	}
+}

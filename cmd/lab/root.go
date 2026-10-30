@@ -13,6 +13,6 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), newUpCmd(newProvider), newDownCmd(newProvider))
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), newUpCmd(newProvider), newDownCmd(newProvider), newStatusCmd(newProvider))
 	return root
 }

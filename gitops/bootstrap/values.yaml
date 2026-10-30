@@ -5,3 +5,5 @@ repo:
   revision: main     # always main; lab-bootstrap passes it to in-repo apps
 stacks:
   core: false
+  obs: false
+  sample-app: false

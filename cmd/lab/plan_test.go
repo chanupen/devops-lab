@@ -10,11 +10,11 @@ import (
 )
 
 func TestPlanCmd(t *testing.T) {
-	const partial = `{"version":1,"mode":"local","stacks":{
+	const partial = `{"version":1,"mode":"local","revision":"main","stacks":{
 		"cluster":{"status":"applied","updatedAt":"2026-10-30T10:00:00Z"},
 		"gitops":{"status":"applied","updatedAt":"2026-10-30T10:00:00Z"}},"ops":[]}`
 	// minimal plus chaos and obs left from a full run.
-	const withExtras = `{"version":1,"mode":"local","stacks":{
+	const withExtras = `{"version":1,"mode":"local","revision":"main","stacks":{
 		"cluster":{"status":"applied"},"gitops":{"status":"applied"},"core":{"status":"applied"},
 		"registry":{"status":"applied"},"sample-app":{"status":"applied"},
 		"obs":{"status":"applied"},"chaos":{"status":"applied"}},"ops":[]}`

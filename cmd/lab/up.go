@@ -15,11 +15,12 @@ import (
 
 func newUpCmd(newProvider providerFactory) *cobra.Command {
 	var (
-		flags   labFlags
-		stacks  []string
-		prune   bool
-		yes     bool
-		timeout time.Duration
+		flags    labFlags
+		stacks   []string
+		prune    bool
+		yes      bool
+		timeout  time.Duration
+		revision string
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -27,7 +28,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 		Long: "Plans against ~/.lab/state.json and applies stacks in dependency order. Stacks already\n" +
 			"applied are kept; failed ones are retried. Deployed stacks outside the profile are kept\n" +
 			"unless --prune is given.",
-		Example: "  lab up\n  lab up --stacks cluster,registry",
+		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, store, g, err := flags.load()
@@ -35,7 +36,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				return err
 			}
 			eng := engine.New(g, store, nil)
-			p, err := eng.PlanUp(cfg, engine.PlanOptions{Stacks: stacks, Prune: prune})
+			p, err := eng.PlanUp(cfg, engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision})
 			if err != nil {
 				return err
 			}
@@ -44,7 +45,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err := writePlan(out, r, p); err != nil {
 				return err
 			}
-			prov, err := newProvider(cfg, homeOf(store), runOptions{Timeout: timeout})
+			prov, err := newProvider(cfg, homeOf(store), runOptions{Revision: revision, Timeout: timeout})
 			if err != nil {
 				return err
 			}
@@ -58,7 +59,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 						return err
 					}
 				}
-				if err := run(cmd, prov, g, store, p, upCommand(stacks, prune)); err != nil {
+				if err := run(cmd, prov, g, store, p, upCommand(stacks, prune, revision)); err != nil {
 					return err
 				}
 			}
@@ -69,19 +70,24 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "apply only these stacks and their dependencies")
 	cmd.Flags().BoolVar(&prune, "prune", false, "destroy deployed stacks that are not in the profile")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks")
+	cmd.Flags().StringVar(&revision, "revision", "",
+		"sync the gitops stack from this Git branch to test changes before they merge (default main)")
 	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
 	return cmd
 }
 
 // upCommand is the CLI command recorded in the ops log.
-func upCommand(stacks []string, prune bool) string {
+func upCommand(stacks []string, prune bool, revision string) string {
 	c := "lab up"
 	if len(stacks) > 0 {
 		c += " --stacks " + strings.Join(stacks, ",")
 	}
 	if prune {
 		c += " --prune"
+	}
+	if revision != "" {
+		c += " --revision " + revision
 	}
 	return c
 }

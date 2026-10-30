@@ -31,6 +31,9 @@ func stateWith(mode string, stacks map[string]string) state.State {
 	for name, status := range stacks {
 		s.Stacks[name] = state.StackState{Status: status, Error: map[bool]string{true: "timeout"}[status == state.Failed]}
 	}
+	if stacks[RevisionStack] == state.Applied {
+		s.Revision = DefaultRevision // what a gitops apply records
+	}
 	return s
 }
 
@@ -214,7 +217,7 @@ func TestPlanDown(t *testing.T) {
 		{"nothing deployed", state.New(), "", ""},
 		{"reverse dependency order", stateWith("local", map[string]string{
 			"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "obs": applied, "sample-app": applied,
-		}), "-sample-app -core -obs -gitops -cluster -registry", ""},
+		}), "-sample-app -obs -core -gitops -cluster -registry", ""},
 		{"failed stacks are destroyed too", stateWith("local", map[string]string{
 			"cluster": applied, "gitops": state.Failed,
 		}), "-gitops -cluster", ""},
@@ -258,7 +261,7 @@ func TestPlanUpStacks(t *testing.T) {
 			st:   stateWith("local", map[string]string{"registry": applied, "cluster": applied, "gitops": applied}),
 			want: "=registry =cluster =gitops"},
 		{name: "selection outside the profile is allowed", stacks: []string{"chaos"}, st: state.New(),
-			want: "+registry +cluster +gitops +obs +chaos"},
+			want: "+registry +cluster +gitops +core +obs +chaos"},
 		{name: "unknown stack", stacks: []string{"harbor"}, st: state.New(), wantErr: `unknown stack "harbor"`},
 		{name: "prune with a selection is refused", stacks: []string{"cluster"}, prune: true, st: state.New(),
 			wantErr: "cannot be combined with a stack selection"},
@@ -285,6 +288,75 @@ func TestPlanUpStacks(t *testing.T) {
 			for _, s := range p.Steps {
 				if s.Action == Keep && !slices.Contains(tt.stacks, s.Stack) && s.Reason != "not selected" && s.Reason != "applied" {
 					t.Errorf("%s reason = %q", s.Stack, s.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanUpRevision(t *testing.T) {
+	applied := state.Applied
+	upToCore := map[string]string{"registry": applied, "cluster": applied, "gitops": applied, "core": applied}
+	onBranch := stateWith("local", upToCore)
+	onBranch.Revision = "feat/obs"
+	unrecorded := stateWith("local", upToCore)
+	unrecorded.Revision = ""
+	tests := []struct {
+		name         string
+		st           state.State
+		stacks       []string
+		revision     string
+		want         string
+		wantRevision string
+		wantWarning  bool
+		wantErr      string
+	}{
+		{name: "fresh lab tracks main", st: state.New(), stacks: []string{"core"},
+			want: "+registry +cluster +gitops +core", wantRevision: "main"},
+		{name: "fresh lab on a branch warns", st: state.New(), stacks: []string{"core"}, revision: "feat/obs",
+			want: "+registry +cluster +gitops +core", wantRevision: "feat/obs", wantWarning: true},
+		{name: "on main, plain up keeps gitops", st: stateWith("local", upToCore), stacks: []string{"core"},
+			want: "=registry =cluster =gitops =core", wantRevision: "main"},
+		{name: "on main, --revision re-applies gitops", st: stateWith("local", upToCore), stacks: []string{"core"}, revision: "feat/obs",
+			want: "=registry =cluster +gitops =core", wantRevision: "feat/obs", wantWarning: true},
+		{name: "on a branch, plain up moves back to main", st: onBranch, stacks: []string{"core"},
+			want: "=registry =cluster +gitops =core", wantRevision: "main"},
+		{name: "on a branch, same --revision keeps", st: onBranch, stacks: []string{"core"}, revision: "feat/obs",
+			want: "=registry =cluster =gitops =core", wantRevision: "feat/obs", wantWarning: true},
+		{name: "unrecorded revision is re-applied", st: unrecorded, stacks: []string{"core"},
+			want: "=registry =cluster +gitops =core", wantRevision: "main"},
+		{name: "no gitops in the selection, no revision", st: state.New(), stacks: []string{"cluster"},
+			want: "+registry +cluster", wantRevision: ""},
+		{name: "--revision without gitops is an error", st: state.New(), stacks: []string{"cluster"}, revision: "feat/obs",
+			wantErr: "--revision applies to the gitops stack"},
+	}
+	g := catalogGraph(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := PlanUp(g, cfgFor("local", "minimal"), tt.st, PlanOptions{Stacks: tt.stacks, Revision: tt.revision})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(p); got != tt.want {
+				t.Errorf("plan = %s, want %s", got, tt.want)
+			}
+			if p.Revision != tt.wantRevision {
+				t.Errorf("revision = %q, want %q", p.Revision, tt.wantRevision)
+			}
+			warned := slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "a plain lab up moves it back") })
+			if warned != tt.wantWarning {
+				t.Errorf("warnings = %q, want revision warning %v", p.Warnings, tt.wantWarning)
+			}
+			for _, s := range p.Steps {
+				if s.Stack == "gitops" && s.Action == Apply && tt.st.Stacks["gitops"].Status == applied &&
+					!strings.HasPrefix(s.Reason, "revision ") {
+					t.Errorf("gitops reason = %q", s.Reason)
 				}
 			}
 		})

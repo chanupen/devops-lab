@@ -1,0 +1,11 @@
+# Local mode (kind): the control-plane components bind their metrics to
+# localhost inside the node, so Prometheus cannot scrape them; skip those jobs
+# instead of carrying permanently failing targets and alerts.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
