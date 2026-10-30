@@ -10,9 +10,14 @@ import (
 )
 
 func TestPlanCmd(t *testing.T) {
-	const appliedMinimal = `{"version":1,"mode":"local","stacks":{
-		"core":{"status":"applied","updatedAt":"2026-10-30T10:00:00Z"},
+	const partial = `{"version":1,"mode":"local","stacks":{
+		"cluster":{"status":"applied","updatedAt":"2026-10-30T10:00:00Z"},
 		"gitops":{"status":"applied","updatedAt":"2026-10-30T10:00:00Z"}},"ops":[]}`
+	// minimal plus chaos and obs left from a full run.
+	const withExtras = `{"version":1,"mode":"local","stacks":{
+		"cluster":{"status":"applied"},"gitops":{"status":"applied"},"core":{"status":"applied"},
+		"registry":{"status":"applied"},"sample-app":{"status":"applied"},
+		"obs":{"status":"applied"},"chaos":{"status":"applied"}},"ops":[]}`
 	tests := []struct {
 		name    string
 		config  string
@@ -24,21 +29,41 @@ func TestPlanCmd(t *testing.T) {
 		{
 			name:   "fresh standard",
 			config: "profile: standard\n",
-			want: []string{"local mode, standard profile, Kubernetes 1.37", "+ core", "+ sample-app",
-				"8 to apply, 0 to destroy, 0 unchanged"},
+			want: []string{"local mode, standard profile, Kubernetes 1.37", "+ cluster", "+ core", "+ sample-app",
+				"9 to apply, 0 to destroy, 0 unchanged"},
 		},
 		{
 			name:   "partial state",
 			config: "profile: minimal\n",
-			state:  appliedMinimal,
-			want:   []string{"= core", "= gitops", "+ registry", "2 to apply, 0 to destroy, 2 unchanged"},
+			state:  partial,
+			want:   []string{"= cluster", "= gitops", "+ core", "+ registry", "3 to apply, 0 to destroy, 2 unchanged"},
+		},
+		{
+			name:   "extras kept with a warning",
+			config: "profile: minimal\n",
+			state:  withExtras,
+			want: []string{"= obs", "not in profile; run lab up --prune to remove", "0 to apply, 0 to destroy, 7 unchanged",
+				"warning: 2 deployed stacks are not in profile minimal, kept: obs, chaos. Run lab up --prune to remove."},
+		},
+		{
+			name:   "prune destroys extras",
+			config: "profile: minimal\n",
+			state:  withExtras,
+			args:   []string{"--prune"},
+			want:   []string{"- chaos", "- obs", "0 to apply, 2 to destroy, 5 unchanged"},
+		},
+		{
+			name:    "prune and destroy are exclusive",
+			config:  "profile: minimal\n",
+			args:    []string{"--prune", "--destroy"},
+			wantErr: "none of the others can be",
 		},
 		{
 			name:   "destroy",
 			config: "profile: minimal\n",
-			state:  appliedMinimal,
+			state:  partial,
 			args:   []string{"--destroy"},
-			want:   []string{"- gitops", "- core", "0 to apply, 2 to destroy, 0 unchanged"},
+			want:   []string{"- gitops", "- cluster", "0 to apply, 2 to destroy, 0 unchanged"},
 		},
 		{
 			name:   "destroy with nothing deployed",
@@ -54,7 +79,7 @@ func TestPlanCmd(t *testing.T) {
 		{
 			name:    "mode mismatch",
 			config:  "mode: cloud\ncloud:\n  owner: someone\n",
-			state:   appliedMinimal,
+			state:   partial,
 			wantErr: "run lab down in local mode first",
 		},
 	}
@@ -86,6 +111,9 @@ func TestPlanCmd(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", w, out)
 				}
 			}
+			if !strings.Contains(strings.Join(tt.want, " "), "warning:") && strings.Contains(out, "warning:") {
+				t.Errorf("unexpected warning:\n%s", out)
+			}
 			if _, err := os.Stat(statePath); tt.state == "" && err == nil {
 				t.Error("plan created a state file; it must not write")
 			}
@@ -110,7 +138,7 @@ func TestPlanCmdJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &p); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if p.K8sVersion != "1.37" || len(p.Steps) != 4 || p.Steps[0].Stack != "core" || p.Steps[0].Action != "apply" {
+	if p.K8sVersion != "1.37" || len(p.Steps) != 5 || p.Steps[0].Stack != "cluster" || p.Steps[0].Action != "apply" {
 		t.Errorf("unexpected plan: %+v", p)
 	}
 }

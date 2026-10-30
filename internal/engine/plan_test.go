@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,71 +46,102 @@ func render(p Plan) string {
 
 func TestPlanUp(t *testing.T) {
 	applied := state.Applied
+	minimalApplied := map[string]string{
+		"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied,
+	}
+	// minimal plus stacks from a previous full run.
+	withExtras := map[string]string{
+		"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied,
+		"obs": applied, "chaos": applied, "secrets": state.Failed,
+	}
+	const keepWarning = "3 deployed stacks are not in profile minimal, kept: obs, secrets, chaos. Run lab up --prune to remove."
 	tests := []struct {
-		name        string
-		cfg         config.Config
-		st          state.State
-		want        string
-		wantChanges int
-		wantErr     string
+		name         string
+		cfg          config.Config
+		st           state.State
+		prune        bool
+		want         string
+		wantChanges  int
+		wantWarnings []string
+		wantErr      string
 	}{
 		{
 			name:        "fresh minimal",
 			cfg:         cfgFor("local", "minimal"),
 			st:          state.New(),
-			want:        "+core +gitops +registry +sample-app",
-			wantChanges: 4,
+			want:        "+cluster +gitops +core +registry +sample-app",
+			wantChanges: 5,
 		},
 		{
 			name:        "fresh standard",
 			cfg:         cfgFor("local", "standard"),
 			st:          state.New(),
-			want:        "+core +gitops +registry +secrets +obs +policy +scaling +sample-app",
-			wantChanges: 8,
+			want:        "+cluster +gitops +core +registry +secrets +obs +policy +scaling +sample-app",
+			wantChanges: 9,
 		},
 		{
 			name: "fully applied is all keep",
 			cfg:  cfgFor("local", "minimal"),
-			st: stateWith("local", map[string]string{
-				"core": applied, "gitops": applied, "registry": applied, "sample-app": applied,
-			}),
-			want: "=core =gitops =registry =sample-app",
+			st:   stateWith("local", minimalApplied),
+			want: "=cluster =gitops =core =registry =sample-app",
 		},
 		{
 			name:        "partial apply resumes",
 			cfg:         cfgFor("local", "minimal"),
-			st:          stateWith("local", map[string]string{"core": applied, "gitops": applied}),
-			want:        "=core =gitops +registry +sample-app",
-			wantChanges: 2,
+			st:          stateWith("local", map[string]string{"cluster": applied, "gitops": applied}),
+			want:        "=cluster =gitops +core +registry +sample-app",
+			wantChanges: 3,
 		},
 		{
 			name:        "failed stack is retried",
 			cfg:         cfgFor("local", "minimal"),
-			st:          stateWith("local", map[string]string{"core": applied, "gitops": state.Failed}),
-			want:        "=core +gitops +registry +sample-app",
+			st:          stateWith("local", map[string]string{"cluster": applied, "gitops": state.Failed}),
+			want:        "=cluster +gitops +core +registry +sample-app",
+			wantChanges: 4,
+		},
+		{
+			name:         "smaller profile keeps extras and warns",
+			cfg:          cfgFor("local", "minimal"),
+			st:           stateWith("local", withExtras),
+			want:         "=cluster =gitops =core =registry =sample-app =obs =secrets =chaos",
+			wantWarnings: []string{keepWarning},
+		},
+		{
+			name:        "smaller profile with prune destroys extras, dependents first",
+			cfg:         cfgFor("local", "minimal"),
+			st:          stateWith("local", withExtras),
+			prune:       true,
+			want:        "-chaos -secrets -obs =cluster =gitops =core =registry =sample-app",
 			wantChanges: 3,
 		},
 		{
-			name: "smaller profile destroys extras, dependents first",
+			name: "one extra uses singular wording",
 			cfg:  cfgFor("local", "minimal"),
 			st: stateWith("local", map[string]string{
-				"core": applied, "gitops": applied, "registry": applied, "sample-app": applied,
-				"obs": applied, "chaos": applied, "secrets": state.Failed,
+				"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied, "policy": applied,
 			}),
-			want:        "-chaos -secrets -obs =core =gitops =registry =sample-app",
-			wantChanges: 3,
+			want:         "=cluster =gitops =core =registry =sample-app =policy",
+			wantWarnings: []string{"1 deployed stack is not in profile minimal, kept: policy. Run lab up --prune to remove."},
+		},
+		{
+			name:        "prune with nothing extra changes nothing",
+			cfg:         cfgFor("local", "minimal"),
+			st:          stateWith("local", minimalApplied),
+			prune:       true,
+			want:        "=cluster =gitops =core =registry =sample-app",
+			wantChanges: 0,
 		},
 		{
 			name:    "state from the other mode",
 			cfg:     cfgFor("cloud", "minimal"),
-			st:      stateWith("local", map[string]string{"core": applied}),
+			st:      stateWith("local", map[string]string{"cluster": applied}),
 			wantErr: "run lab down in local mode first",
 		},
 		{
 			name: "other mode with nothing deployed is fine",
 			cfg:  cfgFor("cloud", "minimal"),
 			st:   stateWith("local", nil),
-			want: "+core +gitops +registry +sample-app", wantChanges: 4,
+			want: "+cluster +gitops +core +registry +sample-app", wantChanges: 5,
 		},
 		{
 			name:    "unknown stack in state",
@@ -121,7 +153,7 @@ func TestPlanUp(t *testing.T) {
 	g := catalogGraph(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := PlanUp(g, tt.cfg, tt.st)
+			p, err := PlanUp(g, tt.cfg, tt.st, PlanOptions{Prune: tt.prune})
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
@@ -137,6 +169,14 @@ func TestPlanUp(t *testing.T) {
 			if p.Changes() != tt.wantChanges {
 				t.Errorf("changes = %d, want %d", p.Changes(), tt.wantChanges)
 			}
+			if !slices.Equal(p.Warnings, tt.wantWarnings) {
+				t.Errorf("warnings = %q\nwant       %q", p.Warnings, tt.wantWarnings)
+			}
+			for _, s := range p.Steps {
+				if s.Action == Keep && !slices.Contains(mustProfile(t, tt.cfg.Profile), s.Stack) && s.Reason != keepReason {
+					t.Errorf("kept extra %s has reason %q, want %q", s.Stack, s.Reason, keepReason)
+				}
+			}
 			if p.K8sVersion != config.K8sVersion || p.Mode != tt.cfg.Mode || p.Profile != tt.cfg.Profile {
 				t.Errorf("plan header = %s/%s/%s", p.Mode, p.Profile, p.K8sVersion)
 			}
@@ -144,8 +184,17 @@ func TestPlanUp(t *testing.T) {
 	}
 }
 
+func mustProfile(t *testing.T, profile string) []string {
+	t.Helper()
+	s, err := ProfileStacks(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestPlanUpFailedReasonCarriesError(t *testing.T) {
-	p, err := PlanUp(catalogGraph(t), cfgFor("local", "minimal"), stateWith("local", map[string]string{"core": state.Failed}))
+	p, err := PlanUp(catalogGraph(t), cfgFor("local", "minimal"), stateWith("local", map[string]string{"cluster": state.Failed}), PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +213,12 @@ func TestPlanDown(t *testing.T) {
 	}{
 		{"nothing deployed", state.New(), "", ""},
 		{"reverse dependency order", stateWith("local", map[string]string{
-			"core": applied, "gitops": applied, "registry": applied, "obs": applied, "sample-app": applied,
-		}), "-sample-app -registry -obs -gitops -core", ""},
+			"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "obs": applied, "sample-app": applied,
+		}), "-sample-app -core -registry -obs -gitops -cluster", ""},
 		{"failed stacks are destroyed too", stateWith("local", map[string]string{
-			"core": applied, "gitops": state.Failed,
-		}), "-gitops -core", ""},
-		{"other mode refused", stateWith("cloud", map[string]string{"core": applied}), "", "cloud lab"},
+			"cluster": applied, "gitops": state.Failed,
+		}), "-gitops -cluster", ""},
+		{"other mode refused", stateWith("cloud", map[string]string{"cluster": applied}), "", "cloud lab"},
 	}
 	g := catalogGraph(t)
 	for _, tt := range tests {

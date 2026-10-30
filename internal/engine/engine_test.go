@@ -64,10 +64,17 @@ func (f *fakeRunner) Destroy(_ context.Context, s string) error { return f.run("
 
 func TestExecute(t *testing.T) {
 	applied := state.Applied
+	minimal := map[string]string{
+		"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied,
+	}
+	withObs := map[string]string{
+		"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied, "obs": applied,
+	}
 	tests := []struct {
 		name       string
 		start      state.State
 		down       bool
+		prune      bool
 		fail       map[string]bool
 		wantCalls  []string
 		wantErr    string
@@ -79,51 +86,68 @@ func TestExecute(t *testing.T) {
 		{
 			name:       "fresh up applies in order",
 			start:      state.New(),
-			wantCalls:  []string{"apply core", "apply gitops", "apply registry", "apply sample-app"},
-			wantStacks: map[string]string{"core": applied, "gitops": applied, "registry": applied, "sample-app": applied},
+			wantCalls:  []string{"apply cluster", "apply gitops", "apply core", "apply registry", "apply sample-app"},
+			wantStacks: minimal,
 			wantMode:   "local",
-			wantOps:    []string{"apply core ok", "apply gitops ok", "apply registry ok", "apply sample-app ok"},
-			wantEvents: []string{"started core", "finished core", "started gitops", "finished gitops",
-				"started registry", "finished registry", "started sample-app", "finished sample-app"},
+			wantOps:    []string{"apply cluster ok", "apply gitops ok", "apply core ok", "apply registry ok", "apply sample-app ok"},
+			wantEvents: []string{"started cluster", "finished cluster", "started gitops", "finished gitops",
+				"started core", "finished core", "started registry", "finished registry",
+				"started sample-app", "finished sample-app"},
 		},
 		{
 			name:       "kept stacks are skipped",
-			start:      stateWith("local", map[string]string{"core": applied, "gitops": applied}),
+			start:      stateWith("local", map[string]string{"cluster": applied, "gitops": applied, "core": applied}),
 			wantCalls:  []string{"apply registry", "apply sample-app"},
-			wantStacks: map[string]string{"core": applied, "gitops": applied, "registry": applied, "sample-app": applied},
+			wantStacks: minimal,
 			wantMode:   "local",
 			wantOps:    []string{"apply registry ok", "apply sample-app ok"},
 			wantEvents: []string{"started registry", "finished registry", "started sample-app", "finished sample-app"},
 		},
 		{
+			name:       "extras outside the profile are left alone without prune",
+			start:      stateWith("local", withObs),
+			wantStacks: withObs,
+			wantMode:   "local",
+		},
+		{
+			name:       "prune destroys extras",
+			start:      stateWith("local", withObs),
+			prune:      true,
+			wantCalls:  []string{"destroy obs"},
+			wantStacks: minimal,
+			wantMode:   "local",
+			wantOps:    []string{"destroy obs ok"},
+			wantEvents: []string{"started obs", "finished obs"},
+		},
+		{
 			name:       "failure stops and is recorded",
 			start:      state.New(),
 			fail:       map[string]bool{"gitops": true},
-			wantCalls:  []string{"apply core", "apply gitops"},
+			wantCalls:  []string{"apply cluster", "apply gitops"},
 			wantErr:    "apply gitops: helm timeout",
-			wantStacks: map[string]string{"core": applied, "gitops": state.Failed},
+			wantStacks: map[string]string{"cluster": applied, "gitops": state.Failed},
 			wantMode:   "local",
-			wantOps:    []string{"apply core ok", "apply gitops failed"},
-			wantEvents: []string{"started core", "finished core", "started gitops", "failed gitops"},
+			wantOps:    []string{"apply cluster ok", "apply gitops failed"},
+			wantEvents: []string{"started cluster", "finished cluster", "started gitops", "failed gitops"},
 		},
 		{
 			name:       "down removes stacks and clears mode",
-			start:      stateWith("local", map[string]string{"core": applied, "gitops": applied}),
+			start:      stateWith("local", map[string]string{"cluster": applied, "gitops": applied}),
 			down:       true,
-			wantCalls:  []string{"destroy gitops", "destroy core"},
+			wantCalls:  []string{"destroy gitops", "destroy cluster"},
 			wantStacks: map[string]string{},
 			wantMode:   "",
-			wantOps:    []string{"destroy gitops ok", "destroy core ok"},
-			wantEvents: []string{"started gitops", "finished gitops", "started core", "finished core"},
+			wantOps:    []string{"destroy gitops ok", "destroy cluster ok"},
+			wantEvents: []string{"started gitops", "finished gitops", "started cluster", "finished cluster"},
 		},
 		{
 			name:       "failed destroy keeps the stack as failed",
-			start:      stateWith("local", map[string]string{"core": applied, "gitops": applied}),
+			start:      stateWith("local", map[string]string{"cluster": applied, "gitops": applied}),
 			down:       true,
 			fail:       map[string]bool{"gitops": true},
 			wantCalls:  []string{"destroy gitops"},
 			wantErr:    "destroy gitops: helm timeout",
-			wantStacks: map[string]string{"core": applied, "gitops": state.Failed},
+			wantStacks: map[string]string{"cluster": applied, "gitops": state.Failed},
 			wantMode:   "local",
 			wantOps:    []string{"destroy gitops failed"},
 			wantEvents: []string{"started gitops", "failed gitops"},
@@ -144,7 +168,7 @@ func TestExecute(t *testing.T) {
 			if tt.down {
 				p, err = eng.PlanDown(cfg)
 			} else {
-				p, err = eng.PlanUp(cfg)
+				p, err = eng.PlanUp(cfg, PlanOptions{Prune: tt.prune})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -196,7 +220,7 @@ func TestExecute(t *testing.T) {
 
 func TestExecuteGuards(t *testing.T) {
 	g := catalogGraph(t)
-	plan := Plan{Mode: "local", Steps: []Step{{"core", Apply, ""}, {"gitops", Apply, ""}}}
+	plan := Plan{Mode: "local", Steps: []Step{{"cluster", Apply, ""}, {"gitops", Apply, ""}}}
 
 	t.Run("no runner", func(t *testing.T) {
 		err := New(g, &memStore{st: state.New()}, nil).Execute(context.Background(), plan, "lab up", nil)
@@ -218,7 +242,7 @@ func TestExecuteGuards(t *testing.T) {
 	t.Run("state write failure is reported", func(t *testing.T) {
 		store := &memStore{st: state.New(), updateErr: errors.New("disk full")}
 		err := New(g, store, &fakeRunner{}).Execute(context.Background(), plan, "lab up", nil)
-		if err == nil || !strings.Contains(err.Error(), "record apply core: disk full") {
+		if err == nil || !strings.Contains(err.Error(), "record apply cluster: disk full") {
 			t.Fatalf("err = %v", err)
 		}
 	})

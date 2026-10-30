@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -31,7 +32,18 @@ type Plan struct {
 	Profile    string `json:"profile"`
 	K8sVersion string `json:"k8sVersion"`
 	Steps      []Step `json:"steps"`
+	// Warnings are shown before the plan runs, e.g. stacks kept outside the profile.
+	Warnings []string `json:"warnings,omitempty"`
 }
+
+// PlanOptions change how PlanUp treats deployed stacks outside the profile.
+type PlanOptions struct {
+	// Prune destroys them. Without it they are kept and the plan warns.
+	Prune bool
+}
+
+// keepReason is the step reason for a deployed stack kept outside the profile.
+const keepReason = "not in profile; run lab up --prune to remove"
 
 // Changes counts the steps that are not Keep.
 func (p Plan) Changes() int {
@@ -44,10 +56,12 @@ func (p Plan) Changes() int {
 	return n
 }
 
-// PlanUp brings the lab to the profile in cfg. Stacks outside the profile are
-// destroyed first, dependents before dependencies; then the profile's stacks
-// are applied, dependencies first. Applied stacks are kept; failed ones retried.
-func PlanUp(g *Graph, cfg config.Config, st state.State) (Plan, error) {
+// PlanUp brings the lab to the profile in cfg: the profile's stacks are
+// applied, dependencies first; applied ones are kept and failed ones retried.
+// Deployed stacks outside the profile are destroyed first (dependents before
+// dependencies) only with opts.Prune; otherwise they are kept, listed after the
+// profile's stacks, and the plan carries a warning.
+func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan, error) {
 	if err := checkState(g, cfg, st); err != nil {
 		return Plan{}, err
 	}
@@ -59,10 +73,16 @@ func PlanUp(g *Graph, cfg config.Config, st state.State) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	p := newPlan(cfg)
 	all, _ := g.Order(g.Names()...) // NewGraph proved this has no cycles
-	for _, s := range reversed(all) {
+	var extra []string              // deployed, not in profile, dependency order
+	for _, s := range all {
 		if deployed(st, s) && !slices.Contains(desired, s) {
+			extra = append(extra, s)
+		}
+	}
+	p := newPlan(cfg)
+	if opts.Prune {
+		for _, s := range reversed(extra) {
 			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + cfg.Profile})
 		}
 	}
@@ -76,6 +96,15 @@ func PlanUp(g *Graph, cfg config.Config, st state.State) (Plan, error) {
 		default:
 			p.Steps = append(p.Steps, Step{s, Apply, "not deployed"})
 		}
+	}
+	if !opts.Prune && len(extra) > 0 {
+		// Desired stacks never depend on extras (desired is closed under
+		// dependencies), so listing extras last keeps the order valid.
+		for _, s := range extra {
+			p.Steps = append(p.Steps, Step{s, Keep, keepReason})
+		}
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d deployed %s not in profile %s, kept: %s. Run lab up --prune to remove.",
+			len(extra), plural(len(extra), "stack is", "stacks are"), cfg.Profile, strings.Join(extra, ", ")))
 	}
 	return p, nil
 }
@@ -116,6 +145,13 @@ func checkState(g *Graph, cfg config.Config, st state.State) error {
 func deployed(st state.State, stack string) bool {
 	s := st.Stacks[stack].Status
 	return s == state.Applied || s == state.Failed
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func reversed(s []string) []string {

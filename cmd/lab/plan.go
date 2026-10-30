@@ -19,13 +19,15 @@ func newPlanCmd() *cobra.Command {
 		cfgPath   string
 		statePath string
 		destroy   bool
+		prune     bool
 		asJSON    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Show what lab up (or lab down with --destroy) would change",
 		Long: "Compares lab.yaml with ~/.lab/state.json and prints the stacks to apply or destroy,\n" +
-			"in dependency order. Changes nothing.",
+			"in dependency order. Changes nothing. Deployed stacks outside the profile are kept\n" +
+			"unless --prune is given, matching lab up --prune.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(cfgPath)
@@ -46,7 +48,7 @@ func newPlanCmd() *cobra.Command {
 			if destroy {
 				p, err = eng.PlanDown(cfg)
 			} else {
-				p, err = eng.PlanUp(cfg)
+				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune})
 			}
 			if err != nil {
 				return err
@@ -63,6 +65,8 @@ func newPlanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfgPath, "config", "lab.yaml", "path to lab.yaml")
 	cmd.Flags().StringVar(&statePath, "state", "", "path to the state file (default ~/.lab/state.json)")
 	cmd.Flags().BoolVar(&destroy, "destroy", false, "plan lab down instead of lab up")
+	cmd.Flags().BoolVar(&prune, "prune", false, "plan destroying deployed stacks that are not in the profile")
+	cmd.MarkFlagsMutuallyExclusive("destroy", "prune")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the plan as JSON")
 	return cmd
 }
@@ -93,6 +97,9 @@ func writePlan(w io.Writer, r *lipgloss.Renderer, p engine.Plan) error {
 		b.WriteString("  nothing deployed\n")
 	}
 	fmt.Fprintf(&b, "\n%d to apply, %d to destroy, %d unchanged\n", counts[engine.Apply], counts[engine.Destroy], counts[engine.Keep])
+	for _, w := range p.Warnings {
+		fmt.Fprintf(&b, "%s %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("warning:"), w)
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }

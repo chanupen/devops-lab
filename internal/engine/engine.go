@@ -57,12 +57,12 @@ func New(g *Graph, store Store, runner Runner) *Engine {
 }
 
 // PlanUp loads state and plans bringing the lab to cfg.
-func (e *Engine) PlanUp(cfg config.Config) (Plan, error) {
+func (e *Engine) PlanUp(cfg config.Config, opts PlanOptions) (Plan, error) {
 	st, err := e.store.Load()
 	if err != nil {
 		return Plan{}, err
 	}
-	return PlanUp(e.graph, cfg, st)
+	return PlanUp(e.graph, cfg, st, opts)
 }
 
 // PlanDown loads state and plans destroying everything deployed.

@@ -153,3 +153,54 @@ func dedupe(s []string) []string {
 	}
 	return out
 }
+
+// Edges settled in the PR #2 review: the tool bootstraps only cluster and
+// gitops; core add-ons are GitOps apps; sample-app needs core and registry.
+func TestCatalogShape(t *testing.T) {
+	g := catalogGraph(t)
+	deps := map[string][]string{}
+	for _, s := range Catalog() {
+		deps[s.Name] = s.DependsOn
+	}
+	tests := []struct {
+		stack     string
+		wantDeps  []string // direct
+		wantChain []string // Order(stack)
+	}{
+		{"cluster", nil, []string{"cluster"}},
+		{"gitops", []string{"cluster"}, []string{"cluster", "gitops"}},
+		{"core", []string{"gitops"}, []string{"cluster", "gitops", "core"}},
+		{"registry", []string{"cluster"}, []string{"cluster", "registry"}},
+		{"sample-app", []string{"core", "registry"}, []string{"cluster", "gitops", "core", "registry", "sample-app"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stack, func(t *testing.T) {
+			if !slices.Equal(deps[tt.stack], tt.wantDeps) {
+				t.Errorf("DependsOn = %v, want %v", deps[tt.stack], tt.wantDeps)
+			}
+			chain, err := g.Order(tt.stack)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(chain, tt.wantChain) {
+				t.Errorf("Order = %v, want %v", chain, tt.wantChain)
+			}
+		})
+	}
+
+	// GitOps after bootstrap: apart from provider work (cluster, registry),
+	// every stack is reached through gitops.
+	for _, name := range g.Names() {
+		if name == "cluster" || name == "gitops" || name == "registry" {
+			continue
+		}
+		chain, _ := g.Order(name)
+		if !slices.Contains(chain, "gitops") {
+			t.Errorf("%s does not depend on gitops", name)
+		}
+	}
+	// LocalStack is started by the local provider, never planned as a stack.
+	if g.Has("localstack") {
+		t.Error("localstack must not be a stack")
+	}
+}
