@@ -151,10 +151,8 @@ func checkSELinux(_ context.Context, sys System, _ Options) Result {
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(boolean)), "1") {
 		return fail("sudo setsebool -P container_use_devices on", "%s, container_use_devices off", mode)
 	}
-	if mode != "enforcing" {
-		return warn("sudo setenforce 1 (and SELINUX=enforcing in /etc/selinux/config)", "%s, container_use_devices on", mode)
-	}
-	return ok("enforcing, container_use_devices on")
+	// Permissive is a supported choice for this lab; the boolean is what GPU containers need.
+	return ok("%s, container_use_devices on", mode)
 }
 
 func checkNvidiaDriver(ctx context.Context, sys System, _ Options) Result {
