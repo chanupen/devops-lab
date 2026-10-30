@@ -1,0 +1,21 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lab-selfsigned
+  namespace: envoy-gateway-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lab-gateway
+  namespace: envoy-gateway-system
+spec:
+  secretName: lab-gateway-tls
+  dnsNames:
+    - lab.localhost
+    - "*.lab.localhost"
+  issuerRef:
+    kind: Issuer
+    name: lab-selfsigned

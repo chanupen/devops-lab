@@ -4,6 +4,11 @@ profile: standard    # minimal | standard | full
 gitops: argocd       # argocd | flux
 k8sVersion: "1.37"   # pinned; kind node image, EKS and kubectl follow it
 
+repo:                # what Argo CD syncs from
+  url: git@github.com:chanupen/devops-lab.git
+  revision: main
+  sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key; loaded as a Secret, never committed
+
 cloud:
   region: ap-south-1
   ttl: 4h

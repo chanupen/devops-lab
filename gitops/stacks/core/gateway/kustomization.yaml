@@ -1,0 +1,8 @@
+# The lab's shared Gateway: HTTP on 80 and HTTPS on 443 with a self-signed
+# certificate from cert-manager. Overlays decide how the Envoy service is exposed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - gatewayclass.yaml
+  - certificate.yaml
+  - gateway.yaml

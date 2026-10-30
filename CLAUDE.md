@@ -60,7 +60,8 @@ internal/tui/            Bubble Tea models, one per screen
 internal/engine/         plan, apply, destroy, dependency order
 internal/provider/local  kind, Podman, LocalStack, Zot
 internal/provider/aws    Terraform runner, EKS, ECR, cost, TTL
-internal/kube/           client-go informers, health
+internal/kube/           client-go informers, health, waits (nodes, Argo CD apps)
+internal/gitops/         Argo CD install (Helm SDK), app-of-apps, in-cluster stacks
 internal/state/          ~/.lab/state.json, ops history
 internal/config/         lab.yaml loading and validation
 internal/drills/         fault injection and timers

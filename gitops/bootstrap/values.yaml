@@ -1,0 +1,7 @@
+# Set by the gitops stack on the lab-bootstrap Application; do not edit here.
+mode: local          # local | cloud; selects gitops/overlays/<mode>
+repo:
+  url: ""
+  revision: main
+stacks:
+  core: false

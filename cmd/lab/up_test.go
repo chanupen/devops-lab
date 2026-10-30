@@ -226,3 +226,34 @@ func TestDefaultProviderModes(t *testing.T) {
 	}
 }
 
+func TestDefaultProviderRoutes(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // the Podman socket is only dialled when used
+	tests := []struct {
+		gitops     string
+		wantGitOps bool
+	}{
+		{"argocd", true},
+		{"flux", false},
+	}
+	for _, tt := range tests {
+		cfg := config.Default()
+		cfg.GitOps = tt.gitops
+		p, err := defaultProvider(cfg, t.TempDir(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []string{"registry", "cluster"} {
+			if !p.Supports(s) {
+				t.Errorf("%s: %s not routed", tt.gitops, s)
+			}
+		}
+		for _, s := range []string{"gitops", "core"} {
+			if p.Supports(s) != tt.wantGitOps {
+				t.Errorf("%s: Supports(%s) = %v, want %v", tt.gitops, s, p.Supports(s), tt.wantGitOps)
+			}
+		}
+		if p.Supports("obs") {
+			t.Errorf("%s: obs should not be routed yet", tt.gitops)
+		}
+	}
+}

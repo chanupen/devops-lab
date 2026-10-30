@@ -12,6 +12,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -56,7 +57,8 @@ type provider interface {
 // holding the state file; generated files (kubeconfig, configs) go under it.
 type providerFactory func(cfg config.Config, home string, purge bool) (provider, error)
 
-// defaultProvider routes infrastructure stacks to the mode's provider.
+// defaultProvider routes infrastructure stacks to the mode's provider and
+// in-cluster stacks to the GitOps runner, which is the same in every mode.
 func defaultProvider(cfg config.Config, home string, purge bool) (provider, error) {
 	kubeconfig := filepath.Join(home, "kubeconfig")
 	r := engine.Router{}
@@ -69,6 +71,10 @@ func defaultProvider(cfg config.Config, home string, purge bool) (provider, erro
 		r["registry"], r["cluster"] = p, p
 	default:
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
+	}
+	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
+		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo}, kubeconfig, filepath.Join(home, "helm"))
+		r["gitops"], r["core"] = g, g
 	}
 	return r, nil
 }
