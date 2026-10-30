@@ -64,6 +64,11 @@ func bins(names ...string) map[string]bool {
 	return m
 }
 
+const (
+	smiMem  = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
+	smiApps = "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader,nounits"
+)
+
 const cgroupPath = "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
 
 func TestChecks(t *testing.T) {
@@ -108,6 +113,24 @@ func TestChecks(t *testing.T) {
 			"/sys/module/ip6_tables": true, "/sys/module/ip6table_nat": true,
 		}}, Options{}, OK, ""},
 		{"iptables partial", checkIPTables, fake{paths: map[string]bool{"/sys/module/ip_tables": true}}, Options{}, Fail, "iptable_nat ip6_tables ip6table_nat"},
+		{"iptables built in", checkIPTables, fake{files: map[string]string{
+			"/proc/sys/kernel/osrelease": "7.2.11-300.fc45.x86_64\n",
+			"/lib/modules/7.2.11-300.fc45.x86_64/modules.builtin": "kernel/net/ipv4/netfilter/ip_tables.ko\n" +
+				"kernel/net/ipv4/netfilter/iptable_nat.ko\nkernel/net/ipv6/netfilter/ip6_tables.ko\n" +
+				"kernel/net/ipv6/netfilter/ip6table_nat.ko\n",
+		}}, Options{}, OK, ""},
+		{"iptables loaded and built in", checkIPTables, fake{
+			paths: map[string]bool{"/sys/module/ip_tables": true, "/sys/module/ip6_tables": true},
+			files: map[string]string{
+				"/proc/sys/kernel/osrelease": "7.2.11-300.fc45.x86_64",
+				"/lib/modules/7.2.11-300.fc45.x86_64/modules.builtin": "kernel/net/ipv4/netfilter/iptable_nat.ko\n" +
+					"kernel/net/ipv6/netfilter/ip6table_nat.ko\n",
+			},
+		}, Options{}, OK, ""},
+		{"iptables builtin list lacks nat", checkIPTables, fake{files: map[string]string{
+			"/proc/sys/kernel/osrelease":                          "7.2.11-300.fc45.x86_64",
+			"/lib/modules/7.2.11-300.fc45.x86_64/modules.builtin": "kernel/net/ipv4/netfilter/ip_tables.ko\n",
+		}}, Options{}, Fail, "iptable_nat ip6_tables ip6table_nat"},
 
 		{"selinux enforcing", checkSELinux, fake{files: map[string]string{
 			"/sys/fs/selinux/enforce": "1", "/sys/fs/selinux/booleans/container_use_devices": "1 1",
@@ -124,15 +147,27 @@ func TestChecks(t *testing.T) {
 		}}, Options{}, OK, "GTX 1650"},
 		{"nvidia no module", checkNvidiaDriver, fake{}, Options{}, Fail, "not loaded"},
 
-		{"vram plenty", checkVRAM, fake{cmds: map[string]string{
-			"nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits": "4096, 3728",
-		}}, Options{}, OK, "3728 MiB free"},
-		{"vram low", checkVRAM, fake{cmds: map[string]string{
-			"nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits": "4096, 900",
-		}}, Options{}, Warn, "900 MiB free"},
-		{"vram no smi", checkVRAM, fake{errs: map[string]error{
-			"nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits": errors.New("exit 9"),
-		}}, Options{}, Skip, ""},
+		{"vram plenty, idle", checkVRAM, fake{cmds: map[string]string{smiMem: "4096, 3728", smiApps: ""}}, Options{}, OK, "3728 MiB free"},
+		{"vram held by ollama runner", checkVRAM, fake{cmds: map[string]string{
+			smiMem:  "4096, 1215",
+			smiApps: "88088, /usr/lib/ollama/llama-server, 2510",
+		}}, Options{}, OK, "3725 MiB available of 4096 MiB (1215 free, 2510 held by ollama)"},
+		{"vram held by old runner name", checkVRAM, fake{cmds: map[string]string{
+			smiMem:  "4096, 1400",
+			smiApps: "4242, /usr/bin/ollama_llama_server, 2400",
+		}}, Options{}, OK, "2400 held by ollama"},
+		{"vram held by another process", checkVRAM, fake{cmds: map[string]string{
+			smiMem:  "4096, 1215",
+			smiApps: "5150, /usr/bin/python3, 2510",
+		}}, Options{}, Fail, "1215 MiB free"},
+		{"vram ollama and another process", checkVRAM, fake{cmds: map[string]string{
+			smiMem:  "4096, 200",
+			smiApps: "88088, /usr/lib/ollama/llama-server, 2000\n5150, /usr/bin/python3, 1800",
+		}}, Options{}, Fail, "2200 MiB available"},
+		{"vram no smi", checkVRAM, fake{errs: map[string]error{smiMem: errors.New("exit 9")}}, Options{}, Skip, ""},
+		{"vram apps query fails", checkVRAM, fake{cmds: map[string]string{smiMem: "4096, 3728"}, errs: map[string]error{
+			smiApps: errors.New("exit 9"),
+		}}, Options{}, Fail, "compute apps"},
 
 		{"cdi all", checkCDI, fake{cmds: map[string]string{
 			"nvidia-ctk cdi list": "level=info msg=\"Found 3 CDI devices\"\nnvidia.com/gpu=0\nnvidia.com/gpu=all",
@@ -182,6 +217,72 @@ func TestChecks(t *testing.T) {
 				t.Errorf("detail = %q, want it to contain %q", got.Detail, tt.match)
 			}
 		})
+	}
+}
+
+func TestAICheckProfiles(t *testing.T) {
+	failing := func(context.Context, System, Options) Result { return fail("start it", "down") }
+	warning := func(context.Context, System, Options) Result { return warn("", "meh") }
+	passing := func(context.Context, System, Options) Result { return ok("up") }
+	tests := []struct {
+		name    string
+		check   func(context.Context, System, Options) Result
+		profile string
+		want    Status
+		note    bool // detail mentions the full profile
+	}{
+		{"fail on full stays fail", failing, "full", Fail, false},
+		{"fail on standard becomes warn", failing, "standard", Warn, true},
+		{"fail on minimal becomes warn", failing, "minimal", Warn, true},
+		{"warn is unchanged", warning, "standard", Warn, false},
+		{"ok is unchanged", passing, "minimal", OK, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := aiCheck(tt.check)(context.Background(), fake{}.system(), Options{Profile: tt.profile})
+			if got.Status != tt.want {
+				t.Fatalf("status = %s, want %s", got.Status, tt.want)
+			}
+			if note := strings.Contains(got.Detail, "full profile"); note != tt.note {
+				t.Errorf("detail = %q, full-profile note = %v, want %v", got.Detail, note, tt.note)
+			}
+		})
+	}
+}
+
+// Ollama stopped must block only the full profile, end to end through Checks().
+func TestOllamaDownByProfile(t *testing.T) {
+	var ollama Check
+	for _, c := range Checks() {
+		if c.Name == "ollama" {
+			ollama = c
+		}
+	}
+	for profile, want := range map[string]Status{"minimal": Warn, "standard": Warn, "full": Fail} {
+		res := Run(context.Background(), fake{}.system(), Options{Profile: profile}, []Check{ollama})
+		if res[0].Status != want {
+			t.Errorf("profile %s: status = %s, want %s", profile, res[0].Status, want)
+		}
+	}
+}
+
+func TestOllamaVRAM(t *testing.T) {
+	tests := []struct {
+		apps       string
+		wantHeld   int
+		wantOthers int
+	}{
+		{"", 0, 0},
+		{"1, /usr/lib/ollama/llama-server, 2510", 2510, 0},
+		{"1, /usr/bin/ollama, 300\n2, /usr/lib/ollama/llama-server, 2000", 2300, 0},
+		{"1, /usr/bin/Xorg, 40\n2, /usr/lib/ollama/llama-server, 2000", 2000, 1},
+		{"1, [Not Found], N/A", 0, 0}, // unparseable memory is ignored
+	}
+	for _, tt := range tests {
+		held, others := ollamaVRAM(tt.apps)
+		if held != tt.wantHeld || len(others) != tt.wantOthers {
+			t.Errorf("ollamaVRAM(%q) = %d, %v; want %d, %d others", tt.apps, held, others, tt.wantHeld, tt.wantOthers)
+		}
 	}
 }
 

@@ -99,10 +99,11 @@ func checkInotify(_ context.Context, sys System, _ Options) Result {
 }
 
 func checkIPTables(_ context.Context, sys System, _ Options) Result {
+	builtin := builtinModules(sys)
 	var missing []string
 	for _, m := range []string{"ip_tables", "iptable_nat", "ip6_tables", "ip6table_nat"} {
-		// /sys/module covers both loaded and built-in modules.
-		if !sys.Exists("/sys/module/" + m) {
+		// /sys/module lists loaded modules, but built-in ones only if they have parameters.
+		if !sys.Exists("/sys/module/"+m) && !builtin[m] {
 			missing = append(missing, m)
 		}
 	}
@@ -111,6 +112,30 @@ func checkIPTables(_ context.Context, sys System, _ Options) Result {
 			"not loaded: %s", strings.Join(missing, " "))
 	}
 	return ok("ip_tables iptable_nat ip6_tables ip6table_nat")
+}
+
+// builtinModules reads /lib/modules/<release>/modules.builtin. Names use
+// underscores, as in /sys/module. Errors yield an empty set.
+func builtinModules(sys System) map[string]bool {
+	set := map[string]bool{}
+	rel, err := sys.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return set
+	}
+	b, err := sys.ReadFile("/lib/modules/" + strings.TrimSpace(string(rel)) + "/modules.builtin")
+	if err != nil {
+		return set
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		name := l[strings.LastIndex(l, "/")+1:]
+		name = strings.TrimSuffix(name, ".ko")
+		set[strings.ReplaceAll(name, "-", "_")] = true
+	}
+	return set
 }
 
 func checkSELinux(_ context.Context, sys System, _ Options) Result {
@@ -143,6 +168,8 @@ func checkNvidiaDriver(ctx context.Context, sys System, _ Options) Result {
 	return ok("%s", firstLine(out))
 }
 
+// checkVRAM counts memory held by Ollama as available: a loaded model is the
+// lab working, not a competing GPU user.
 func checkVRAM(ctx context.Context, sys System, _ Options) Result {
 	out, err := sys.Run(ctx, "nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits")
 	if err != nil {
@@ -157,11 +184,59 @@ func checkVRAM(ctx context.Context, sys System, _ Options) Result {
 	if err1 != nil || err2 != nil {
 		return fail("", "unexpected nvidia-smi output %q", out)
 	}
+	apps, err := sys.Run(ctx, "nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits")
+	if err != nil {
+		return fail("", "nvidia-smi compute apps: %v", err)
+	}
+	held, others := ollamaVRAM(apps)
+	avail := free + held
 	detail := fmt.Sprintf("%d MiB free of %d MiB", free, total)
-	if free < minVRAMMiB {
-		return warn("unload models or stop other GPU users", "%s, models need about %d MiB", detail, minVRAMMiB)
+	if held > 0 {
+		detail = fmt.Sprintf("%d MiB available of %d MiB (%d free, %d held by ollama)", avail, total, free, held)
+	}
+	if avail < minVRAMMiB {
+		fix := "stop other GPU users"
+		if len(others) > 0 {
+			fix = "stop other GPU users: " + strings.Join(others, ", ")
+		}
+		return fail(fix, "%s, models need about %d MiB", detail, minVRAMMiB)
 	}
 	return ok("%s", detail)
+}
+
+// ollamaVRAM sums MiB used by Ollama processes (the server and its runners,
+// e.g. /usr/lib/ollama/llama-server) and names the other GPU processes.
+func ollamaVRAM(apps string) (held int, others []string) {
+	for _, l := range strings.Split(apps, "\n") {
+		f := strings.Split(l, ",")
+		if len(f) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(f[1])
+		mib, err := strconv.Atoi(strings.TrimSpace(f[2]))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(name), "ollama") {
+			held += mib
+		} else {
+			others = append(others, fmt.Sprintf("%s (pid %s, %d MiB)", name, strings.TrimSpace(f[0]), mib))
+		}
+	}
+	return held, others
+}
+
+// aiCheck wraps a check the ai stack needs. Only the full profile runs that
+// stack, so other profiles see a failure as a warning.
+func aiCheck(run func(context.Context, System, Options) Result) func(context.Context, System, Options) Result {
+	return func(ctx context.Context, sys System, opts Options) Result {
+		r := run(ctx, sys, opts)
+		if r.Status == Fail && opts.Profile != "full" {
+			r.Status = Warn
+			r.Detail += " (only the full profile needs it)"
+		}
+		return r
+	}
 }
 
 func checkCDI(ctx context.Context, sys System, _ Options) Result {
