@@ -50,7 +50,11 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			if purge {
 				command += " --purge"
 			}
-			return run(cmd, newProvider, cfg, homeOf(store), g, store, p, runOptions{Purge: purge, Timeout: timeout}, command)
+			prov, err := newProvider(cfg, homeOf(store), runOptions{Purge: purge, Timeout: timeout})
+			if err != nil {
+				return err
+			}
+			return run(cmd, prov, g, store, p, command)
 		},
 	}
 	flags.register(cmd)

@@ -35,6 +35,13 @@ const (
 	GatewayHTTPSHostPort = 8443
 )
 
+// AppDomain resolves, with every subdomain, to 127.0.0.1 in public DNS, so
+// https://<app>.localtest.me:8443 works on this host and through the tunnel.
+const AppDomain = "localtest.me"
+
+// TunnelHost is the Mac's ssh config entry that forwards 8080 and 8443 here.
+const TunnelHost = "fedora-lab"
+
 // containerdPatch points containerd at per-registry hosts.toml files.
 const containerdPatch = `[plugins."io.containerd.grpc.v1.cri".registry]
   config_path = "` + certsDirInNode + `"`

@@ -121,7 +121,7 @@ type env struct {
 func newEnv(t *testing.T, argo bool, objs ...runtime.Object) *env {
 	t.Helper()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{kube.AppGVR: "ApplicationList"}, objs...)
+		map[schema.GroupVersionResource]string{kube.AppGVR: "ApplicationList", httpRouteGVR: "HTTPRouteList"}, objs...)
 	core := fake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace}})
 	h := &fakeHelm{}
 	r := newRunner(Options{
@@ -473,5 +473,61 @@ func TestSupports(t *testing.T) {
 				t.Errorf("Apply(%s) should fail", stack)
 			}
 		}
+	}
+}
+
+func route(ns, name string, hosts []string, parents ...map[string]any) *unstructured.Unstructured {
+	var hs, ps []any
+	for _, h := range hosts {
+		hs = append(hs, h)
+	}
+	for _, p := range parents {
+		ps = append(ps, p)
+	}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+		"metadata": map[string]any{"name": name, "namespace": ns},
+		"spec":     map[string]any{"hostnames": hs, "parentRefs": ps},
+	}}
+}
+
+func TestAppHosts(t *testing.T) {
+	lab := map[string]any{"name": "lab", "namespace": "envoy-gateway-system", "sectionName": "https"}
+	tests := []struct {
+		name   string
+		routes []runtime.Object
+		want   []string
+	}{
+		{"no routes", nil, nil},
+		{"argocd route", []runtime.Object{route("argocd", "argocd", []string{"argocd.localtest.me"}, lab)},
+			[]string{"argocd.localtest.me"}},
+		{"sorted and deduplicated across namespaces", []runtime.Object{
+			route("shop", "web", []string{"shop.localtest.me", "argocd.localtest.me"}, lab),
+			route("argocd", "argocd", []string{"argocd.localtest.me"}, lab),
+		}, []string{"argocd.localtest.me", "shop.localtest.me"}},
+		{"other gateway ignored", []runtime.Object{
+			route("shop", "web", []string{"other.example"}, map[string]any{"name": "other", "namespace": "envoy-gateway-system"}),
+		}, nil},
+		{"same name in another namespace ignored", []runtime.Object{
+			route("shop", "web", []string{"x.localtest.me"}, map[string]any{"name": "lab", "namespace": "shop"}),
+		}, nil},
+		{"parentRef without namespace uses the route's", []runtime.Object{
+			route("envoy-gateway-system", "local", []string{"local.localtest.me"}, map[string]any{"name": "lab"}),
+		}, []string{"local.localtest.me"}},
+		{"non-Gateway parent kind ignored", []runtime.Object{
+			route("envoy-gateway-system", "svc", []string{"mesh.localtest.me"}, map[string]any{"name": "lab", "kind": "Service"}),
+		}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, false, tt.routes...)
+			got, err := e.runner.AppHosts(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("hosts = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

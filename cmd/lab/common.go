@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,6 +61,41 @@ type provider interface {
 	Supports(stack string) bool
 }
 
+// appAccess is implemented by providers that can list the lab's app URLs.
+type appAccess interface {
+	AppURLs(ctx context.Context) ([]string, error)
+	// AccessHint is one line on how to reach the URLs from the Mac.
+	AccessHint() string
+}
+
+// labRunner is the default provider: the stack router, plus app URLs built
+// from the GitOps runner's Gateway hostnames and the mode's URL format.
+type labRunner struct {
+	engine.Router
+	hosts func(context.Context) ([]string, error) // nil without a GitOps runner
+	url   func(host string) string
+	hint  string
+}
+
+// AppURLs implements appAccess.
+func (l labRunner) AppURLs(ctx context.Context) ([]string, error) {
+	if l.hosts == nil {
+		return nil, nil
+	}
+	hosts, err := l.hosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	urls := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		urls = append(urls, l.url(h))
+	}
+	return urls, nil
+}
+
+// AccessHint implements appAccess.
+func (l labRunner) AccessHint() string { return l.hint }
+
 // runOptions are the lab up/down flags that reach runners.
 type runOptions struct {
 	Purge   bool          // lab down --purge
@@ -74,22 +110,24 @@ type providerFactory func(cfg config.Config, home string, opts runOptions) (prov
 // in-cluster stacks to the GitOps runner, which is the same in every mode.
 func defaultProvider(cfg config.Config, home string, opts runOptions) (provider, error) {
 	kubeconfig := filepath.Join(home, "kubeconfig")
-	r := engine.Router{}
+	l := labRunner{Router: engine.Router{}}
 	switch cfg.Mode {
 	case "local":
 		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: opts.Purge})
 		if err != nil {
 			return nil, err
 		}
-		r["registry"], r["cluster"] = p, p
+		l.Router["registry"], l.Router["cluster"] = p, p
+		l.url, l.hint = p.AppURL, p.AccessHint()
 	default:
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
 	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
 		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
-		r["gitops"], r["core"] = g, g
+		l.Router["gitops"], l.Router["core"] = g, g
+		l.hosts = g.AppHosts
 	}
-	return r, nil
+	return l, nil
 }
 
 // unsupported lists stacks the plan would change that the provider cannot run.

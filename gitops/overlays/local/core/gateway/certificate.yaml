@@ -13,9 +13,9 @@ metadata:
   namespace: envoy-gateway-system
 spec:
   secretName: lab-gateway-tls
-  dnsNames:
-    - lab.localhost
-    - "*.lab.localhost"
+  dnsNames: # *.localtest.me resolves to 127.0.0.1 in public DNS
+    - localtest.me
+    - "*.localtest.me"
   issuerRef:
     kind: Issuer
     name: lab-selfsigned

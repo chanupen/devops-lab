@@ -496,3 +496,20 @@ func TestWaitHTTP(t *testing.T) {
 		})
 	}
 }
+
+func TestAppAccess(t *testing.T) {
+	p := testProvider(t, newFakeRuntime(), &fakeClusters{nodes: map[string]int{}}, false)
+	tests := []struct{ host, want string }{
+		{"argocd.localtest.me", "https://argocd.localtest.me:8443"},
+		{"shop.localtest.me", "https://shop.localtest.me:8443"},
+	}
+	for _, tt := range tests {
+		if got := p.AppURL(tt.host); got != tt.want {
+			t.Errorf("AppURL(%s) = %s, want %s", tt.host, got, tt.want)
+		}
+	}
+	hint := p.AccessHint()
+	if strings.Contains(hint, "\n") || !strings.Contains(hint, "ssh -N fedora-lab") || !strings.Contains(hint, "8443") {
+		t.Errorf("hint = %q, want one line naming ssh -N fedora-lab and the ports", hint)
+	}
+}

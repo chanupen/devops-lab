@@ -58,3 +58,41 @@ func TestLocalGatewayOverlay(t *testing.T) {
 		}
 	}
 }
+
+// Apps use *.localtest.me, which resolves to 127.0.0.1; the domain lives only
+// in the local overlay, and the base Gateway names no host.
+func TestLocalAppDomain(t *testing.T) {
+	read := func(p string) string {
+		t.Helper()
+		b, err := os.ReadFile("../../gitops/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	tests := []struct {
+		file    string
+		want    []string
+		wantNot []string
+	}{
+		{"overlays/local/core/gateway/certificate.yaml", []string{"- localtest.me", `- "*.localtest.me"`, "secretName: lab-gateway-tls"}, nil},
+		{"overlays/local/core/gateway/argocd-route.yaml",
+			[]string{"- argocd.localtest.me", "name: lab", "namespace: envoy-gateway-system", "sectionName: https", "name: argocd-server"}, nil},
+		{"overlays/local/core/gateway/kustomization.yaml", []string{"- certificate.yaml", "- argocd-route.yaml"}, nil},
+		{"stacks/core/gateway/gateway.yaml", []string{"name: lab-gateway-tls"}, []string{"hostname:", "localtest.me", "lab.localhost"}},
+		{"stacks/core/gateway/kustomization.yaml", nil, []string{"certificate.yaml"}},
+	}
+	for _, tt := range tests {
+		s := read(tt.file)
+		for _, w := range tt.want {
+			if !strings.Contains(s, w) {
+				t.Errorf("%s lacks %q", tt.file, w)
+			}
+		}
+		for _, w := range tt.wantNot {
+			if strings.Contains(s, w) {
+				t.Errorf("%s should not contain %q", tt.file, w)
+			}
+		}
+	}
+}
