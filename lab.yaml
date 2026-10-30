@@ -1,0 +1,9 @@
+# Lab configuration. Read by `lab` from phase 1 onward.
+mode: local          # local | cloud
+profile: standard    # minimal | standard | full
+gitops: argocd       # argocd | flux
+
+cloud:
+  region: ap-south-1
+  ttl: 4h
+  owner: chanupen
