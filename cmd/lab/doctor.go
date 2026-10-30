@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"io"
+	"runtime"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +24,9 @@ func newDoctorCmd() *cobra.Command {
 			"Ollama, tool versions and free memory. Exits non-zero if any check fails.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireLinux(runtime.GOOS, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 			results := doctor.Run(cmd.Context(), doctor.HostSystem(), opts, doctor.Checks())
 			out := cmd.OutOrStdout()
 			var err error
@@ -42,4 +48,13 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Profile, "profile", "standard", "memory profile to check against: minimal, standard, full")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
 	return cmd
+}
+
+// requireLinux stops doctor on the client machine: every check reads Linux host state.
+func requireLinux(goos string, stderr io.Writer) error {
+	if goos == "linux" {
+		return nil
+	}
+	_, _ = fmt.Fprintln(stderr, "lab doctor checks the Linux host. Run it there: ssh -t fedora lab doctor")
+	return exitError{code: 2}
 }
