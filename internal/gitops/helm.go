@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"time"
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/loader"
@@ -36,6 +38,7 @@ func (h *sdkHelm) setup(namespace string, log io.Writer) (*action.Configuration,
 	settings.SetNamespace(namespace)
 	settings.RepositoryConfig = filepath.Join(h.home, "repositories.yaml")
 	settings.RepositoryCache = filepath.Join(h.home, "cache")
+	settings.ContentCache = filepath.Join(h.home, "content")
 	cfg := action.NewConfiguration(action.ConfigurationSetLogger(
 		slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	getter := settings.RESTClientGetter()
@@ -54,10 +57,9 @@ func (h *sdkHelm) Ensure(ctx context.Context, r HelmRelease, log io.Writer) erro
 	if err != nil {
 		return err
 	}
-	cpo := action.ChartPathOptions{RepoURL: r.RepoURL, Version: r.Version}
-	path, err := cpo.LocateChart(r.Chart, settings)
+	path, err := h.chart(ctx, settings, r, log)
 	if err != nil {
-		return fmt.Errorf("fetch chart %s %s: %w", r.Chart, r.Version, err)
+		return err
 	}
 	ch, err := loader.Load(path)
 	if err != nil {
@@ -82,6 +84,55 @@ func (h *sdkHelm) Ensure(ctx context.Context, r HelmRelease, log io.Writer) erro
 		_, err = u.RunWithContext(ctx, r.Name, ch, r.Values)
 	}
 	return err
+}
+
+// chart returns the chart archive: the lab's own copy when this version was
+// fetched before (no network at all), else from the repository with a few
+// retries, keeping a copy for next time.
+func (h *sdkHelm) chart(ctx context.Context, settings *cli.EnvSettings, r HelmRelease, log io.Writer) (string, error) {
+	charts := filepath.Join(h.home, "charts")
+	if p, ok := cachedChart(charts, r.Chart, r.Version); ok {
+		_, _ = fmt.Fprintf(log, "using cached chart %s\n", p)
+		return p, nil
+	}
+	cpo := action.ChartPathOptions{RepoURL: r.RepoURL, Version: r.Version}
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		var p string
+		if p, err = cpo.LocateChart(r.Chart, settings); err == nil {
+			return keepChart(p, charts, r.Chart, r.Version), nil
+		}
+		_, _ = fmt.Fprintf(log, "fetch chart %s %s, attempt %d: %v\n", r.Chart, r.Version, attempt, err)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(attempt) * 5 * time.Second):
+		}
+	}
+	return "", fmt.Errorf("fetch chart %s %s: %w", r.Chart, r.Version, err)
+}
+
+// keepChart copies a downloaded archive to dir/<chart>-<version>.tgz and
+// returns the copy's path; on any error it returns src unchanged.
+func keepChart(src, dir, chart, version string) string {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return src
+	}
+	dst := filepath.Join(dir, chart+"-"+version+".tgz")
+	if os.MkdirAll(dir, 0o700) != nil || os.WriteFile(dst+".tmp", b, 0o600) != nil || os.Rename(dst+".tmp", dst) != nil {
+		return src
+	}
+	return dst
+}
+
+// cachedChart reports the lab's copy of chart at version, if any.
+func cachedChart(cache, chart, version string) (string, bool) {
+	p := filepath.Join(cache, chart+"-"+version+".tgz")
+	if fi, err := os.Stat(p); err == nil && fi.Size() > 0 {
+		return p, true
+	}
+	return "", false
 }
 
 // Uninstall implements Helm.
