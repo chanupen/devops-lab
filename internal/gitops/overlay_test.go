@@ -114,7 +114,9 @@ func TestObsAndSampleAppFiles(t *testing.T) {
 			"read: {replicas: 0}", "gateway: {enabled: false}"}, nil},
 		// Without persistence the chart mounts nothing at /var/loki on a read-only root.
 		{"overlays/local/obs/loki/values.yaml", []string{"persistence:\n    enabled: false", "mountPath: /var/loki", "emptyDir: {}"}, nil},
-		{"stacks/obs/alloy/values.yaml", []string{`loki.source.kubernetes "pods"`, `url = "http://loki.monitoring.svc:3100/loki/api/v1/push"`}, nil},
+		{"stacks/obs/otel-collector/values.yaml", []string{"mode: daemonset", "logsCollection:\n    enabled: true",
+			"kubernetesAttributes:\n    enabled: true", "endpoint: http://loki.monitoring.svc:3100/otlp", "exporters: [otlphttp/loki]",
+			"repository: otel/opentelemetry-collector-k8s"}, nil},
 		{"overlays/local/obs/routes/grafana-route.yaml", []string{"- grafana.localtest.me", "name: kps-grafana", "port: 80", "sectionName: https"}, nil},
 		{"overlays/local/sample-app/routes/podinfo-route.yaml", []string{"- podinfo.localtest.me", "name: podinfo-frontend", "port: 9898", "sectionName: https"}, nil},
 	}

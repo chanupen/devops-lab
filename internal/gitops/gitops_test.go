@@ -48,7 +48,7 @@ func (f *fakeHelm) Uninstall(_ context.Context, name, ns string, _ io.Writer) er
 // childApps are the children the bootstrap chart renders for each stack.
 var childApps = map[string][]string{
 	"core":       {"cert-manager", "core-gateway", "envoy-gateway", "metrics-server"},
-	"obs":        {"alloy", "kube-prometheus-stack", "loki", "obs-routes"},
+	"obs":        {"kube-prometheus-stack", "loki", "obs-routes", "otel-collector"},
 	"sample-app": {"podinfo-backend", "podinfo-frontend", "sample-app-routes"},
 }
 

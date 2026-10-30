@@ -1,0 +1,23 @@
+# The OpenTelemetry Collector on every node reads pod logs from
+# /var/log/pods, adds Kubernetes metadata and ships them to Loki over OTLP.
+# Traces and metrics pipelines come with Tempo in a later stack change.
+fullnameOverride: otel-collector
+mode: daemonset
+image:
+  repository: otel/opentelemetry-collector-k8s
+presets:
+  logsCollection:
+    enabled: true
+  kubernetesAttributes:
+    enabled: true
+resources:
+  requests: {cpu: 10m, memory: 48Mi}
+  limits: {memory: 192Mi}
+config:
+  exporters:
+    otlphttp/loki:
+      endpoint: http://loki.monitoring.svc:3100/otlp
+  service:
+    pipelines:
+      logs:
+        exporters: [otlphttp/loki]

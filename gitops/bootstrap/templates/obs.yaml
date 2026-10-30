@@ -1,13 +1,13 @@
 {{- if .Values.stacks.obs }}
-# obs: metrics (kube-prometheus-stack with Grafana) and logs (Loki, Alloy).
+# obs: metrics (kube-prometheus-stack with Grafana) and logs (Loki, with the
+# OpenTelemetry Collector shipping pod logs).
 # Charts come from their Helm repos; values from this repo, base then overlay.
 {{- $repo := .Values.repo }}
 {{- $mode := .Values.mode }}
 {{- range $app := list
-      (dict "name" "kube-prometheus-stack" "wave" "0" "oci" "ghcr.io/prometheus-community/charts" "version" "92.10.1" "release" "kps")
-      (dict "name" "loki" "wave" "0" "oci" "ghcr.io/grafana/helm-charts" "version" "7.3.0" "release" "loki")
-      (dict "name" "alloy" "wave" "1" "repo" "https://grafana.github.io/helm-charts" "version" "1.13.1" "release" "alloy") }}
-{{- /* Alloy has no OCI chart, so it alone still fetches the grafana repo index. */}}
+      (dict "name" "kube-prometheus-stack" "chart" "kube-prometheus-stack" "wave" "0" "oci" "ghcr.io/prometheus-community/charts" "version" "92.10.1" "release" "kps")
+      (dict "name" "loki" "chart" "loki" "wave" "0" "oci" "ghcr.io/grafana/helm-charts" "version" "7.3.0" "release" "loki")
+      (dict "name" "otel-collector" "chart" "opentelemetry-collector" "wave" "1" "oci" "ghcr.io/open-telemetry/opentelemetry-helm-charts" "version" "0.176.0" "release" "otel-collector") }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -16,8 +16,8 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: {{ if $app.oci }}{{ include "lab.ociRepo" (list $ $app.oci) }}{{ else }}{{ $app.repo }}{{ end }}
-      chart: {{ $app.name }}
+    - repoURL: {{ include "lab.ociRepo" (list $ $app.oci) }}
+      chart: {{ $app.chart }}
       targetRevision: {{ $app.version }}
       helm:
         releaseName: {{ $app.release }}

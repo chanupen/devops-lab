@@ -167,7 +167,7 @@ func TestBootstrapChartObs(t *testing.T) {
 	}{
 		{"kube-prometheus-stack", "ghcr.io/prometheus-community/charts", "92.10.1", "kps", "0"},
 		{"loki", "ghcr.io/grafana/helm-charts", "7.3.0", "loki", "0"},
-		{"alloy", "https://grafana.github.io/helm-charts", "1.13.1", "alloy", "1"}, // no OCI chart
+		{"otel-collector", "ghcr.io/open-telemetry/opentelemetry-helm-charts", "0.176.0", "otel-collector", "1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.app, func(t *testing.T) {
@@ -183,7 +183,11 @@ func TestBootstrapChartObs(t *testing.T) {
 				t.Fatalf("sources = %v", srcs)
 			}
 			chart, values := srcs[0].(map[string]any), srcs[1].(map[string]any)
-			if chart["chart"] != tt.app || chart["repoURL"] != tt.repo || chart["targetRevision"] != tt.version || field(chart, "helm", "releaseName") != tt.release {
+			wantChart := map[string]string{"otel-collector": "opentelemetry-collector"}[tt.app]
+			if wantChart == "" {
+				wantChart = tt.app
+			}
+			if chart["chart"] != wantChart || chart["repoURL"] != tt.repo || chart["targetRevision"] != tt.version || field(chart, "helm", "releaseName") != tt.release {
 				t.Errorf("chart source = %v", chart)
 			}
 			files, _ := field(chart, "helm", "valueFiles").([]any)
@@ -277,7 +281,7 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 	multi := map[string]string{
 		"kube-prometheus-stack": "lab-zot:5000/ghcr.io/prometheus-community/charts",
 		"loki":                  "lab-zot:5000/ghcr.io/grafana/helm-charts",
-		"alloy":                 "https://grafana.github.io/helm-charts",
+		"otel-collector":        "lab-zot:5000/ghcr.io/open-telemetry/opentelemetry-helm-charts",
 	}
 	for app, want := range multi {
 		srcs, _ := field(objs["Application/"+app], "spec", "sources").([]any)
@@ -297,7 +301,7 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 			t.Errorf("%s = %v", name, o["stringData"])
 		}
 	}
-	if n != 5 {
-		t.Errorf("%d OCI repository secrets, want 5", n)
+	if n != 6 {
+		t.Errorf("%d OCI repository secrets, want 6", n)
 	}
 }
