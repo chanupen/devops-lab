@@ -14,7 +14,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://stefanprodan.github.io/podinfo
+    repoURL: {{ include "lab.ociRepo" (list $ "ghcr.io/stefanprodan/charts") }}
     chart: podinfo
     targetRevision: 6.15.0
     helm:

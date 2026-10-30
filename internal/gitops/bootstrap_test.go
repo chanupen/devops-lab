@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,11 @@ func renderBootstrap(t *testing.T, core bool) map[string]map[string]any {
 }
 
 func renderStacks(t *testing.T, stacks map[string]any) map[string]map[string]any {
+	return render(t, stacks, "")
+}
+
+// render renders the bootstrap chart; mirror sets charts.ociMirror.
+func render(t *testing.T, stacks map[string]any, mirror string) map[string]map[string]any {
 	t.Helper()
 	ch, err := loader.Load("../../gitops/bootstrap")
 	if err != nil {
@@ -28,6 +34,7 @@ func renderStacks(t *testing.T, stacks map[string]any) map[string]map[string]any
 		"mode":   "local",
 		"repo":   map[string]any{"url": "git@github.com:o/r.git", "revision": "feat/x"},
 		"stacks": stacks,
+		"charts": map[string]any{"ociMirror": mirror},
 	}
 	rv, err := util.ToRenderValues(ch, vals, common.ReleaseOptions{Name: RootApp, Namespace: Namespace}, common.DefaultCapabilities)
 	if err != nil {
@@ -69,9 +76,12 @@ func field(o map[string]any, path ...string) any {
 	return cur
 }
 
+// With every stack off only the OCI repository registrations remain.
 func TestBootstrapChartCoreOff(t *testing.T) {
-	if objs := renderBootstrap(t, false); len(objs) != 0 {
-		t.Errorf("core off renders %d objects, want none", len(objs))
+	for name := range renderBootstrap(t, false) {
+		if !strings.HasPrefix(name, "Secret/oci-") {
+			t.Errorf("core off renders %s", name)
+		}
 	}
 }
 
@@ -85,7 +95,7 @@ func TestBootstrapChartCoreOn(t *testing.T) {
 		{"metrics-server", "kube-system", "0",
 			map[string]string{"repoURL": "https://kubernetes-sigs.github.io/metrics-server/", "chart": "metrics-server", "targetRevision": "3.14.0"}, nil},
 		{"cert-manager", "cert-manager", "0",
-			map[string]string{"repoURL": "https://charts.jetstack.io", "chart": "cert-manager", "targetRevision": "v1.21.2"},
+			map[string]string{"repoURL": "quay.io/jetstack/charts", "chart": "cert-manager", "targetRevision": "v1.21.2"},
 			[]string{"CreateNamespace=true"}},
 		{"envoy-gateway", "envoy-gateway-system", "0",
 			map[string]string{"repoURL": "docker.io/envoyproxy", "chart": "gateway-helm", "targetRevision": "v1.9.2"},
@@ -135,8 +145,9 @@ func TestBootstrapChartCoreOn(t *testing.T) {
 		args[0] != "--kubelet-insecure-tls" {
 		t.Errorf("metrics-server args = %v", args)
 	}
-	if s := objs["Secret/repo-envoyproxy-oci"]; field(s, "stringData", "enableOCI") != "true" || field(s, "stringData", "url") != "docker.io/envoyproxy" {
-		t.Errorf("OCI repo secret = %v", s)
+	if s := objs["Secret/oci-docker-io-envoyproxy"]; field(s, "stringData", "enableOCI") != "true" || field(s, "stringData", "url") != "docker.io/envoyproxy" ||
+		field(s, "stringData", "insecureOCIForceHttp") != nil {
+		t.Errorf("OCI repo secret without a mirror = %v", s)
 	}
 }
 
@@ -152,11 +163,11 @@ func keys(m map[string]map[string]any) []string {
 func TestBootstrapChartObs(t *testing.T) {
 	objs := renderStacks(t, map[string]any{"core": true, "obs": true})
 	tests := []struct {
-		app, chart, version, release, wave string
+		app, repo, version, release, wave string
 	}{
-		{"kube-prometheus-stack", "kube-prometheus-stack", "92.10.1", "kps", "0"},
-		{"loki", "loki", "7.3.0", "loki", "0"},
-		{"alloy", "alloy", "1.13.1", "alloy", "1"},
+		{"kube-prometheus-stack", "ghcr.io/prometheus-community/charts", "92.10.1", "kps", "0"},
+		{"loki", "ghcr.io/grafana/helm-charts", "7.3.0", "loki", "0"},
+		{"alloy", "https://grafana.github.io/helm-charts", "1.13.1", "alloy", "1"}, // no OCI chart
 	}
 	for _, tt := range tests {
 		t.Run(tt.app, func(t *testing.T) {
@@ -172,7 +183,7 @@ func TestBootstrapChartObs(t *testing.T) {
 				t.Fatalf("sources = %v", srcs)
 			}
 			chart, values := srcs[0].(map[string]any), srcs[1].(map[string]any)
-			if chart["chart"] != tt.chart || chart["targetRevision"] != tt.version || field(chart, "helm", "releaseName") != tt.release {
+			if chart["chart"] != tt.app || chart["repoURL"] != tt.repo || chart["targetRevision"] != tt.version || field(chart, "helm", "releaseName") != tt.release {
 				t.Errorf("chart source = %v", chart)
 			}
 			files, _ := field(chart, "helm", "valueFiles").([]any)
@@ -211,6 +222,7 @@ func TestBootstrapChartSampleApp(t *testing.T) {
 					t.Fatalf("%s not rendered", app)
 				}
 				if field(o, "spec", "source", "chart") != "podinfo" || field(o, "spec", "source", "targetRevision") != "6.15.0" ||
+					field(o, "spec", "source", "repoURL") != "ghcr.io/stefanprodan/charts" ||
 					field(o, "spec", "source", "helm", "releaseName") != app || field(o, "spec", "destination", "namespace") != "podinfo" {
 					t.Errorf("%s source = %v", app, field(o, "spec", "source"))
 				}
@@ -229,7 +241,63 @@ func TestBootstrapChartSampleApp(t *testing.T) {
 			}
 		})
 	}
-	if objs := renderStacks(t, map[string]any{"core": false, "obs": false, "sample-app": false}); len(objs) != 0 {
-		t.Errorf("all off renders %v", keys(objs))
+	for name := range renderStacks(t, map[string]any{"core": false, "obs": false, "sample-app": false}) {
+		if !strings.HasPrefix(name, "Secret/oci-") {
+			t.Errorf("all off renders %s", name)
+		}
+	}
+}
+
+// The local overlay's mirror routes every OCI chart through Zot.
+func TestBootstrapChartLocalMirror(t *testing.T) {
+	b, err := os.ReadFile("../../gitops/overlays/local/bootstrap/values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overlay struct {
+		Charts struct {
+			OCIMirror string `json:"ociMirror"`
+		} `json:"charts"`
+	}
+	if err := yaml.Unmarshal(b, &overlay); err != nil || overlay.Charts.OCIMirror != "lab-zot:5000" {
+		t.Fatalf("local overlay mirror = %q, %v", overlay.Charts.OCIMirror, err)
+	}
+	objs := render(t, map[string]any{"core": true, "obs": true, "sample-app": true}, overlay.Charts.OCIMirror)
+	single := map[string]string{
+		"cert-manager":     "lab-zot:5000/quay.io/jetstack/charts",
+		"envoy-gateway":    "lab-zot:5000/docker.io/envoyproxy",
+		"podinfo-frontend": "lab-zot:5000/ghcr.io/stefanprodan/charts",
+		"metrics-server":   "https://kubernetes-sigs.github.io/metrics-server/", // no OCI chart
+	}
+	for app, want := range single {
+		if got := field(objs["Application/"+app], "spec", "source", "repoURL"); got != want {
+			t.Errorf("%s repoURL = %v, want %s", app, got, want)
+		}
+	}
+	multi := map[string]string{
+		"kube-prometheus-stack": "lab-zot:5000/ghcr.io/prometheus-community/charts",
+		"loki":                  "lab-zot:5000/ghcr.io/grafana/helm-charts",
+		"alloy":                 "https://grafana.github.io/helm-charts",
+	}
+	for app, want := range multi {
+		srcs, _ := field(objs["Application/"+app], "spec", "sources").([]any)
+		if len(srcs) == 0 || srcs[0].(map[string]any)["repoURL"] != want {
+			t.Errorf("%s chart repoURL = %v, want %s", app, srcs, want)
+		}
+	}
+	n := 0
+	for name, o := range objs {
+		if !strings.HasPrefix(name, "Secret/oci-") {
+			continue
+		}
+		n++
+		url, _ := field(o, "stringData", "url").(string)
+		if !strings.HasPrefix(url, "lab-zot:5000/") || field(o, "stringData", "insecureOCIForceHttp") != "true" ||
+			field(o, "stringData", "enableOCI") != "true" || field(o, "metadata", "labels", "argocd.argoproj.io/secret-type") != "repository" {
+			t.Errorf("%s = %v", name, o["stringData"])
+		}
+	}
+	if n != 5 {
+		t.Errorf("%d OCI repository secrets, want 5", n)
 	}
 }

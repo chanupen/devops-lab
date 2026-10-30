@@ -28,7 +28,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://charts.jetstack.io
+    repoURL: {{ include "lab.ociRepo" (list . "quay.io/jetstack/charts") }}
     chart: cert-manager
     targetRevision: v1.21.2
     helm:
@@ -50,7 +50,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: docker.io/envoyproxy # OCI; registered by the repo-envoyproxy-oci Secret below
+    repoURL: {{ include "lab.ociRepo" (list . "docker.io/envoyproxy") }}
     chart: gateway-helm
     targetRevision: v1.9.2
   destination:
@@ -79,18 +79,4 @@ spec:
     {{- include "lab.syncPolicy" . | nindent 4 }}
     syncOptions:
       - SkipDryRunOnMissingResource=true
----
-# Public OCI Helm repository for Envoy Gateway; no credentials.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: repo-envoyproxy-oci
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  type: helm
-  name: envoyproxy
-  url: docker.io/envoyproxy
-  enableOCI: "true"
 {{- end }}

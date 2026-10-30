@@ -216,12 +216,16 @@ func TestApplyGitOps(t *testing.T) {
 		{[]string{"spec", "source", "helm", "valuesObject", "repo", "revision"}, "main"},
 		{[]string{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]string{"spec", "syncPolicy", "automated", "allowEmpty"}, true},
+		{[]string{"spec", "source", "helm", "ignoreMissingValueFiles"}, true},
 	}
 	for _, c := range checks {
 		got, _, _ := unstructured.NestedFieldNoCopy(root.Object, c.field...)
 		if got != c.want {
 			t.Errorf("%s = %v, want %v", strings.Join(c.field, "."), got, c.want)
 		}
+	}
+	if vf, _, _ := unstructured.NestedStringSlice(root.Object, "spec", "source", "helm", "valueFiles"); !slices.Equal(vf, []string{"../overlays/local/bootstrap/values.yaml"}) {
+		t.Errorf("root valueFiles = %v, want the local bootstrap overlay", vf)
 	}
 	if !slices.Contains(root.GetFinalizers(), "resources-finalizer.argocd.argoproj.io") {
 		t.Errorf("finalizers = %v", root.GetFinalizers())

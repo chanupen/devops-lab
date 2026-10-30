@@ -1,0 +1,5 @@
+# Local mode: pull OCI charts through the Zot cache, like images, so a warm
+# lab up does not depend on the internet. Argo CD's repo-server reaches Zot by
+# name on the kind network.
+charts:
+  ociMirror: lab-zot:5000

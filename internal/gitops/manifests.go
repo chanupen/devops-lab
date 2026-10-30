@@ -93,11 +93,16 @@ func rootApp(mode string, repo config.Repo, revision string, stacks map[string]a
 				"repoURL":        repo.URL,
 				"targetRevision": revision,
 				"path":           BootstrapPath,
-				"helm": map[string]any{"valuesObject": map[string]any{
-					"mode":   mode,
-					"repo":   map[string]any{"url": repo.URL, "revision": revision},
-					"stacks": stacks,
-				}},
+				"helm": map[string]any{
+					// Mode-specific bootstrap values (the chart mirror) live in the overlay.
+					"valueFiles":              []any{"../overlays/" + mode + "/bootstrap/values.yaml"},
+					"ignoreMissingValueFiles": true,
+					"valuesObject": map[string]any{
+						"mode":   mode,
+						"repo":   map[string]any{"url": repo.URL, "revision": revision},
+						"stacks": stacks,
+					},
+				},
 			},
 			"destination": map[string]any{"server": "https://kubernetes.default.svc", "namespace": Namespace},
 			"syncPolicy": map[string]any{
