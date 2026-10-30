@@ -225,10 +225,10 @@ profiles:
     budgetMonthlyUSD: 30
     owner: chanupen
 
-gitops:
-  repo: https://github.com/chanupen/devops-lab.git   # private
+repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
+  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key
   revision: main
-  auth: deploy-key         # read-only key, loaded as a Secret at bootstrap
+  sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.
