@@ -15,10 +15,11 @@ import (
 
 func newUpCmd(newProvider providerFactory) *cobra.Command {
 	var (
-		flags  labFlags
-		stacks []string
-		prune  bool
-		yes    bool
+		flags   labFlags
+		stacks  []string
+		prune   bool
+		yes     bool
+		timeout time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -52,13 +53,14 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 					return err
 				}
 			}
-			return run(cmd, newProvider, cfg, homeOf(store), g, store, p, false, upCommand(stacks, prune))
+			return run(cmd, newProvider, cfg, homeOf(store), g, store, p, runOptions{Timeout: timeout}, upCommand(stacks, prune))
 		},
 	}
 	flags.register(cmd)
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "apply only these stacks and their dependencies")
 	cmd.Flags().BoolVar(&prune, "prune", false, "destroy deployed stacks that are not in the profile")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks")
+	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
 	return cmd
 }
@@ -88,9 +90,9 @@ func countAction(p engine.Plan, a engine.Action) int {
 // run builds the provider, checks it can handle every changed stack, then
 // executes the plan and prints each step with its duration.
 func run(cmd *cobra.Command, newProvider providerFactory, cfg config.Config, home string, g *engine.Graph,
-	store engine.Store, p engine.Plan, purge bool, command string) error {
+	store engine.Store, p engine.Plan, opts runOptions, command string) error {
 	out := cmd.OutOrStdout()
-	prov, err := newProvider(cfg, home, purge)
+	prov, err := newProvider(cfg, home, opts)
 	if err != nil {
 		return err
 	}

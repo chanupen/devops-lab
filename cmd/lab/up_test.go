@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -152,8 +153,11 @@ func TestUpDown(t *testing.T) {
 			}
 			fp := &fakeProvider{fail: tt.fail}
 			var gotPurge, built bool
-			factory := func(_ config.Config, home string, purge bool) (provider, error) {
-				built, gotPurge = true, purge
+			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
+				built, gotPurge = true, opts.Purge
+				if opts.Timeout != 30*time.Minute && !slices.Contains(tt.args, "--timeout") {
+					t.Errorf("timeout = %s, want the 30m default", opts.Timeout)
+				}
 				if home != dir {
 					t.Errorf("provider home = %s, want the state file's directory %s", home, dir)
 				}
@@ -219,7 +223,7 @@ func TestDefaultProviderModes(t *testing.T) {
 	for _, tt := range tests {
 		cfg := config.Default()
 		cfg.Mode = tt.mode
-		_, err := defaultProvider(cfg, t.TempDir(), false)
+		_, err := defaultProvider(cfg, t.TempDir(), runOptions{})
 		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 			t.Errorf("%s: err = %v, want %q", tt.mode, err, tt.wantErr)
 		}
@@ -238,7 +242,7 @@ func TestDefaultProviderRoutes(t *testing.T) {
 	for _, tt := range tests {
 		cfg := config.Default()
 		cfg.GitOps = tt.gitops
-		p, err := defaultProvider(cfg, t.TempDir(), false)
+		p, err := defaultProvider(cfg, t.TempDir(), runOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
