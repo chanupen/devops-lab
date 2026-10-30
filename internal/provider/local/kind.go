@@ -46,6 +46,8 @@ type Clusters interface {
 	NodeCount(name string) (int, error)
 	Create(cfg *v1alpha4.Cluster, image string) error
 	Delete(name string) error
+	// KubeConfig returns the external kubeconfig for the cluster.
+	KubeConfig(name string) (string, error)
 }
 
 // kindConfig returns 1 control plane and 2 workers. Every node mounts certsDir
@@ -118,6 +120,8 @@ func (k *kindClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 		cluster.CreateWithDisplaySalutation(false),
 	)
 }
+
+func (k *kindClusters) KubeConfig(name string) (string, error) { return k.p.KubeConfig(name, false) }
 
 // Delete removes the cluster and its kubeconfig context ("" = default kubeconfig).
 func (k *kindClusters) Delete(name string) error { return k.p.Delete(name, "") }

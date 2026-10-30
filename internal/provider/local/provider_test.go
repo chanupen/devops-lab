@@ -1,13 +1,19 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 )
@@ -119,6 +125,8 @@ func (f *fakeClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 	return nil
 }
 
+func (f *fakeClusters) KubeConfig(name string) (string, error) { return "kubeconfig for " + name, nil }
+
 func (f *fakeClusters) Delete(name string) error {
 	f.deleted = append(f.deleted, name)
 	delete(f.nodes, name)
@@ -127,8 +135,11 @@ func (f *fakeClusters) Delete(name string) error {
 
 func testProvider(t *testing.T, rt *fakeRuntime, kc *fakeClusters, purge bool) *Provider {
 	t.Helper()
-	p := newProvider(rt, kc, Options{Home: t.TempDir(), K8sVersion: "1.37", Purge: purge})
-	p.zotReady = func(context.Context) error { return rt.call("zotReady") }
+	home := t.TempDir()
+	p := newProvider(rt, func(io.Writer) Clusters { return kc },
+		Options{Home: home, Kubeconfig: filepath.Join(home, "kubeconfig"), K8sVersion: "1.37", Purge: purge})
+	p.zotReady = func(context.Context, io.Writer) error { return rt.call("zotReady") }
+	p.nodesReady = func(context.Context, string, int, io.Writer) error { return rt.call("nodesReady") }
 	return p
 }
 
@@ -210,7 +221,8 @@ func TestApplyRegistry(t *testing.T) {
 				tt.setup(rt)
 			}
 			p := testProvider(t, rt, &fakeClusters{nodes: map[string]int{}}, false)
-			err := p.Apply(context.Background(), "registry")
+			var log bytes.Buffer
+			err := p.Apply(context.Background(), "registry", &log)
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -231,7 +243,7 @@ func TestApplyRegistry(t *testing.T) {
 func TestRegistryContainerSpec(t *testing.T) {
 	rt := newFakeRuntime()
 	p := testProvider(t, rt, &fakeClusters{nodes: map[string]int{}}, false)
-	if err := p.Apply(context.Background(), "registry"); err != nil {
+	if err := p.Apply(context.Background(), "registry", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if len(rt.created) != 1 {
@@ -285,8 +297,10 @@ func TestApplyCluster(t *testing.T) {
 			rt := newFakeRuntime()
 			rt.containers[ZotContainer] = tt.zot
 			kc := &fakeClusters{nodes: tt.nodes, fail: tt.kindErr}
-			p := newProvider(rt, kc, Options{Home: t.TempDir(), K8sVersion: tt.k8s})
-			err := p.Apply(context.Background(), "cluster")
+			p := testProvider(t, rt, kc, false)
+			p.opts.K8sVersion = tt.k8s
+			rt.calls = nil
+			err := p.Apply(context.Background(), "cluster", io.Discard)
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -300,6 +314,12 @@ func TestApplyCluster(t *testing.T) {
 				t.Errorf("image = %s, want %s", kc.images[0], NodeImage)
 			}
 			if tt.wantErr == "" {
+				if b, err := os.ReadFile(p.opts.Kubeconfig); err != nil || string(b) != "kubeconfig for lab" {
+					t.Errorf("kubeconfig = %q, %v", b, err)
+				}
+				if !slices.Contains(rt.calls, "nodesReady") {
+					t.Errorf("calls = %v, want a wait for Ready nodes", rt.calls)
+				}
 				for _, u := range upstreams() {
 					b, err := os.ReadFile(filepath.Join(p.certsDir(), u.Name, "hosts.toml"))
 					if err != nil || !strings.Contains(string(b), "lab-zot:5000/v2/"+u.Name) {
@@ -338,8 +358,14 @@ func TestDestroy(t *testing.T) {
 			}
 			kc := &fakeClusters{nodes: tt.nodes}
 			p := testProvider(t, rt, kc, tt.purge)
-			if err := p.Destroy(context.Background(), tt.stack); err != nil {
+			if err := writeFile(p.opts.Kubeconfig, []byte("x")); err != nil {
 				t.Fatal(err)
+			}
+			if err := p.Destroy(context.Background(), tt.stack, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(p.opts.Kubeconfig); (err == nil) != (tt.stack != "cluster") {
+				t.Errorf("kubeconfig present = %v after destroying %s", err == nil, tt.stack)
 			}
 			if !slices.Equal(rt.calls, tt.wantCalls) {
 				t.Errorf("calls = %v, want %v", rt.calls, tt.wantCalls)
@@ -369,8 +395,8 @@ func TestUnsupportedStacks(t *testing.T) {
 		if tt.want {
 			continue
 		}
-		for name, f := range map[string]func(context.Context, string) error{"Apply": p.Apply, "Destroy": p.Destroy} {
-			if err := f(context.Background(), tt.stack); !errors.Is(err, ErrUnsupported) {
+		for name, f := range map[string]func(context.Context, string, io.Writer) error{"Apply": p.Apply, "Destroy": p.Destroy} {
+			if err := f(context.Background(), tt.stack, io.Discard); !errors.Is(err, ErrUnsupported) {
 				t.Errorf("%s(%s) = %v, want ErrUnsupported", name, tt.stack, err)
 			}
 		}
@@ -424,5 +450,49 @@ func TestImageMinor(t *testing.T) {
 	// The kind library's default image must follow the config pin.
 	if m, err := imageMinor(NodeImage); err != nil || m != "1.37" {
 		t.Errorf("NodeImage %s is %q, %v; want 1.37", NodeImage, m, err)
+	}
+}
+
+func TestWaitHTTP(t *testing.T) {
+	tests := []struct {
+		name     string
+		notReady int32 // requests answered 503 before 200s
+		timeout  time.Duration
+		wantErr  string
+	}{
+		{"ready at once", 0, 2 * time.Second, ""},
+		{"ready after two 503s", 2, 5 * time.Second, ""},
+		{"never ready", 1000, 1200 * time.Millisecond, "HTTP 503"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v2/" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if n.Add(1) <= tt.notReady {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			var log bytes.Buffer
+			err := waitHTTP(context.Background(), srv.URL+"/v2/", tt.timeout, &log)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(log.String(), "/v2/ returned 200") {
+					t.Errorf("log = %q", log.String())
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }

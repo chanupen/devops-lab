@@ -90,7 +90,7 @@ func countAction(p engine.Plan, a engine.Action) int {
 func run(cmd *cobra.Command, newProvider providerFactory, cfg config.Config, home string, g *engine.Graph,
 	store engine.Store, p engine.Plan, purge bool, command string) error {
 	out := cmd.OutOrStdout()
-	prov, err := newProvider(cfg, home, purge, out)
+	prov, err := newProvider(cfg, home, purge)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,8 @@ func writeEvent(w io.Writer, r *lipgloss.Renderer, e engine.Event, starts map[st
 	switch e.Phase {
 	case engine.Started:
 		starts[e.Step.Stack] = time.Now()
-		_, _ = fmt.Fprintf(w, "%s %s: %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("◐"), e.Step.Stack, ing)
+		_, _ = fmt.Fprintf(w, "%s %s: %s %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("◐"), e.Step.Stack, ing,
+			r.NewStyle().Faint(true).Render("(log: "+e.Log+")"))
 	case engine.Finished:
 		d := time.Since(starts[e.Step.Stack]).Round(100 * time.Millisecond)
 		_, _ = fmt.Fprintf(w, "%s %s: %s in %s\n", r.NewStyle().Foreground(lipgloss.Color("2")).Render("●"), e.Step.Stack, past, d)

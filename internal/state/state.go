@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ type Op struct {
 	Started  time.Time `json:"started"`
 	Finished time.Time `json:"finished"`
 	Error    string    `json:"error,omitempty"`
+	Log      string    `json:"log,omitempty"` // path of the step's output log
 }
 
 // New returns an empty state.
@@ -56,12 +58,16 @@ func New() State {
 	return State{Version: SchemaVersion, Stacks: map[string]StackState{}}
 }
 
-// AppendOp adds an op and trims the log to MaxOps.
-func (s *State) AppendOp(op Op) {
+// AppendOp adds an op, trims the log to MaxOps and returns the dropped ops.
+func (s *State) AppendOp(op Op) []Op {
 	s.Ops = append(s.Ops, op)
-	if n := len(s.Ops) - MaxOps; n > 0 {
-		s.Ops = append([]Op(nil), s.Ops[n:]...)
+	n := len(s.Ops) - MaxOps
+	if n <= 0 {
+		return nil
 	}
+	dropped := append([]Op(nil), s.Ops[:n]...)
+	s.Ops = append([]Op(nil), s.Ops[n:]...)
+	return dropped
 }
 
 // IsApplied reports whether the stack's last result was a successful apply.
@@ -173,6 +179,33 @@ func syncDir(dir string) error {
 	}
 	defer func() { _ = d.Close() }()
 	return d.Sync()
+}
+
+// OpenStepLog creates ops/<time>-<action>-<stack>.log next to the state
+// file, private to the user, and returns it with its path.
+func (st *Store) OpenStepLog(stack, action string, started time.Time) (io.WriteCloser, string, error) {
+	dir := filepath.Join(filepath.Dir(st.path), "ops")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, "", err
+	}
+	name := fmt.Sprintf("%s-%s-%s.log", started.UTC().Format("20060102T150405.000Z"), action, stack)
+	path := filepath.Join(dir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, path, nil
+}
+
+// RemoveLogs deletes the log files of ops dropped from the log. Missing files
+// are ignored; only files inside the ops directory are touched.
+func (st *Store) RemoveLogs(ops []Op) {
+	dir := filepath.Join(filepath.Dir(st.path), "ops")
+	for _, op := range ops {
+		if op.Log != "" && filepath.Dir(op.Log) == dir {
+			_ = os.Remove(op.Log)
+		}
+	}
 }
 
 // lock takes an exclusive flock on a sibling .lock file. Linux and macOS only,

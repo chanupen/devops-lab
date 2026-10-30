@@ -9,8 +9,8 @@ import (
 	"sigs.k8s.io/kind/pkg/log"
 )
 
-// kindLogger writes kind's user-facing messages (V(0), warnings, errors) as
-// indented lines and drops debug output and expected warnings.
+// kindLogger writes everything kind logs, at every verbosity, to the step
+// log. Debug lines are tagged with their level; nothing is filtered.
 type kindLogger struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -19,45 +19,35 @@ type kindLogger struct {
 func newKindLogger(w io.Writer) *kindLogger { return &kindLogger{w: w} }
 
 func (l *kindLogger) line(prefix, msg string) {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
+	msg = strings.TrimRight(msg, "\n")
+	if strings.TrimSpace(msg) == "" {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = fmt.Fprintf(l.w, "    %s%s\n", prefix, msg)
-}
-
-// podmanNotice is kind's warning when the Podman provider is chosen; the lab
-// always chooses it, so it is noise.
-const podmanNotice = "enabling experimental podman provider"
-
-func (l *kindLogger) Warn(m string) {
-	if !strings.Contains(m, podmanNotice) {
-		l.line("warning: ", m)
+	for _, m := range strings.Split(msg, "\n") {
+		_, _ = fmt.Fprintf(l.w, "kind: %s%s\n", prefix, m)
 	}
 }
 
+func (l *kindLogger) Warn(m string)                    { l.line("warning: ", m) }
 func (l *kindLogger) Warnf(f string, a ...any)         { l.Warn(fmt.Sprintf(f, a...)) }
 func (l *kindLogger) Error(m string)                   { l.line("error: ", m) }
-func (l *kindLogger) Errorf(f string, a ...any)        { l.line("error: ", fmt.Sprintf(f, a...)) }
-func (l *kindLogger) V(level log.Level) log.InfoLogger { return infoLogger{l: l, on: level == 0} }
+func (l *kindLogger) Errorf(f string, a ...any)        { l.Error(fmt.Sprintf(f, a...)) }
+func (l *kindLogger) V(level log.Level) log.InfoLogger { return infoLogger{l: l, level: level} }
 
 type infoLogger struct {
-	l  *kindLogger
-	on bool
+	l     *kindLogger
+	level log.Level
 }
 
-func (i infoLogger) Info(m string) {
-	if i.on {
-		i.l.line("", m)
+func (i infoLogger) prefix() string {
+	if i.level == 0 {
+		return ""
 	}
+	return fmt.Sprintf("[v%d] ", i.level)
 }
 
-func (i infoLogger) Infof(f string, a ...any) {
-	if i.on {
-		i.l.line("", fmt.Sprintf(f, a...))
-	}
-}
-
-func (i infoLogger) Enabled() bool { return i.on }
+func (i infoLogger) Info(m string)            { i.l.line(i.prefix(), m) }
+func (i infoLogger) Infof(f string, a ...any) { i.l.line(i.prefix(), fmt.Sprintf(f, a...)) }
+func (i infoLogger) Enabled() bool            { return true }

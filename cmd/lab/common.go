@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,17 +52,25 @@ type provider interface {
 	Supports(stack string) bool
 }
 
-// providerFactory builds the provider for cfg.Mode. home is the directory
-// holding the state file; providers keep their generated files under it.
-type providerFactory func(cfg config.Config, home string, purge bool, log io.Writer) (provider, error)
+// providerFactory builds the runner for cfg.Mode. home is the directory
+// holding the state file; generated files (kubeconfig, configs) go under it.
+type providerFactory func(cfg config.Config, home string, purge bool) (provider, error)
 
-func defaultProvider(cfg config.Config, home string, purge bool, log io.Writer) (provider, error) {
+// defaultProvider routes infrastructure stacks to the mode's provider.
+func defaultProvider(cfg config.Config, home string, purge bool) (provider, error) {
+	kubeconfig := filepath.Join(home, "kubeconfig")
+	r := engine.Router{}
 	switch cfg.Mode {
 	case "local":
-		return local.New(local.Options{Home: home, K8sVersion: cfg.K8sVersion, Purge: purge, Log: log})
+		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: purge})
+		if err != nil {
+			return nil, err
+		}
+		r["registry"], r["cluster"] = p, p
 	default:
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
+	return r, nil
 }
 
 // unsupported lists stacks the plan would change that the provider cannot run.

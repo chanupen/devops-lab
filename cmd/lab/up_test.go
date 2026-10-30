@@ -23,9 +23,13 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Supports(s string) bool { return s == "registry" || s == "cluster" }
 
-func (f *fakeProvider) Apply(_ context.Context, s string) error { return f.do("apply " + s) }
+func (f *fakeProvider) Apply(_ context.Context, s string, _ io.Writer) error {
+	return f.do("apply " + s)
+}
 
-func (f *fakeProvider) Destroy(_ context.Context, s string) error { return f.do("destroy " + s) }
+func (f *fakeProvider) Destroy(_ context.Context, s string, _ io.Writer) error {
+	return f.do("destroy " + s)
+}
 
 func (f *fakeProvider) do(c string) error {
 	f.calls = append(f.calls, c)
@@ -53,10 +57,11 @@ func TestUpDown(t *testing.T) {
 		wantOp     string   // command of the last op
 	}{
 		{
-			name:       "up cluster and registry",
-			args:       []string{"up", "--stacks", "cluster,registry"},
-			wantCalls:  []string{"apply registry", "apply cluster"},
-			wantOut:    []string{"$ lab up --stacks cluster,registry", "● registry: applied in", "● cluster: applied in", "done in"},
+			name:      "up cluster and registry",
+			args:      []string{"up", "--stacks", "cluster,registry"},
+			wantCalls: []string{"apply registry", "apply cluster"},
+			wantOut: []string{"$ lab up --stacks cluster,registry", "◐ registry: applying (log: " + "", "● registry: applied in",
+				"● cluster: applied in", "done in"},
 			wantStacks: []string{"cluster", "registry"},
 			wantOp:     "lab up --stacks cluster,registry",
 		},
@@ -77,7 +82,7 @@ func TestUpDown(t *testing.T) {
 		{
 			name:    "up of the whole profile names unsupported stacks before running",
 			args:    []string{"up"},
-			wantErr: "the local provider cannot run gitops, core, sample-app yet",
+			wantErr: "the local provider cannot run gitops, core, sample-app yet", // the fake routes only registry and cluster
 		},
 		{
 			name:       "failed step is reported and recorded",
@@ -147,7 +152,7 @@ func TestUpDown(t *testing.T) {
 			}
 			fp := &fakeProvider{fail: tt.fail}
 			var gotPurge, built bool
-			factory := func(_ config.Config, home string, purge bool, _ io.Writer) (provider, error) {
+			factory := func(_ config.Config, home string, purge bool) (provider, error) {
 				built, gotPurge = true, purge
 				if home != dir {
 					t.Errorf("provider home = %s, want the state file's directory %s", home, dir)
@@ -214,9 +219,10 @@ func TestDefaultProviderModes(t *testing.T) {
 	for _, tt := range tests {
 		cfg := config.Default()
 		cfg.Mode = tt.mode
-		_, err := defaultProvider(cfg, t.TempDir(), false, io.Discard)
+		_, err := defaultProvider(cfg, t.TempDir(), false)
 		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 			t.Errorf("%s: err = %v, want %q", tt.mode, err, tt.wantErr)
 		}
 	}
 }
+

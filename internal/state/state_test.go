@@ -165,19 +165,24 @@ func TestConcurrentUpdates(t *testing.T) {
 
 func TestAppendOpCap(t *testing.T) {
 	tests := []struct {
-		appends   int
-		wantLen   int
-		wantFirst string
+		appends     int
+		wantLen     int
+		wantFirst   string
+		wantDropped int // by the last append
 	}{
-		{1, 1, "op 0"},
-		{MaxOps, MaxOps, "op 0"},
-		{MaxOps + 1, MaxOps, "op 1"},
-		{MaxOps + 250, MaxOps, "op 250"},
+		{1, 1, "op 0", 0},
+		{MaxOps, MaxOps, "op 0", 0},
+		{MaxOps + 1, MaxOps, "op 1", 1},
+		{MaxOps + 250, MaxOps, "op 250", 1},
 	}
 	for _, tt := range tests {
 		s := New()
+		var dropped []Op
 		for i := range tt.appends {
-			s.AppendOp(Op{Command: fmt.Sprintf("op %d", i)})
+			dropped = s.AppendOp(Op{Command: fmt.Sprintf("op %d", i)})
+		}
+		if len(dropped) != tt.wantDropped {
+			t.Errorf("%d appends: last append dropped %d, want %d", tt.appends, len(dropped), tt.wantDropped)
 		}
 		if len(s.Ops) != tt.wantLen || s.Ops[0].Command != tt.wantFirst {
 			t.Errorf("%d appends: len %d first %q; want %d %q", tt.appends, len(s.Ops), s.Ops[0].Command, tt.wantLen, tt.wantFirst)
@@ -186,3 +191,57 @@ func TestAppendOpCap(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestStepLogs(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".lab")
+	st := NewStore(filepath.Join(dir, "state.json"))
+	started := time.Date(2026, 10, 30, 17, 42, 15, 123_000_000, time.UTC)
+	w, path, err := st.OpenStepLog("cluster", "apply", started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "ops", "20261030T174215.123Z-apply-cluster.log"); path != want {
+		t.Errorf("path = %s, want %s", path, want)
+	}
+	if _, err := w.Write([]byte("kind: Creating cluster\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		path string
+		mode os.FileMode
+	}{{filepath.Join(dir, "ops"), 0o700 | os.ModeDir}, {path, 0o600}} {
+		fi, err := os.Stat(c.path)
+		if err != nil || fi.Mode() != c.mode {
+			t.Errorf("%s: mode %v, %v; want %v", c.path, fi.Mode(), err, c.mode)
+		}
+	}
+
+	outside := filepath.Join(t.TempDir(), "keep.log")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		op       Op
+		path     string
+		wantGone bool
+	}{
+		{"log in ops dir is removed", Op{Log: path}, path, true},
+		{"file outside ops dir is never touched", Op{Log: outside}, outside, false},
+		{"missing file is fine", Op{Log: filepath.Join(dir, "ops", "gone.log")}, "", false},
+		{"op without log", Op{}, "", false},
+	}
+	for _, tt := range tests {
+		st.RemoveLogs([]Op{tt.op})
+		if tt.path == "" {
+			continue
+		}
+		_, err := os.Stat(tt.path)
+		if gone := errors.Is(err, os.ErrNotExist); gone != tt.wantGone {
+			t.Errorf("%s: gone = %v, want %v", tt.name, gone, tt.wantGone)
+		}
+	}
+}

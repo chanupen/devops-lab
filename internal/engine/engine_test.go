@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -11,11 +14,33 @@ import (
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
-// memStore is an in-memory Store.
+// memStore is an in-memory Store; step logs are kept in memory by path.
 type memStore struct {
 	st        state.State
 	updateErr error
+	logs      map[string]*bytes.Buffer
+	removed   []string
 }
+
+func (m *memStore) OpenStepLog(stack, action string, started time.Time) (io.WriteCloser, string, error) {
+	if m.logs == nil {
+		m.logs = map[string]*bytes.Buffer{}
+	}
+	path := fmt.Sprintf("ops/%s-%s-%s.log", started.Format("150405"), action, stack)
+	b := &bytes.Buffer{}
+	m.logs[path] = b
+	return nopCloser{b}, path, nil
+}
+
+func (m *memStore) RemoveLogs(ops []state.Op) {
+	for _, op := range ops {
+		m.removed = append(m.removed, op.Log)
+	}
+}
+
+type nopCloser struct{ io.Writer }
+
+func (nopCloser) Close() error { return nil }
 
 func (m *memStore) Load() (state.State, error) { return clone(m.st), nil }
 
@@ -48,8 +73,9 @@ type fakeRunner struct {
 	cancel context.CancelFunc // called after the first call, if set
 }
 
-func (f *fakeRunner) run(action, stack string) error {
+func (f *fakeRunner) run(action, stack string, log io.Writer) error {
 	f.calls = append(f.calls, action+" "+stack)
+	_, _ = fmt.Fprintf(log, "runner output for %s\n", stack)
 	if f.cancel != nil {
 		f.cancel()
 	}
@@ -59,8 +85,13 @@ func (f *fakeRunner) run(action, stack string) error {
 	return nil
 }
 
-func (f *fakeRunner) Apply(_ context.Context, s string) error   { return f.run("apply", s) }
-func (f *fakeRunner) Destroy(_ context.Context, s string) error { return f.run("destroy", s) }
+func (f *fakeRunner) Apply(_ context.Context, s string, log io.Writer) error {
+	return f.run("apply", s, log)
+}
+
+func (f *fakeRunner) Destroy(_ context.Context, s string, log io.Writer) error {
+	return f.run("destroy", s, log)
+}
 
 func TestExecute(t *testing.T) {
 	applied := state.Applied
@@ -187,6 +218,9 @@ func TestExecute(t *testing.T) {
 			if !slices.Equal(runner.calls, tt.wantCalls) {
 				t.Errorf("calls = %v, want %v", runner.calls, tt.wantCalls)
 			}
+			if err != nil && !strings.Contains(err.Error(), "(log: ops/") {
+				t.Errorf("error %q does not point at the step log", err)
+			}
 			if !slices.Equal(events, tt.wantEvents) {
 				t.Errorf("events = %v, want %v", events, tt.wantEvents)
 			}
@@ -214,6 +248,24 @@ func TestExecute(t *testing.T) {
 			}
 			if !slices.Equal(ops, tt.wantOps) {
 				t.Errorf("ops = %v, want %v", ops, tt.wantOps)
+			}
+			for _, op := range store.st.Ops {
+				log, ok := store.logs[op.Log]
+				if !ok {
+					t.Errorf("op %s %s has no log (path %q)", op.Action, op.Stack, op.Log)
+					continue
+				}
+				want := []string{"10:00:00.000 lab up: " + op.Action + " " + op.Stack, "runner output for " + op.Stack}
+				if op.Status == "ok" {
+					want = append(want, "ok in 0s")
+				} else {
+					want = append(want, "failed after 0s: helm timeout")
+				}
+				for _, w := range want {
+					if !strings.Contains(log.String(), w) {
+						t.Errorf("log %s lacks %q:\n%s", op.Log, w, log.String())
+					}
+				}
 			}
 		})
 	}
@@ -247,4 +299,89 @@ func TestExecuteGuards(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+func TestExecuteRemovesDroppedLogs(t *testing.T) {
+	st := state.New()
+	for i := range state.MaxOps {
+		st.AppendOp(state.Op{Command: "old", Log: fmt.Sprintf("ops/old-%d.log", i)})
+	}
+	store := &memStore{st: st}
+	eng := New(catalogGraph(t), store, &fakeRunner{})
+	eng.now = func() time.Time { return time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC) }
+	p := Plan{Mode: "local", Steps: []Step{{"registry", Apply, ""}, {"cluster", Apply, ""}}}
+	if err := eng.Execute(context.Background(), p, "lab up", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(store.removed, []string{"ops/old-0.log", "ops/old-1.log"}) {
+		t.Errorf("removed = %v, want the two oldest logs", store.removed)
+	}
+}
+
+func TestRouter(t *testing.T) {
+	infra, gitops := &fakeRunner{}, &fakeRunner{fail: map[string]bool{"core": true}}
+	r := Router{"registry": infra, "cluster": infra, "gitops": gitops, "core": gitops}
+	tests := []struct {
+		stack, action string
+		wantErr       string
+	}{
+		{"cluster", "apply", ""},
+		{"gitops", "apply", ""},
+		{"core", "destroy", "helm timeout"},
+		{"obs", "apply", `no runner for stack "obs"`},
+		{"obs", "destroy", `no runner for stack "obs"`},
+	}
+	for _, tt := range tests {
+		var err error
+		if tt.action == "apply" {
+			err = r.Apply(context.Background(), tt.stack, io.Discard)
+		} else {
+			err = r.Destroy(context.Background(), tt.stack, io.Discard)
+		}
+		if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+			t.Errorf("%s %s: err = %v, want %q", tt.action, tt.stack, err, tt.wantErr)
+		}
+		if got := r.Supports(tt.stack); got != (tt.stack != "obs") {
+			t.Errorf("Supports(%s) = %v", tt.stack, got)
+		}
+	}
+	if !slices.Equal(infra.calls, []string{"apply cluster"}) || !slices.Equal(gitops.calls, []string{"apply gitops", "destroy core"}) {
+		t.Errorf("infra %v, gitops %v", infra.calls, gitops.calls)
+	}
+}
+
+func TestTimestampWriter(t *testing.T) {
+	clock := time.Date(2026, 10, 30, 23, 5, 1, 250_000_000, time.UTC)
+	tests := []struct {
+		name   string
+		writes []string
+		flush  bool
+		want   string
+	}{
+		{"one line", []string{"hello\n"}, false, "23:05:01.250 hello\n"},
+		{"line split across writes", []string{"hel", "lo\nwor", "ld\n"}, false, "23:05:01.250 hello\n23:05:01.250 world\n"},
+		{"partial line waits for flush", []string{"no newline"}, false, ""},
+		{"flush writes the partial line", []string{"no newline"}, true, "23:05:01.250 no newline\n"},
+		{"CRLF trimmed", []string{"windows\r\n"}, false, "23:05:01.250 windows\n"},
+		{"empty lines kept", []string{"\n"}, false, "23:05:01.250 \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			w := newTimestampWriter(&b, func() time.Time { return clock })
+			for _, s := range tt.writes {
+				if n, err := w.Write([]byte(s)); err != nil || n != len(s) {
+					t.Fatalf("Write(%q) = %d, %v", s, n, err)
+				}
+			}
+			if tt.flush {
+				if err := w.Flush(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if b.String() != tt.want {
+				t.Errorf("got %q, want %q", b.String(), tt.want)
+			}
+		})
+	}
 }
