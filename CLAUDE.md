@@ -62,6 +62,7 @@ internal/provider/local  kind, Podman, LocalStack, Zot
 internal/provider/aws    Terraform runner, EKS, ECR, cost, TTL
 internal/kube/           client-go informers, health
 internal/state/          ~/.lab/state.json, ops history
+internal/config/         lab.yaml loading and validation
 internal/drills/         fault injection and timers
 internal/doctor/         host readiness checks for `lab doctor`
 infra/terraform/{local,aws}
