@@ -30,6 +30,13 @@ func RESTConfig(path string) (*rest.Config, error) {
 	return cfg, nil
 }
 
+// WarningsTo sends API server warnings (deprecations, finalizer naming) to w
+// instead of client-go's default stderr logger.
+func WarningsTo(cfg *rest.Config, w io.Writer) *rest.Config {
+	cfg.WarningHandler = rest.NewWarningWriter(w, rest.WarningWriterOptions{Deduplicate: true})
+	return cfg
+}
+
 // NewClients builds clients for cfg.
 func NewClients(cfg *rest.Config) (*Clients, error) {
 	core, err := kubernetes.NewForConfig(cfg)

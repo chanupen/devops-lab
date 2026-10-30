@@ -74,25 +74,26 @@ type Options struct {
 // Runner applies and destroys the gitops and app stacks. It implements
 // engine.Runner.
 type Runner struct {
-	opts     Options
-	helm     Helm
-	clients  func() (*kube.Clients, error)
+	opts Options
+	helm Helm
+	// clients connects to the cluster; API warnings go to the step log.
+	clients  func(log io.Writer) (*kube.Clients, error)
 	readFile func(string) ([]byte, error)
 	home     func() (string, error)
 }
 
 // New returns a Runner that reaches the cluster through kubeconfig.
 func New(opts Options, kubeconfig, helmHome string) *Runner {
-	return newRunner(opts, newSDKHelm(kubeconfig, helmHome), func() (*kube.Clients, error) {
+	return newRunner(opts, newSDKHelm(kubeconfig, helmHome), func(log io.Writer) (*kube.Clients, error) {
 		cfg, err := kube.RESTConfig(kubeconfig)
 		if err != nil {
 			return nil, err
 		}
-		return kube.NewClients(cfg)
+		return kube.NewClients(kube.WarningsTo(cfg, log))
 	})
 }
 
-func newRunner(opts Options, h Helm, clients func() (*kube.Clients, error)) *Runner {
+func newRunner(opts Options, h Helm, clients func(io.Writer) (*kube.Clients, error)) *Runner {
 	if opts.Timeout == 0 {
 		opts.Timeout = 20 * time.Minute
 	}
@@ -149,7 +150,7 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 	}, log); err != nil {
 		return fmt.Errorf("install Argo CD: %w", err)
 	}
-	c, err := r.clients()
+	c, err := r.clients(log)
 	if err != nil {
 		return err
 	}
@@ -183,7 +184,7 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 // setStack turns a stack on or off in the app-of-apps and waits until Argo CD
 // has added (and made healthy) or removed its apps.
 func (r *Runner) setStack(ctx context.Context, stack string, on bool, log io.Writer) error {
-	c, err := r.clients()
+	c, err := r.clients(log)
 	if err != nil {
 		return err
 	}
@@ -269,7 +270,7 @@ func staleNote(a kube.App) string {
 // destroyGitOps deletes the app-of-apps (its finalizer removes child apps and
 // their resources), uninstalls Argo CD and deletes its namespace.
 func (r *Runner) destroyGitOps(ctx context.Context, log io.Writer) error {
-	c, err := r.clients()
+	c, err := r.clients(log)
 	if err != nil {
 		return err
 	}

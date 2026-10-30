@@ -13,6 +13,10 @@ import (
 	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/storage/driver"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/rest"
+
+	k8s "github.com/chanupen/devops-lab/internal/kube"
 )
 
 // sdkHelm drives the Helm v4 SDK against one kubeconfig. Repository config
@@ -34,7 +38,11 @@ func (h *sdkHelm) setup(namespace string, log io.Writer) (*action.Configuration,
 	settings.RepositoryCache = filepath.Join(h.home, "cache")
 	cfg := action.NewConfiguration(action.ConfigurationSetLogger(
 		slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	if err := cfg.Init(settings.RESTClientGetter(), namespace, "secret"); err != nil {
+	getter := settings.RESTClientGetter()
+	if flags, ok := getter.(*genericclioptions.ConfigFlags); ok {
+		flags.WrapConfigFn = func(c *rest.Config) *rest.Config { return k8s.WarningsTo(c, log) }
+	}
+	if err := cfg.Init(getter, namespace, "secret"); err != nil {
 		return nil, nil, err
 	}
 	return cfg, settings, nil

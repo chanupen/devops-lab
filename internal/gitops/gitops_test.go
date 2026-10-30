@@ -128,7 +128,7 @@ func newEnv(t *testing.T, argo bool, objs ...runtime.Object) *env {
 		Mode:    "local",
 		Repo:    config.Repo{URL: "git@github.com:o/r.git", Revision: "main", SSHKeyFile: "~/.ssh/deploy"},
 		Timeout: 3 * time.Second,
-	}, h, func() (*kube.Clients, error) { return &kube.Clients{Core: core, Dynamic: dyn}, nil })
+	}, h, func(io.Writer) (*kube.Clients, error) { return &kube.Clients{Core: core, Dynamic: dyn}, nil })
 	r.home = func() (string, error) { return "/home/u", nil }
 	r.readFile = func(p string) ([]byte, error) {
 		if p == "/home/u/.ssh/deploy" {
