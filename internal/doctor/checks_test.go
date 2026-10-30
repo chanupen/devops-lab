@@ -137,7 +137,7 @@ func TestChecks(t *testing.T) {
 		}}, Options{}, OK, "enforcing"},
 		{"selinux permissive", checkSELinux, fake{files: map[string]string{
 			"/sys/fs/selinux/enforce": "0", "/sys/fs/selinux/booleans/container_use_devices": "1 1",
-		}}, Options{}, OK, "permissive, container_use_devices on"},
+		}}, Options{}, Warn, "permissive, container_use_devices on"},
 		{"selinux permissive, boolean off", checkSELinux, fake{files: map[string]string{
 			"/sys/fs/selinux/enforce": "0", "/sys/fs/selinux/booleans/container_use_devices": "0 0",
 		}}, Options{}, Fail, "permissive, container_use_devices off"},
