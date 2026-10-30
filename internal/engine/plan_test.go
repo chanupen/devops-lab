@@ -69,41 +69,41 @@ func TestPlanUp(t *testing.T) {
 			name:        "fresh minimal",
 			cfg:         cfgFor("local", "minimal"),
 			st:          state.New(),
-			want:        "+cluster +gitops +core +registry +sample-app",
+			want:        "+registry +cluster +gitops +core +sample-app",
 			wantChanges: 5,
 		},
 		{
 			name:        "fresh standard",
 			cfg:         cfgFor("local", "standard"),
 			st:          state.New(),
-			want:        "+cluster +gitops +core +registry +secrets +obs +policy +scaling +sample-app",
+			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app",
 			wantChanges: 9,
 		},
 		{
 			name: "fully applied is all keep",
 			cfg:  cfgFor("local", "minimal"),
 			st:   stateWith("local", minimalApplied),
-			want: "=cluster =gitops =core =registry =sample-app",
+			want: "=registry =cluster =gitops =core =sample-app",
 		},
 		{
 			name:        "partial apply resumes",
 			cfg:         cfgFor("local", "minimal"),
-			st:          stateWith("local", map[string]string{"cluster": applied, "gitops": applied}),
-			want:        "=cluster =gitops +core +registry +sample-app",
-			wantChanges: 3,
+			st:          stateWith("local", map[string]string{"registry": applied, "cluster": applied, "gitops": applied}),
+			want:        "=registry =cluster =gitops +core +sample-app",
+			wantChanges: 2,
 		},
 		{
 			name:        "failed stack is retried",
 			cfg:         cfgFor("local", "minimal"),
-			st:          stateWith("local", map[string]string{"cluster": applied, "gitops": state.Failed}),
-			want:        "=cluster +gitops +core +registry +sample-app",
-			wantChanges: 4,
+			st:          stateWith("local", map[string]string{"registry": applied, "cluster": applied, "gitops": state.Failed}),
+			want:        "=registry =cluster +gitops +core +sample-app",
+			wantChanges: 3,
 		},
 		{
 			name:         "smaller profile keeps extras and warns",
 			cfg:          cfgFor("local", "minimal"),
 			st:           stateWith("local", withExtras),
-			want:         "=cluster =gitops =core =registry =sample-app =obs =secrets =chaos",
+			want:         "=registry =cluster =gitops =core =sample-app =obs =secrets =chaos",
 			wantWarnings: []string{keepWarning},
 		},
 		{
@@ -111,7 +111,7 @@ func TestPlanUp(t *testing.T) {
 			cfg:         cfgFor("local", "minimal"),
 			st:          stateWith("local", withExtras),
 			prune:       true,
-			want:        "-chaos -secrets -obs =cluster =gitops =core =registry =sample-app",
+			want:        "-chaos -secrets -obs =registry =cluster =gitops =core =sample-app",
 			wantChanges: 3,
 		},
 		{
@@ -120,7 +120,7 @@ func TestPlanUp(t *testing.T) {
 			st: stateWith("local", map[string]string{
 				"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "sample-app": applied, "policy": applied,
 			}),
-			want:         "=cluster =gitops =core =registry =sample-app =policy",
+			want:         "=registry =cluster =gitops =core =sample-app =policy",
 			wantWarnings: []string{"1 deployed stack is not in profile minimal, kept: policy. Run lab up --prune to remove."},
 		},
 		{
@@ -128,7 +128,7 @@ func TestPlanUp(t *testing.T) {
 			cfg:         cfgFor("local", "minimal"),
 			st:          stateWith("local", minimalApplied),
 			prune:       true,
-			want:        "=cluster =gitops =core =registry =sample-app",
+			want:        "=registry =cluster =gitops =core =sample-app",
 			wantChanges: 0,
 		},
 		{
@@ -141,7 +141,7 @@ func TestPlanUp(t *testing.T) {
 			name: "other mode with nothing deployed is fine",
 			cfg:  cfgFor("cloud", "minimal"),
 			st:   stateWith("local", nil),
-			want: "+cluster +gitops +core +registry +sample-app", wantChanges: 5,
+			want: "+registry +cluster +gitops +core +sample-app", wantChanges: 5,
 		},
 		{
 			name:    "unknown stack in state",
@@ -194,7 +194,7 @@ func mustProfile(t *testing.T, profile string) []string {
 }
 
 func TestPlanUpFailedReasonCarriesError(t *testing.T) {
-	p, err := PlanUp(catalogGraph(t), cfgFor("local", "minimal"), stateWith("local", map[string]string{"cluster": state.Failed}), PlanOptions{})
+	p, err := PlanUp(catalogGraph(t), cfgFor("local", "minimal"), stateWith("local", map[string]string{"registry": state.Failed}), PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestPlanDown(t *testing.T) {
 		{"nothing deployed", state.New(), "", ""},
 		{"reverse dependency order", stateWith("local", map[string]string{
 			"cluster": applied, "gitops": applied, "core": applied, "registry": applied, "obs": applied, "sample-app": applied,
-		}), "-sample-app -core -registry -obs -gitops -cluster", ""},
+		}), "-sample-app -core -obs -gitops -cluster -registry", ""},
 		{"failed stacks are destroyed too", stateWith("local", map[string]string{
 			"cluster": applied, "gitops": state.Failed,
 		}), "-gitops -cluster", ""},
@@ -235,6 +235,57 @@ func TestPlanDown(t *testing.T) {
 			}
 			if got := render(p); got != tt.want {
 				t.Errorf("plan = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlanUpStacks(t *testing.T) {
+	applied := state.Applied
+	tests := []struct {
+		name    string
+		stacks  []string
+		prune   bool
+		st      state.State
+		want    string
+		wantErr string
+	}{
+		{name: "selection pulls in dependencies", stacks: []string{"cluster"}, st: state.New(),
+			want: "+registry +cluster"},
+		{name: "cluster and registry", stacks: []string{"cluster", "registry"}, st: state.New(),
+			want: "+registry +cluster"},
+		{name: "deployed stacks outside the selection are kept", stacks: []string{"registry"},
+			st:   stateWith("local", map[string]string{"registry": applied, "cluster": applied, "gitops": applied}),
+			want: "=registry =cluster =gitops"},
+		{name: "selection outside the profile is allowed", stacks: []string{"chaos"}, st: state.New(),
+			want: "+registry +cluster +gitops +obs +chaos"},
+		{name: "unknown stack", stacks: []string{"harbor"}, st: state.New(), wantErr: `unknown stack "harbor"`},
+		{name: "prune with a selection is refused", stacks: []string{"cluster"}, prune: true, st: state.New(),
+			wantErr: "cannot be combined with a stack selection"},
+	}
+	g := catalogGraph(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := PlanUp(g, cfgFor("local", "minimal"), tt.st, PlanOptions{Stacks: tt.stacks, Prune: tt.prune})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(p); got != tt.want {
+				t.Errorf("plan = %s, want %s", got, tt.want)
+			}
+			if len(p.Warnings) > 0 {
+				t.Errorf("unexpected warnings: %q", p.Warnings)
+			}
+			for _, s := range p.Steps {
+				if s.Action == Keep && !slices.Contains(tt.stacks, s.Stack) && s.Reason != "not selected" && s.Reason != "applied" {
+					t.Errorf("%s reason = %q", s.Stack, s.Reason)
+				}
 			}
 		})
 	}

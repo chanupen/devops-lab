@@ -156,6 +156,7 @@ func dedupe(s []string) []string {
 
 // Edges settled in the PR #2 review: the tool bootstraps only cluster and
 // gitops; core add-ons are GitOps apps; sample-app needs core and registry.
+// PR #3 put registry first so Zot is up before the kind nodes start.
 func TestCatalogShape(t *testing.T) {
 	g := catalogGraph(t)
 	deps := map[string][]string{}
@@ -167,11 +168,11 @@ func TestCatalogShape(t *testing.T) {
 		wantDeps  []string // direct
 		wantChain []string // Order(stack)
 	}{
-		{"cluster", nil, []string{"cluster"}},
-		{"gitops", []string{"cluster"}, []string{"cluster", "gitops"}},
-		{"core", []string{"gitops"}, []string{"cluster", "gitops", "core"}},
-		{"registry", []string{"cluster"}, []string{"cluster", "registry"}},
-		{"sample-app", []string{"core", "registry"}, []string{"cluster", "gitops", "core", "registry", "sample-app"}},
+		{"registry", nil, []string{"registry"}},
+		{"cluster", []string{"registry"}, []string{"registry", "cluster"}},
+		{"gitops", []string{"cluster"}, []string{"registry", "cluster", "gitops"}},
+		{"core", []string{"gitops"}, []string{"registry", "cluster", "gitops", "core"}},
+		{"sample-app", []string{"core", "registry"}, []string{"registry", "cluster", "gitops", "core", "sample-app"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.stack, func(t *testing.T) {
@@ -188,7 +189,7 @@ func TestCatalogShape(t *testing.T) {
 		})
 	}
 
-	// GitOps after bootstrap: apart from provider work (cluster, registry),
+	// GitOps after bootstrap: apart from provider work (registry, cluster),
 	// every stack is reached through gitops.
 	for _, name := range g.Names() {
 		if name == "cluster" || name == "gitops" || name == "registry" {
