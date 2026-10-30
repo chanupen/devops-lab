@@ -63,6 +63,7 @@ internal/provider/aws    Terraform runner, EKS, ECR, cost, TTL
 internal/kube/           client-go informers, health
 internal/state/          ~/.lab/state.json, ops history
 internal/drills/         fault injection and timers
+internal/doctor/         host readiness checks for `lab doctor`
 infra/terraform/{local,aws}
 gitops/{bootstrap,stacks,overlays}
 labs/                    lab-NN-*.md + verify scripts
