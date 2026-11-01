@@ -310,12 +310,23 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 **Access and safety**
 
 - The existing AWS account. Every lab resource carries a `lab=true` tag and lives in ap-south-1, so the reaper and `lab down` never touch anything else in the account.
-- Today the CLI uses the IAM user `devops` with access keys. Until phase 3, enforce MFA on that user and rotate its keys; in phase 3, `lab` assumes a `lab-admin` role with MFA so day-to-day work uses short-lived credentials.
+- The `devops` IAM user keeps its access keys only as the source profile; day-to-day work uses the `lab` profile, which assumes `lab-admin` with MFA for short-lived credentials (see Account baseline).
 - Pods reach AWS through EKS Pod Identity; no static keys in the cluster.
 - Terraform state in S3 with native lock, versioned and encrypted.
 - `lab down` destroys in reverse dependency order, then checks for leftovers by tag (load balancers, ENIs, EBS volumes, Elastic IPs) and lists anything still billed.
 
 EKS clusters bill for the control plane by the hour, so a 4-hour session costs a few US dollars; check current rates on the AWS pricing pages before setting the budget.
+
+### Account baseline
+
+`infra/terraform/aws/baseline`, applied with OpenTofu by `lab cloud baseline plan|apply` (terraform-exec), holds what lives in the account for good:
+
+- **State bucket** `lab-tofu-state-<account>`: versioned, AES-256 encrypted, public access blocked, TLS-only policy, old versions kept 90 days. Locking is native S3 (`use_lockfile`, OpenTofu ≥ 1.10), so there is no DynamoDB table. The first apply runs with local state in `~/.lab/tofu/baseline`; once the bucket exists, lab writes the S3 backend and `tofu init -force-copy` moves the state into it. lab picks the backend by whether the bucket exists, so a new machine uses the bucket's state, never a fresh local one.
+- **`lab-admin` role**: assumable only by the `devops` user and only with MFA (`aws:MultiFactorAuthPresent`), at most 4 hours. The `lab` CLI profile assumes it (`role_arn`, `mfa_serial`, `source_profile = devops`); `lab cloud login` asks for the code once and caches the session under `~/.lab/aws` until shortly before it expires, and lab passes those temporary keys to tofu, which cannot prompt. The very first apply runs with `--profile devops`, before the role exists.
+- **Budget `lab-monthly`**: $30 a month, email alerts at 50, 80 and 100% of actual spend. At 100% a budget action attaches `lab-budget-deny-run-instances` (deny `ec2:RunInstances`) to `lab-admin`, through a role that may attach and detach only that policy on that role. Detach it in the console or with `aws iam detach-role-policy` after raising the budget.
+- **TTL reaper** `lab-ttl-reaper`: a Go Lambda (arm64, `make reaper`) on a 15-minute EventBridge schedule. It lists `lab=true` resources with the tagging API and deletes those whose `expires-at` has passed, node groups and instances first, then load balancers, EBS volumes and Elastic IPs. It starts in dry-run mode: it only logs what it would delete, and its role has no delete permissions at all until `reaper_dry_run = false`.
+
+Baseline resources carry `lab=true`, `owner` and `component=baseline` but **no `expires-at`**: they are permanent, and the reaper keeps anything without one. Every lab environment resource still gets `expires-at`. The alert email lives in `~/.lab/aws/baseline.tfvars`, outside the repo; `lab doctor --mode cloud` checks OpenTofu, that the `lab` profile assumes `lab-admin`, and that the bucket and budget exist.
 
 ## Build roadmap
 
