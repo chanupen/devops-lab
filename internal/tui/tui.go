@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,6 +38,9 @@ type Options struct {
 	// FilePoll is how often state.json and the kubeconfig are checked for
 	// changes made by lab up or lab down in another shell. Default 2s.
 	FilePoll time.Duration
+	// FirstView, when set, is called once, at the start of the first View
+	// the running program asks for. LAB_TRACE_FIRSTFRAME uses it.
+	FirstView func()
 }
 
 // Screens, in tab order.
@@ -96,6 +100,9 @@ func New(opts Options) Model {
 	}
 	if opts.FilePoll == 0 {
 		opts.FilePoll = 2 * time.Second
+	}
+	if opts.FirstView != nil {
+		opts.FirstView = sync.OnceFunc(opts.FirstView)
 	}
 	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, deps: map[string][]string{}}
 	for _, s := range opts.Catalog {
@@ -317,6 +324,9 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // View renders the four zones: header, tabs, the list and detail split, and
 // the ops strip with the key hints under it.
 func (m Model) View() string {
+	if m.opts.FirstView != nil {
+		m.opts.FirstView()
+	}
 	w, h := max(m.width, 40), max(m.height, 10)
 	bodyH := h - 6
 	leftW := max(30, w*2/5)

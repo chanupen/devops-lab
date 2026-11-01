@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -31,6 +32,11 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	// draw over the screen. The TUI shows the cluster as off instead.
 	klog.SetOutput(io.Discard)
 	klog.LogToStderr(false)
+	if trace != nil {
+		opts.FirstView = func() { trace.view = time.Now() }
+		trace.run = time.Now()
+		defer trace.report(os.Stderr)
+	}
 	return tui.Run(cmd.Context(), opts)
 }
 
