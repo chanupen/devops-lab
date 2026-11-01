@@ -36,11 +36,6 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				return err
 			}
 			command := upCommand(stacks, prune, revision)
-			unlock, err := lockOp(store, command)
-			if err != nil {
-				return err
-			}
-			defer unlock()
 			eng := engine.New(g, store, nil)
 			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision}
 			// Plan once without the provider so a bad request fails before

@@ -212,12 +212,12 @@ func (st *Store) RemoveLogs(ops []Op) {
 	}
 }
 
-// ErrBusy is returned by LockOp and LockTUI while another lab holds the lock.
-var ErrBusy = errors.New("lab is already running")
+// ErrBusy is returned by LockLab while another lab process holds the lab.
+var ErrBusy = errors.New("lab and its components are already running")
 
 // BusyError says which lab holds the lock.
 type BusyError struct {
-	Holder string // e.g. "lab up --stacks obs (pid 42)", if recorded
+	Holder string // e.g. "lab up --stacks obs (pid 42 on /dev/pts/3, since 17:20)", if recorded
 }
 
 func (e *BusyError) Error() string {
@@ -230,25 +230,13 @@ func (e *BusyError) Error() string {
 // Is makes errors.Is(err, ErrBusy) true.
 func (e *BusyError) Is(target error) bool { return target == ErrBusy }
 
-// LockOp claims the lab for one operation (lab up, lab down, or the same from
-// the TUI) so two never run at once, in this process or another. It does not
-// wait: if another operation holds it, it returns a *BusyError naming it.
-// command is recorded for that message. The lock is a flock on a sibling
-// .op.lock file, separate from the state file's own lock, which Update takes
-// for each step while the operation runs.
-func (st *Store) LockOp(command string) (unlock func(), err error) {
-	return st.tryLock(".op.lock", fmt.Sprintf("%s (pid %d)", command, os.Getpid()))
-}
-
-// LockTUI claims the lab for one TUI, so a second lab TUI is refused instead
-// of racing the first. Like LockOp it does not wait. where says how to find
-// the holder, e.g. its terminal.
-func (st *Store) LockTUI(where string) (unlock func(), err error) {
-	holder := fmt.Sprintf("the TUI (pid %d", os.Getpid())
-	if where != "" {
-		holder += " on " + where
-	}
-	return st.tryLock(".tui.lock", holder+")")
+// LockLab claims the lab for this process, so only one lab (the TUI or any
+// command) runs at a time. It does not wait: if another lab holds it, it
+// returns a *BusyError naming it. holder is recorded for that message. The
+// lock is a flock on a sibling .lab.lock file, separate from the state
+// file's own lock, which Update takes for each write while the lab runs.
+func (st *Store) LockLab(holder string) (unlock func(), err error) {
+	return st.tryLock(".lab.lock", holder)
 }
 
 // tryLock takes a non-blocking flock on the sibling file with suffix and

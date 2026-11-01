@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,19 +103,25 @@ func TestTUIActionsRun(t *testing.T) {
 	}
 }
 
-// The TUI and the CLI claim the same lock: while lab up runs in another
-// shell, the TUI's request is refused with ErrBusy, and nothing runs.
-func TestTUIActionsBusy(t *testing.T) {
-	fp := &fakeProvider{}
-	a := newTUIActions(t, fp, "")
-	unlock, err := a.store.LockOp("lab up")
+// The TUI holds the lab lock for its whole run; its reports run in-process
+// under that lock instead of being refused by it.
+func TestTUIReportsRunUnderTheTUILock(t *testing.T) {
+	a := newTUIActions(t, &fakeProvider{}, deployedClusterRegistry)
+	unlock, err := a.store.LockLab("the TUI (pid 1)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
-	_, err = a.Run(context.Background(), tui.Request{}, func(tui.Progress) {})
-	if !errors.Is(err, state.ErrBusy) || len(fp.calls) > 0 {
-		t.Fatalf("err = %v, calls = %v; want busy and no calls", err, fp.calls)
+	cfgPath := filepath.Join(t.TempDir(), "lab.yaml")
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.cfgPath = cfgPath
+	if out, err := a.Report(context.Background(), "status"); err != nil || !strings.Contains(out, "registry") {
+		t.Errorf("status under the TUI lock: %v\n%s", err, out)
+	}
+	if _, err := a.Run(context.Background(), tui.Request{Stacks: []string{"cluster"}}, func(tui.Progress) {}); err != nil {
+		t.Errorf("an action under the TUI lock: %v", err)
 	}
 }
 

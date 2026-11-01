@@ -33,11 +33,6 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 				return err
 			}
 			command := downCommand(stacks, purge)
-			unlock, err := lockOp(store, command)
-			if err != nil {
-				return err
-			}
-			defer unlock()
 			p, err := engine.New(g, store, nil).PlanDown(cfg, engine.DownOptions{Stacks: stacks})
 			if err != nil {
 				return err

@@ -375,38 +375,75 @@ func TestLabRunnerAppURLs(t *testing.T) {
 	}
 }
 
-// While another operation holds the lab, up and down refuse at once and name
-// it, without planning or building a provider.
-func TestUpDownRefusedWhileBusy(t *testing.T) {
-	for _, args := range [][]string{{"up"}, {"down", "--yes"}} {
-		t.Run(args[0], func(t *testing.T) {
-			dir := t.TempDir()
-			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(statePath, []byte(deployedClusterRegistry), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			unlock, err := state.NewStore(statePath).LockOp("lab up --stacks obs")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer unlock()
+// While another lab holds the lab, every command that touches it is refused
+// at once, naming the holder, without building a provider or printing a
+// plan. --help and --version still work.
+func TestOneLabAtATime(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(deployedClusterRegistry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const holder = "the TUI (pid 42 on /dev/pts/3, since 17:20)"
+	unlock, err := state.NewStore(statePath).LockLab(holder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// doctor has no --state, so it locks ~/.lab, which TestMain points at a
+	// temp HOME; hold that one too.
+	home, _ := state.DefaultPath()
+	unlockHome, err := state.NewStore(home).LockLab(holder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockHome()
+
+	withState := func(args ...string) []string { return append(args, "--config", cfgPath, "--state", statePath) }
+	for _, args := range [][]string{withState("up"), withState("down", "--yes"), withState("plan"), withState("status"),
+		withState(), {"doctor"}} {
+		t.Run(strings.Join(args[:min(1, len(args))], " ")+"_"+args[0], func(t *testing.T) {
 			built := false
 			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { built = true; return &fakeProvider{}, nil })
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
-			cmd.SetArgs(append(args, "--config", cfgPath, "--state", statePath))
-			err = cmd.Execute()
-			if err == nil || !strings.Contains(err.Error(), "lab is already running: lab up --stacks obs (pid") ||
-				!strings.Contains(err.Error(), "wait for it to finish, then run lab") {
-				t.Fatalf("err = %v, want busy naming the running op", err)
+			cmd.SetArgs(args)
+			err := cmd.Execute()
+			want := "lab and its components are already running: " + holder + ". Only one lab runs at a time"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want %q", err, want)
 			}
 			if built || out.Len() > 0 {
 				t.Errorf("provider built %v, output %q; want neither", built, out.String())
 			}
 		})
+	}
+	for _, args := range [][]string{{"--version"}, {"up", "--help"}} {
+		if out, err := runLab(args...); err != nil || out == "" {
+			t.Errorf("%v while the lab is held: %v, %q", args, err, out)
+		}
+	}
+}
+
+// The holder text names the command and its flags, not --config or --state.
+func TestLabHolder(t *testing.T) {
+	root := newRootCmd()
+	up, _, err := root.Find([]string{"up"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := up.ParseFlags([]string{"--stacks", "obs,core", "--prune", "--state", "/x/state.json"}); err != nil {
+		t.Fatal(err)
+	}
+	got := labHolder(up)
+	if !strings.HasPrefix(got, "lab up --prune --stacks obs,core (pid ") || !strings.Contains(got, ", since ") || strings.Contains(got, "/dev/null") {
+		t.Errorf("holder = %q", got)
+	}
+	if got := labHolder(root); !strings.HasPrefix(got, "the TUI (pid ") {
+		t.Errorf("root holder = %q", got)
 	}
 }

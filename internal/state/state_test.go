@@ -246,56 +246,29 @@ func TestStepLogs(t *testing.T) {
 	}
 }
 
-func TestLockOp(t *testing.T) {
+// A second lab is refused at once with what holds the lab; state updates
+// still work while it is held, and it can be claimed again once released.
+func TestLockLab(t *testing.T) {
 	st := NewStore(filepath.Join(t.TempDir(), "state.json"))
-	unlock, err := st.LockOp("lab up")
+	unlock, err := st.LockLab("the TUI (pid 42 on /dev/pts/3, since 17:20)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A second claim fails at once and names the holder, even from another
-	// store on the same file (another process opens its own descriptor).
-	_, err = NewStore(st.Path()).LockOp("lab down")
+	// Another store on the same file stands in for another process: it opens
+	// its own descriptor, which flock treats as a separate holder.
+	_, err = NewStore(st.Path()).LockLab("lab up (pid 43)")
 	var busy *BusyError
-	if !errors.As(err, &busy) || !errors.Is(err, ErrBusy) {
-		t.Fatalf("second LockOp: %v, want a BusyError", err)
+	want := "lab and its components are already running: the TUI (pid 42 on /dev/pts/3, since 17:20)"
+	if !errors.As(err, &busy) || !errors.Is(err, ErrBusy) || err.Error() != want {
+		t.Fatalf("second lab: %v, want %q", err, want)
 	}
-	if want := fmt.Sprintf("lab up (pid %d)", os.Getpid()); busy.Holder != want {
-		t.Errorf("holder = %q, want %q", busy.Holder, want)
-	}
-	// State updates still work while an operation holds the lab.
 	if err := st.Update(func(s *State) error { s.Mode = "local"; return nil }); err != nil {
-		t.Fatalf("Update during an operation: %v", err)
+		t.Fatalf("Update while the lab is held: %v", err)
 	}
 	unlock()
-	unlock2, err := st.LockOp("lab down")
+	unlock2, err := st.LockLab("lab down (pid 44)")
 	if err != nil {
-		t.Fatalf("LockOp after unlock: %v", err)
-	}
-	unlock2()
-}
-
-// A second TUI is refused at once with where the first one runs; the TUI
-// lock is separate from the op lock, so operations still run beside it.
-func TestLockTUI(t *testing.T) {
-	st := NewStore(filepath.Join(t.TempDir(), "state.json"))
-	unlock, err := st.LockTUI("/dev/pts/3")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = NewStore(st.Path()).LockTUI("/dev/pts/4")
-	want := fmt.Sprintf("lab is already running: the TUI (pid %d on /dev/pts/3)", os.Getpid())
-	if !errors.Is(err, ErrBusy) || err.Error() != want {
-		t.Fatalf("second TUI: %v, want %q", err, want)
-	}
-	unlockOp, err := st.LockOp("lab up")
-	if err != nil {
-		t.Fatalf("an operation beside the TUI: %v", err)
-	}
-	unlockOp()
-	unlock()
-	unlock2, err := st.LockTUI("")
-	if err != nil {
-		t.Fatalf("LockTUI after unlock: %v", err)
+		t.Fatalf("LockLab after unlock: %v", err)
 	}
 	unlock2()
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
@@ -189,15 +190,66 @@ func unsupported(p engine.Plan, prov provider) []string {
 	return out
 }
 
-// lockOp claims the lab for command and turns a busy lock into a plain
-// message for the CLI.
-func lockOp(store *state.Store, command string) (func(), error) {
-	unlock, err := store.LockOp(command)
+// withLabLock makes c claim the lab before it runs, so only one lab runs at
+// a time. --help, --version and completion never reach RunE, so a running
+// lab never refuses them.
+func withLabLock(c *cobra.Command) {
+	run := c.RunE
+	if run == nil {
+		return
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		unlock, err := lockLab(cmd)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		return run(cmd, args)
+	}
+}
+
+// lockLab claims the lab for cmd: the state directory from --state when the
+// command has it, else ~/.lab. A second lab is refused with what holds it.
+func lockLab(cmd *cobra.Command) (func(), error) {
+	path := ""
+	if f := cmd.Flags().Lookup("state"); f != nil {
+		path = f.Value.String()
+	}
+	if path == "" {
+		var err error
+		if path, err = state.DefaultPath(); err != nil {
+			return nil, err
+		}
+	}
+	unlock, err := state.NewStore(path).LockLab(labHolder(cmd))
 	var busy *state.BusyError
 	if errors.As(err, &busy) {
-		return nil, fmt.Errorf("%w; wait for it to finish, then run %s again", busy, command)
+		return nil, fmt.Errorf("%w. Only one lab runs at a time: use that one, or wait for it to finish (q quits the TUI)", busy)
 	}
 	return unlock, err
+}
+
+// labHolder describes this process for a second lab's message, e.g.
+// "lab up --stacks obs (pid 42 on /dev/pts/3, since 17:20)".
+func labHolder(cmd *cobra.Command) string {
+	what := "the TUI"
+	if cmd.HasParent() {
+		what = cmd.CommandPath()
+		cmd.Flags().Visit(func(f *pflag.Flag) {
+			if f.Name == "config" || f.Name == "state" {
+				return
+			}
+			what += " --" + f.Name
+			if f.Value.Type() != "bool" {
+				what += " " + strings.Trim(f.Value.String(), "[]")
+			}
+		})
+	}
+	where := fmt.Sprintf("pid %d", os.Getpid())
+	if t := terminalName(); t != "" {
+		where += " on " + t
+	}
+	return fmt.Sprintf("%s (%s, since %s)", what, where, time.Now().Format("15:04"))
 }
 
 // confirm asks a yes/no question on a terminal. Without a terminal it refuses

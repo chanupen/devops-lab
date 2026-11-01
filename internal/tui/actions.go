@@ -45,9 +45,8 @@ type Progress struct {
 type Actions interface {
 	// Plan returns what Run would do for req, without changing anything.
 	Plan(ctx context.Context, req Request) (engine.Plan, error)
-	// Run claims the lab, plans req and executes it, reporting each line and
-	// event to progress. It returns an error wrapping state.ErrBusy while
-	// another operation holds the lab, and the plan it ran.
+	// Run plans req and executes it, reporting each line and event to
+	// progress, and returns the plan it ran. The TUI runs one at a time.
 	Run(ctx context.Context, req Request, progress func(Progress)) (engine.Plan, error)
 	// Report runs a read-only CLI command (status, doctor, plan) and returns
 	// what it prints.

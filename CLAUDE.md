@@ -23,7 +23,7 @@ Design doc: "DevOps Lab Control Center — Plan and Design" (Claude Docs). Expor
 ## Architecture
 
 - `lab` TUI (Bubble Tea + Bubbles + Lip Gloss) → engine (plan, apply, destroy, dependency order, state in `~/.lab/state.json`) → providers.
-  - One lab at a time, without waiting: a second TUI is refused ("lab is already running: the TUI (pid …)") through a flock on `~/.lab/state.json.tui.lock`, and `lab up`, `lab down` and TUI actions take `~/.lab/state.json.op.lock`, so a second operation is refused the same way. Read-only commands (`status`, `plan`, `doctor`) never take either.
+  - Only one lab runs at a time: every command (the TUI, `up`, `down`, `plan`, `status`, `doctor`) takes a non-blocking flock on `~/.lab/state.json.lab.lock` for its whole run, and a second one exits at once with "lab and its components are already running: <holder> (pid, terminal, since)". `--help`, `--version` and completion never take it. Inside the TUI, actions run one at a time and its reports run in-process under its lock.
   - Stacks a provider cannot run yet are skipped at plan time (`- <stack>  skip: …`, one warning), never failed at run time.
   - Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml` (on Fedora a symlink to the repo's file, so `ssh -t fedora lab` gets the real config).
 - Providers implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`.
