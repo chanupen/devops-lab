@@ -53,6 +53,8 @@ func helpFor(screen int) string {
 		line(k)
 	}
 	b.WriteString("\n  Only one operation runs at a time; other action keys say busy.\n")
+	b.WriteString("  A TUI opened while another lab changes things is read-only: views and\n")
+	b.WriteString("  reports work, actions do not, until the other lab is done.\n")
 	b.WriteString("  Every action shows its CLI command in the ops strip.\n\n")
 	b.WriteString("  State: " + statusHealthy.symbol() + " healthy  " + statusProgressing.symbol() + " progressing  " +
 		statusOff.symbol() + " off  " + statusFailed.symbol() + " failed\n")

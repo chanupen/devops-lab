@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +28,9 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	if err != nil {
 		return err
 	}
+	if opts.Release, opts.ReadOnly, err = claimTUI(opts, labHolder(cmd)); err != nil {
+		return err
+	}
 	// client-go logs reflector errors through klog to stderr, which would
 	// draw over the screen. The TUI shows the cluster as off instead.
 	klog.SetOutput(io.Discard)
@@ -36,35 +40,35 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 		trace.run = time.Now()
 		defer trace.report(os.Stderr)
 	}
-	return tui.Run(cmd.Context(), opts)
+	return tui.Run(cmd.Context(), *opts)
 }
 
 // tuiOptions loads lab.yaml and the state file. Without --config it looks
 // in ./lab.yaml, then ~/.lab/lab.yaml; if neither exists the defaults apply
 // and state.json still says what is running.
-func tuiOptions(flags labFlags, newProvider providerFactory) (tui.Options, error) {
+func tuiOptions(flags labFlags, newProvider providerFactory) (*tui.Options, error) {
 	cfgPath, err := flags.configPath()
 	if err != nil {
-		return tui.Options{}, err
+		return nil, err
 	}
 	cfg := config.Default()
 	if cfgPath != "" {
 		if cfg, err = config.Load(cfgPath); err != nil {
-			return tui.Options{}, err
+			return nil, err
 		}
 	}
 	path := flags.statePath
 	if path == "" {
 		if path, err = state.DefaultPath(); err != nil {
-			return tui.Options{}, err
+			return nil, err
 		}
 	}
 	store := state.NewStore(path)
 	st, err := store.Load()
 	if err != nil {
-		return tui.Options{}, err
+		return nil, err
 	}
-	opts := tui.Options{
+	opts := &tui.Options{
 		Config:       cfg,
 		ConfigPath:   cfgPath,
 		State:        st,
@@ -96,4 +100,22 @@ func terminalName() string {
 		return t
 	}
 	return ""
+}
+
+// claimTUI takes the lab lock for a TUI. If another lab holds it, the TUI
+// opens read-only: readOnly names the holder, and opts.Claim lets the TUI
+// take the lock later, once the other lab is done. Any other error stops it.
+func claimTUI(opts *tui.Options, holder string) (release func(), readOnly string, err error) {
+	store := state.NewStore(opts.StatePath)
+	opts.Claim = func() (func(), error) { return store.LockLab(holder) }
+	release, err = opts.Claim()
+	var busy *state.BusyError
+	if errors.As(err, &busy) {
+		h := busy.Holder
+		if h == "" {
+			h = "pid unknown"
+		}
+		return nil, h, nil
+	}
+	return release, "", err
 }

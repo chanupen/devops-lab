@@ -58,7 +58,7 @@ func (a tuiActions) Plan(_ context.Context, req tui.Request) (engine.Plan, error
 // Run implements tui.Actions. It prints what lab up or lab down would, as
 // lines, plus each step's log as it is written.
 func (a tuiActions) Run(ctx context.Context, req tui.Request, progress func(tui.Progress)) (engine.Plan, error) {
-	// The TUI process holds the lab lock, and the TUI runs one operation at
+	// Only a TUI that holds the lab lock offers actions, and it runs one at
 	// a time, so there is nothing more to claim here.
 	cmd := command(req)
 	g, err := a.graph()
@@ -99,8 +99,8 @@ func (a tuiActions) Run(ctx context.Context, req tui.Request, progress func(tui.
 	return p, err
 }
 
-// Report implements tui.Actions by running the CLI command in-process,
-// under the lab lock the TUI holds.
+// Report implements tui.Actions by running the read-only CLI command
+// in-process. It needs no lock, so read-only TUIs can run it too.
 func (a tuiActions) Report(ctx context.Context, name string) (string, error) {
 	args := []string{name}
 	if name != "doctor" {
@@ -109,7 +109,7 @@ func (a tuiActions) Report(ctx context.Context, name string) (string, error) {
 		}
 		args = append(args, "--state", a.store.Path())
 	}
-	root := buildRoot(a.newProvider, false)
+	root := newRootCmdWith(a.newProvider) // status, plan and doctor take no lock
 	var b bytes.Buffer
 	root.SetOut(&b)
 	root.SetErr(&b)

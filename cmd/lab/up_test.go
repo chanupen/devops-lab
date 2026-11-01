@@ -375,13 +375,13 @@ func TestLabRunnerAppURLs(t *testing.T) {
 	}
 }
 
-// While another lab holds the lab, every command that touches it is refused
-// at once, naming the holder, without building a provider or printing a
-// plan. --help and --version still work.
-func TestOneLabAtATime(t *testing.T) {
+// While another lab holds the lab, commands that change it (up, down) are
+// refused at once, naming the holder, without building a provider or
+// printing a plan; read-only ones (plan, status, doctor) run beside it.
+func TestOnlyChangesTakeTheLock(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(statePath, []byte(deployedClusterRegistry), 0o600); err != nil {
@@ -393,39 +393,57 @@ func TestOneLabAtATime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	// doctor has no --state, so it locks ~/.lab, which TestMain points at a
-	// temp HOME; hold that one too.
+	// doctor and the default state path use ~/.lab, which TestMain points at
+	// a temp HOME; hold that one too, so nothing slips past on it.
 	home, _ := state.DefaultPath()
 	unlockHome, err := state.NewStore(home).LockLab(holder)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlockHome()
-
 	withState := func(args ...string) []string { return append(args, "--config", cfgPath, "--state", statePath) }
-	for _, args := range [][]string{withState("up"), withState("down", "--yes"), withState("plan"), withState("status"),
-		withState(), {"doctor"}} {
-		t.Run(strings.Join(args[:min(1, len(args))], " ")+"_"+args[0], func(t *testing.T) {
-			built := false
-			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { built = true; return &fakeProvider{}, nil })
-			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetErr(&out)
-			cmd.SetArgs(args)
-			err := cmd.Execute()
-			want := "lab and its components are already running: " + holder + ". Only one lab runs at a time"
-			if err == nil || !strings.Contains(err.Error(), want) {
+	run := func(args []string) (string, bool, error) {
+		built := false
+		cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { built = true; return &fakeProvider{}, nil })
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		return out.String(), built, err
+	}
+
+	for _, args := range [][]string{withState("up"), withState("up", "--stacks", "cluster"), withState("down", "--yes")} {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			out, built, err := run(args)
+			want := "lab and its components are already running: " + holder + ". Only one lab changes things at a time"
+			if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "lab status, lab plan and lab doctor still work") {
 				t.Fatalf("err = %v, want %q", err, want)
 			}
-			if built || out.Len() > 0 {
-				t.Errorf("provider built %v, output %q; want neither", built, out.String())
+			if built || out != "" {
+				t.Errorf("provider built %v, output %q; want neither", built, out)
 			}
 		})
 	}
-	for _, args := range [][]string{{"--version"}, {"up", "--help"}} {
-		if out, err := runLab(args...); err != nil || out == "" {
-			t.Errorf("%v while the lab is held: %v, %q", args, err, out)
-		}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{withState("plan"), "= cluster"},
+		{withState("status"), "registry"},
+		{[]string{"doctor", "--json"}, `"name"`},
+		{[]string{"--version"}, "lab version"},
+		{[]string{"up", "--help"}, "Usage:"},
+	} {
+		t.Run(tc.args[0], func(t *testing.T) {
+			out, _, err := run(tc.args)
+			if tc.args[0] == "doctor" {
+				err = nil // doctor fails checks on a CI runner; it must still run and print
+			}
+			if err != nil || !strings.Contains(out, tc.want) {
+				t.Errorf("%v beside a held lab: %v, want output with %q:\n%s", tc.args, err, tc.want, out)
+			}
+		})
 	}
 }
 
