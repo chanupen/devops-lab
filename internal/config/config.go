@@ -28,6 +28,13 @@ var (
 // CloudRegion is the only AWS region the lab uses.
 const CloudRegion = "ap-south-1"
 
+// Cloud lab lifetimes: DefaultTTL unless lab.yaml or lab up --ttl says
+// otherwise, and never more than MaxTTL from now, not even with lab extend.
+const (
+	DefaultTTL = 2 * time.Hour
+	MaxTTL     = 8 * time.Hour
+)
+
 // Config is the parsed lab.yaml.
 type Config struct {
 	Mode    string `yaml:"mode"`
@@ -82,7 +89,7 @@ func Default() Config {
 		ExtraStacks: []string{"obs"},
 		GitOps:      "argocd",
 		K8sVersion:  K8sVersion,
-		Cloud:       Cloud{Region: CloudRegion, TTL: Duration(4 * time.Hour)},
+		Cloud:       Cloud{Region: CloudRegion, TTL: Duration(DefaultTTL)},
 	}
 }
 
@@ -136,8 +143,8 @@ func (c Config) Validate() error {
 	if c.Cloud.Region != CloudRegion {
 		errs = append(errs, fmt.Errorf("cloud.region %q: the lab only uses %s", c.Cloud.Region, CloudRegion))
 	}
-	if c.Cloud.TTL <= 0 {
-		errs = append(errs, fmt.Errorf("cloud.ttl must be positive"))
+	if err := CheckTTL(time.Duration(c.Cloud.TTL)); err != nil {
+		errs = append(errs, fmt.Errorf("cloud.ttl: %w", err))
 	}
 	if c.Repo.SSHKeyFile != "" && !IsSSHURL(c.Repo.URL) {
 		errs = append(errs, fmt.Errorf("repo.url %q: a deploy key needs an SSH URL such as git@github.com:owner/repo.git", c.Repo.URL))
@@ -155,4 +162,12 @@ func IsSSHURL(url string) bool {
 	}
 	user, rest, ok := strings.Cut(url, "@")
 	return ok && user != "" && !strings.Contains(user, "/") && strings.Contains(rest, ":") && !strings.Contains(url, "://")
+}
+
+// CheckTTL accepts a cloud lab lifetime between one minute and MaxTTL.
+func CheckTTL(d time.Duration) error {
+	if d < time.Minute || d > MaxTTL {
+		return fmt.Errorf("%s: want between 1m and %s", d, MaxTTL)
+	}
+	return nil
 }

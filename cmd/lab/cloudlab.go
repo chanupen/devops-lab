@@ -44,6 +44,7 @@ func (c cloudRunner) Destroy(ctx context.Context, stack string, log io.Writer) e
 // cloudLab is what lab up, lab down and lab extend need beyond a provider.
 type cloudLab interface {
 	Account() string
+	PreflightCheck(ctx context.Context) error
 	Extend(ctx context.Context, d time.Duration, log io.Writer) (time.Time, []string, error)
 	Leftovers(ctx context.Context) ([]labaws.Tagged, error)
 	Finish() error
@@ -94,11 +95,19 @@ func (f *labFlags) cloudRunOptions(cmd *cobra.Command, o runOptions) runOptions 
 	return o
 }
 
-// confirmCloudApply asks before lab up creates or changes AWS resources.
+// confirmCloudApply checks that the dead man's switch is armed (the reaper
+// deletes for real and ran cleanly in the last 30 minutes) and the
+// Kubernetes version is the newest in standard support, then asks before
+// lab up creates or changes AWS resources.
 func confirmCloudApply(cmd *cobra.Command, prov provider, p engine.Plan, ttl time.Duration, yes bool) error {
 	c, ok := prov.(cloudLab)
 	if !ok || p.Count(engine.Apply) == 0 {
 		return nil
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
+	defer cancel()
+	if err := c.PreflightCheck(ctx); err != nil {
+		return err
 	}
 	return confirm(cmd, yes, fmt.Sprintf("Apply %d stacks to AWS account %s in %s? They bill until lab down or expires-at (TTL %s).",
 		p.Count(engine.Apply), c.Account(), labaws.Region, ttl))
@@ -154,16 +163,14 @@ func orDash(s string) string {
 }
 
 func newExtendCmd(newProvider providerFactory) *cobra.Command {
-	var (
-		flags labFlags
-		yes   bool
-	)
+	var flags labFlags
 	cmd := &cobra.Command{
 		Use:   "extend [duration]",
 		Short: "Push the cloud lab's expires-at forward (default 1h)",
 		Long: "Moves expires-at forward from the later of now and the current expiry, on every AWS\n" +
 			"resource the cloud lab created (through the tagging API), on Karpenter's EC2NodeClass\n" +
-			"and in the Load Balancer Controller's defaultTags. The TTL reaper reads that tag.",
+			"and in the Load Balancer Controller's defaultTags. The TTL reaper reads that tag.\n" +
+			"expires-at never goes more than 8h ahead of now.",
 		Example: "  lab extend\n  lab extend 2h",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -173,9 +180,6 @@ func newExtendCmd(newProvider providerFactory) *cobra.Command {
 				if d, err = time.ParseDuration(args[0]); err != nil || d <= 0 {
 					return fmt.Errorf("duration %q: want a positive Go duration such as 1h or 90m", args[0])
 				}
-			}
-			if d > 24*time.Hour && !yes {
-				return fmt.Errorf("extend by %s: more than 24h needs --yes", d)
 			}
 			flags.mode = "cloud"
 			cfg, store, _, err := flags.load()
@@ -211,7 +215,6 @@ func newExtendCmd(newProvider providerFactory) *cobra.Command {
 		},
 	}
 	flags.register(cmd)
-	cmd.Flags().BoolVar(&yes, "yes", false, "allow extending by more than 24h")
 	return cmd
 }
 

@@ -71,7 +71,8 @@ cloud:
 		{name: "unknown nested key", yaml: "cloud:\n  regoin: us-east-1\n", wantErr: []string{"regoin"}},
 		{name: "wrong region", yaml: "cloud:\n  region: us-east-1\n", wantErr: []string{`cloud.region "us-east-1"`}},
 		{name: "bad ttl", yaml: "cloud:\n  ttl: soon\n", wantErr: []string{`ttl "soon"`}},
-		{name: "zero ttl", yaml: "cloud:\n  ttl: 0s\n", wantErr: []string{"cloud.ttl must be positive"}},
+		{name: "zero ttl", yaml: "cloud:\n  ttl: 0s\n", wantErr: []string{"cloud.ttl: 0s: want between 1m and 8h0m0s"}},
+		{name: "ttl over the 8h cap", yaml: "cloud:\n  ttl: 9h\n", wantErr: []string{"cloud.ttl: 9h0m0s: want between 1m and 8h0m0s"}},
 		{name: "cloud mode needs owner", yaml: "mode: cloud\n", wantErr: []string{"cloud.owner is required"}},
 		{name: "cloud mode with owner", yaml: "mode: cloud\ncloud:\n  owner: someone\n"},
 		{name: "not yaml", yaml: "mode: [", wantErr: []string{"yaml"}},
@@ -170,6 +171,17 @@ func TestIsSSHURL(t *testing.T) {
 	for _, tt := range tests {
 		if got := IsSSHURL(tt.url); got != tt.want {
 			t.Errorf("IsSSHURL(%q) = %v, want %v", tt.url, got, tt.want)
+		}
+	}
+}
+
+func TestDefaultTTL(t *testing.T) {
+	if got := time.Duration(Default().Cloud.TTL); got != 2*time.Hour {
+		t.Errorf("default ttl = %s, want 2h", got)
+	}
+	for d, ok := range map[time.Duration]bool{20 * time.Minute: true, 8 * time.Hour: true, 8*time.Hour + time.Minute: false, 30 * time.Second: false} {
+		if (CheckTTL(d) == nil) != ok {
+			t.Errorf("CheckTTL(%s) ok = %v, want %v", d, !ok, ok)
 		}
 	}
 }

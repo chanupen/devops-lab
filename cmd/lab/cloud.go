@@ -10,10 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
 	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -28,7 +30,7 @@ func newCloudCmd() *cobra.Command {
 		Use:   "cloud",
 		Short: "Cloud mode: AWS session and account baseline (lab up --mode cloud runs the lab itself)",
 	}
-	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd(), newCloudPlanCmd(defaultProvider))
+	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd(), newCloudPlanCmd(defaultProvider), newLeftoversCmd())
 	return cloud
 }
 
@@ -302,7 +304,11 @@ func orDefault(v, def string) string {
 // cloudProbe resolves the lab profile's session once, before doctor's
 // checks run, asking for the MFA code only when interactive.
 func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
-	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
+	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName,
+		K8sVersion: config.K8sVersion}
+	if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
+		p.K8sVersion = cfg.K8sVersion
+	}
 	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
 		p.SessionErr = err
@@ -320,5 +326,53 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 	p.Identity = func(ctx context.Context) (string, string, error) { return labaws.Identity(ctx, cfg) }
 	p.BucketExists = func(ctx context.Context, account string) (bool, error) { return labaws.BucketExists(ctx, cfg, account) }
 	p.BudgetExists = func(ctx context.Context, account string) (bool, error) { return labaws.BudgetExists(ctx, cfg, account) }
+	p.EKSVersion = func(ctx context.Context) (string, error) {
+		standard, err := labaws.StandardVersions(ctx, cfg)
+		if err != nil {
+			return "", err
+		}
+		return labaws.NewestVersion(standard), labaws.CheckVersion(p.K8sVersion, standard)
+	}
+	p.ReaperReady = func(ctx context.Context, account string) error {
+		st, err := labaws.GetReaperStatus(ctx, cfg, account)
+		if err != nil {
+			return err
+		}
+		return st.Ready(time.Now())
+	}
 	return p
+}
+
+// newLeftoversCmd lists what a cloud lab left behind, for example to check
+// after the teardown build ran that nothing tagged lab=true is left.
+func newLeftoversCmd() *cobra.Command {
+	var flags cloudFlags
+	cmd := &cobra.Command{
+		Use:   "leftovers",
+		Short: "List everything still tagged lab=true outside the baseline; changes nothing",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, err := flags.session(cmd)
+			if err != nil {
+				return err
+			}
+			cfg, err := s.Config(cmd.Context())
+			if err != nil {
+				return err
+			}
+			left, err := labaws.Leftovers(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			if err := writeLeftovers(cmd.OutOrStdout(), left); err != nil {
+				return err
+			}
+			if len(left) > 0 {
+				return exitError{code: 1}
+			}
+			return nil
+		},
+	}
+	flags.register(cmd)
+	return cmd
 }

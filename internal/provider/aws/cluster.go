@@ -120,6 +120,18 @@ func (a *clusterAddons) Remove(ctx context.Context, log io.Writer) error {
 			_, _ = fmt.Fprintf(log, "Karpenter nodes: %v\n", err)
 		}
 	}
+	// Deleting the EC2NodeClass lets Karpenter remove the instance profiles
+	// it made for the node role; IAM cannot delete a role still in one.
+	if err := clients.Dynamic.Resource(EC2NodeClassGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		_, _ = fmt.Fprintf(log, "delete EC2NodeClasses: %v\n", err)
+	} else {
+		wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err := kube.WaitAllGone(wctx, clients.Dynamic, EC2NodeClassGVR, log)
+		cancel()
+		if err != nil {
+			_, _ = fmt.Fprintf(log, "EC2NodeClasses: %v\n", err)
+		}
+	}
 	return errors.Join(
 		a.helm.Uninstall(ctx, LBCChart.Name, LBCChart.Namespace, log),
 		a.helm.Uninstall(ctx, KarpenterChart.Name, KarpenterChart.Namespace, log),
@@ -213,6 +225,7 @@ func LBCValues(c ClusterInfo, tags map[string]string) map[string]any {
 	for k, v := range tags {
 		dt[k] = v
 	}
+	dt["component"] = "load-balancer-controller" // the reaper deletes these itself
 	return map[string]any{
 		"clusterName":    c.Name,
 		"region":         Region,
@@ -220,8 +233,13 @@ func LBCValues(c ClusterInfo, tags map[string]string) map[string]any {
 		"replicaCount":   1,
 		"serviceAccount": map[string]any{"create": true, "name": "aws-load-balancer-controller"},
 		"defaultTags":    dt,
-		"nodeSelector":   systemSelector,
-		"tolerations":    systemTolerations,
+		// No load balancer unless asked for: a plain type=LoadBalancer
+		// Service is not turned into an NLB. lab tunnel reaches the
+		// Gateway; a Service that wants an NLB sets
+		// loadBalancerClass: service.k8s.aws/nlb.
+		"enableServiceMutatorWebhook": false,
+		"nodeSelector":                systemSelector,
+		"tolerations":                 systemTolerations,
 	}
 }
 
@@ -230,10 +248,13 @@ func LBCValues(c ClusterInfo, tags map[string]string) map[string]any {
 // and lab's tags, which Karpenter puts on instances, volumes and launch
 // templates.
 func EC2NodeClass(c ClusterInfo, tags map[string]string) *unstructured.Unstructured {
-	t := map[string]any{"component": "cluster"}
+	t := map[string]any{}
 	for k, v := range tags {
 		t[k] = v
 	}
+	// Not "cluster": the reaper deletes Karpenter's nodes itself, while
+	// cluster resources wait for the teardown build's tofu destroy.
+	t["component"] = "karpenter"
 	discovery := []any{map[string]any{"tags": map[string]any{"karpenter.sh/discovery": c.Name}}}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "karpenter.k8s.aws/v1",

@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/gitops"
 )
 
@@ -131,14 +134,54 @@ func (p *Provider) Destroy(ctx context.Context, stack string, log io.Writer) err
 	}
 	switch stack {
 	case "registry":
-		return p.registryModule(exp, log).Destroy(ctx)
+		if err := p.registryModule(exp, log).Destroy(ctx); err != nil {
+			return err
+		}
+		return p.removeBundle(ctx, "registry")
 	case "cluster":
-		return p.destroyCluster(ctx, exp, log)
+		if err := p.destroyCluster(ctx, exp, log); err != nil {
+			return err
+		}
+		return p.removeBundle(ctx, "cluster")
 	}
 	return fmt.Errorf("%s: not supported by the cloud provider", stack)
 }
 
+// BundleKey is where the teardown build finds a stack's module bundle.
+func BundleKey(stack string) string { return "teardown/" + stack + ".zip" }
+
+// uploadBundle stores the module as it is about to be applied, so the
+// teardown build can destroy it with no laptop. It runs before every apply:
+// a half-finished apply must be destroyable too.
+func (p *Provider) uploadBundle(ctx context.Context, stack, workDir string, log io.Writer) error {
+	b, err := Bundle(workDir)
+	if err != nil {
+		return fmt.Errorf("teardown bundle: %w", err)
+	}
+	if _, err := s3.NewFromConfig(p.cfg).PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(StateBucket(p.account)), Key: aws.String(BundleKey(stack)), Body: bytes.NewReader(b),
+	}); err != nil {
+		return fmt.Errorf("upload teardown bundle: %w", err)
+	}
+	_, _ = fmt.Fprintf(log, "teardown bundle: s3://%s/%s\n", StateBucket(p.account), BundleKey(stack))
+	return nil
+}
+
+func (p *Provider) removeBundle(ctx context.Context, stack string) error {
+	_, err := s3.NewFromConfig(p.cfg).DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(StateBucket(p.account)), Key: aws.String(BundleKey(stack))})
+	return err
+}
+
 func (p *Provider) applyCluster(ctx context.Context, exp time.Time, log io.Writer) error {
+	standard, err := StandardVersions(ctx, p.cfg)
+	if err != nil {
+		return err
+	}
+	if err := CheckVersion(p.opts.K8sVersion, standard); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(log, "Kubernetes %s: the newest EKS version in standard support\n", p.opts.K8sVersion)
 	ip, err := p.myIP(ctx)
 	if err != nil {
 		return fmt.Errorf("find this host's public IP for the EKS API allow list: %w", err)
@@ -200,15 +243,17 @@ func LabTags(owner string, exp time.Time) map[string]string {
 }
 
 func (p *Provider) module(name, dir, key string, vars map[string]any, log io.Writer) *Module {
+	stack := strings.TrimPrefix(name, "cloud-")
 	return &Module{
-		ModuleDir: dir,
-		WorkDir:   filepath.Join(p.opts.TofuHome, name),
-		Tofu:      p.opts.Tofu,
-		Bucket:    StateBucket(p.account),
-		Key:       key,
-		Vars:      vars,
-		Env:       p.env,
-		Out:       log,
+		BeforeApply: func(ctx context.Context, workDir string) error { return p.uploadBundle(ctx, stack, workDir, log) },
+		ModuleDir:   dir,
+		WorkDir:     filepath.Join(p.opts.TofuHome, name),
+		Tofu:        p.opts.Tofu,
+		Bucket:      StateBucket(p.account),
+		Key:         key,
+		Vars:        vars,
+		Env:         p.env,
+		Out:         log,
 	}
 }
 
@@ -295,6 +340,10 @@ func (p *Provider) Extend(ctx context.Context, d time.Duration, log io.Writer) (
 		return time.Time{}, nil, fmt.Errorf("no cloud lab to extend (%w): lab up --mode cloud starts one", err)
 	}
 	exp := NextExpiry(old, p.now(), d)
+	if left := exp.Sub(p.now()); left > config.MaxTTL {
+		return old, nil, fmt.Errorf("that would put expires-at %s from now; a cloud lab may run at most %s ahead (lab extend %s is the most now)",
+			left.Round(time.Minute), config.MaxTTL, maxExtend(old, p.now()))
+	}
 	if err := WriteExpiry(ExpiryFile(p.opts.Home), exp); err != nil {
 		return time.Time{}, nil, err
 	}
@@ -367,4 +416,16 @@ func (p *Provider) Plan(ctx context.Context, log io.Writer) ([]ModulePlan, error
 		plans = append(plans, ModulePlan{Stack: s, Changes: changes, Text: text})
 	}
 	return plans, nil
+}
+
+// maxExtend is the longest extension the cap allows from now.
+func maxExtend(current, now time.Time) time.Duration {
+	if current.Before(now) {
+		current = now
+	}
+	d := now.Add(config.MaxTTL).Sub(current).Truncate(time.Minute)
+	if d < 0 {
+		return 0
+	}
+	return d
 }

@@ -123,7 +123,7 @@ func TestEC2NodeClassCarriesLabTags(t *testing.T) {
 	exp := t0.Add(4 * time.Hour)
 	nc := EC2NodeClass(info, LabTags("me", exp))
 	tags := field(t, nc, "spec", "tags").(map[string]any)
-	for k, v := range map[string]string{"lab": "true", "owner": "me", "expires-at": "2026-11-01T16:00:00Z", "component": "cluster"} {
+	for k, v := range map[string]string{"lab": "true", "owner": "me", "expires-at": "2026-11-01T16:00:00Z", "component": "karpenter"} {
 		if tags[k] != v {
 			t.Errorf("tag %s = %v, want %s", k, tags[k], v)
 		}

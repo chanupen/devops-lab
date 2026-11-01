@@ -68,6 +68,15 @@ func (f *labFlags) configPath() (string, error) {
 	return "", nil
 }
 
+// loadConfigOnly reads lab.yaml without touching state.
+func (f *labFlags) loadConfigOnly() (config.Config, error) {
+	p, err := f.configPath()
+	if err != nil || p == "" {
+		return config.Config{}, errors.Join(err, errors.New("no lab.yaml"))
+	}
+	return config.Load(p)
+}
+
 // load reads the config and returns the state store and stack graph.
 func (f *labFlags) load() (config.Config, *state.Store, *engine.Graph, error) {
 	cfgPath, err := f.configPath()
@@ -176,7 +185,11 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
-		l.url, l.hint = func(host string) string { return "https://" + host }, ""
+		// No load balancer: lab tunnel forwards the same ports a local lab
+		// publishes, so the URLs are the same too.
+		l.url = local.AppURL
+		l.hint = "Run lab tunnel on this host first (it forwards 8080 and 8443 to the cloud Gateway); on the Mac, ssh -N " +
+			local.TunnelHost + " as usual."
 		cloud = p
 	default:
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)

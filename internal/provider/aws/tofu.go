@@ -1,12 +1,15 @@
 package aws
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
@@ -25,6 +28,9 @@ type Module struct {
 	Vars      map[string]any    // written to lab.auto.tfvars.json
 	Env       map[string]string // AWS credentials for tofu, from Session.Env
 	Out       io.Writer         // tofu's output
+	// BeforeApply runs after the plan and before tofu apply, with the work
+	// dir ready: the cloud provider uploads the teardown bundle there.
+	BeforeApply func(ctx context.Context, workDir string) error
 }
 
 // PlanFile is the saved plan Apply runs.
@@ -99,6 +105,11 @@ func (m *Module) Apply(ctx context.Context) error {
 	defer func() { _ = os.Remove(m.PlanFile()) }() // a plan is good for one apply
 	if !changes {
 		return nil
+	}
+	if m.BeforeApply != nil {
+		if err := m.BeforeApply(ctx, m.WorkDir); err != nil {
+			return err
+		}
 	}
 	tf, err := m.tofu()
 	if err != nil {
@@ -185,7 +196,8 @@ func tofuEnv(extra map[string]string) map[string]string {
 	return env
 }
 
-// syncModule copies a module's .tf and .json files (policy documents) and
+// syncModule copies a module's .tf, .json (policy documents) and .sh
+// (scripts the module uploads) files and
 // its provider lock file into workDir, and removes .tf files the module no
 // longer has, keeping the generated backend.tf. Subdirectories (another
 // root module) are not copied.
@@ -198,8 +210,9 @@ func syncModule(moduleDir, workDir string) error {
 		return fmt.Errorf("no .tf files in %s", moduleDir)
 	}
 	jsons, _ := filepath.Glob(filepath.Join(moduleDir, "*.json"))
+	scripts, _ := filepath.Glob(filepath.Join(moduleDir, "*.sh"))
 	want := map[string]bool{"backend.tf": true}
-	for _, f := range append(tfs, jsons...) {
+	for _, f := range append(append(tfs, jsons...), scripts...) {
 		name := filepath.Base(f)
 		switch name {
 		case "backend.tf":
@@ -231,4 +244,38 @@ func syncModule(moduleDir, workDir string) error {
 		}
 	}
 	return nil
+}
+
+// Bundle zips what tofu needs to destroy the module without lab: the .tf
+// files (with the generated backend), the variables lab wrote, policy
+// files and the provider lock file. No state, plans or .terraform.
+func Bundle(workDir string) ([]byte, error) {
+	var names []string
+	for _, pat := range []string{"*.tf", "*.json", ".terraform.lock.hcl"} {
+		m, err := filepath.Glob(filepath.Join(workDir, pat))
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, m...)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range names {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: filepath.Base(f), Method: zip.Deflate})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write(data); err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

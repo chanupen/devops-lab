@@ -11,5 +11,5 @@ repo:                # what Argo CD syncs from
 
 cloud:
   region: ap-south-1
-  ttl: 4h
+  ttl: 2h             # lab up --mode cloud --ttl overrides; at most 8h, lab extend included
   owner: chanupen
