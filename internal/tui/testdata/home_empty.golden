@@ -1,30 +1,30 @@
  lab   mode: local  ctx: kind-lab  health: ○ off  rev: —  ttl: —                                    
- 1 Home   2 Stacks                                                                                  
-──────────────────────────────────────┬─────────────────────────────────────────────────────────────
- Lab                                  │ Last operations                                             
-                                      │  none yet                                                   
-  mode       local (standard profile) │                                                             
-                                      │ App URLs                                                    
-  Nothing is deployed.                │  shown once the cluster is up                               
-                                      │                                                             
-  press U to bring the lab up.        │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-                                      │                                                             
-──────────────────────────────────────┴─────────────────────────────────────────────────────────────
+ 1 Home   2 Stacks   5 Ops                                                                          
+────────────────────────────────────────────┬───────────────────────────────────────────────────────
+ Lab                                        │ Last operations                                       
+                                            │  none yet                                             
+  mode       local (minimal + obs profile)  │                                                       
+  config     /home/user/devops-lab/lab.yaml │ App URLs                                              
+                                            │  shown once the cluster is up                         
+  Nothing is deployed.                      │                                                       
+                                            │                                                       
+  press U to bring the lab up.              │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+                                            │                                                       
+────────────────────────────────────────────┴───────────────────────────────────────────────────────
  ops ▸ none yet                                                                                     
- 1 home  2 stacks  U up  ? help  q quit                                                             
+ 1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit                                    

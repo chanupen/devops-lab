@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
+ 1 Home   2 Stacks   5 Ops                                                                          
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Keys: Stacks                                                                                       
+                                                                                                    
+  j k ↑ ↓     Move                                                                                  
+  g G         First, last stack                                                                     
+  /           Filter (enter keeps it, esc clears it)                                                
+  u           Bring the selected stack up (lab up --stacks <stack>)                                 
+  d           Tear the selected stack down, after a prompt (lab down --stacks <stack>)              
+  r           Retry the selected stack if it failed                                                 
+                                                                                                    
+  1 2 5       Home, Stacks, Ops log                                                                 
+  U           Bring the whole profile up (lab up)                                                   
+  :           Command palette: up, down, status, doctor, plan                                       
+  K           Open k9s on the lab cluster; quit it to come back                                     
+  ?           This help                                                                             
+  q  ctrl+c   Quit                                                                                  
+                                                                                                    
+  Only one operation runs at a time; other action keys say busy.                                    
+  Every action shows its CLI command in the ops strip.                                              
+                                                                                                    
+  State: ● healthy  ◐ progressing  ○ off  ✕ failed                                                  
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ any key closes help  q quit                                                                        

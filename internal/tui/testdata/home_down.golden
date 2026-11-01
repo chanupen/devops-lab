@@ -1,12 +1,13 @@
  lab   mode: local  ctx: kind-lab  health: ○ off  rev: feat/x  ttl: —                               
- 1 Home   2 Stacks                                                                                  
+ 1 Home   2 Stacks   5 Ops                                                                          
 ───────────────────────────────────────────────────────┬────────────────────────────────────────────
  Lab                                                   │ Last operations                            
                                                        │  ● Oct 31 02:26  lab up  core apply  41s   
-  mode       local (standard profile)                  │  ● Oct 31 02:25  lab up  core apply  41s   
-  revision   feat/x (not main)                         │                                            
-  cluster    ○ off (not reachable: connection refused) │ App URLs                                   
-  stacks     ○ off — cluster not running               │  shown once the cluster is up              
+  mode       local (minimal + obs profile)             │  ● Oct 31 02:25  lab up  core apply  41s   
+  config     /home/user/devops-lab/lab.yaml            │                                            
+  revision   feat/x (not main)                         │ App URLs                                   
+  cluster    ○ off (not reachable: connection refused) │  shown once the cluster is up              
+  stacks     ○ off — cluster not running               │                                            
                                                        │                                            
   press U to bring the lab up.                         │                                            
                                                        │                                            
@@ -24,7 +25,6 @@
                                                        │                                            
                                                        │                                            
                                                        │                                            
-                                                       │                                            
 ───────────────────────────────────────────────────────┴────────────────────────────────────────────
  ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
- 1 home  2 stacks  U up  ? help  q quit                                                             
+ 1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit                                    

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,7 +29,7 @@ type labFlags struct {
 }
 
 func (f *labFlags) register(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.cfgPath, "config", "lab.yaml", "path to lab.yaml")
+	cmd.Flags().StringVar(&f.cfgPath, "config", "", "path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)")
 	cmd.Flags().StringVar(&f.statePath, "state", "", "path to the state file (default ~/.lab/state.json)")
 }
 
@@ -38,9 +39,37 @@ func registerTimeout(cmd *cobra.Command, d *time.Duration) {
 		"how long each stack may wait for Argo CD and its apps (image pulls dominate on a slow network)")
 }
 
+// configPath is where lab.yaml is: --config when given, else ./lab.yaml,
+// else ~/.lab/lab.yaml (a symlink to the repo's file lets ssh -t fedora lab,
+// which starts in the home directory, find it). "" when none exists.
+func (f *labFlags) configPath() (string, error) {
+	if f.cfgPath != "" {
+		return f.cfgPath, nil
+	}
+	candidates := []string{"lab.yaml"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".lab", "lab.yaml"))
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
 // load reads the config and returns the state store and stack graph.
 func (f *labFlags) load() (config.Config, *state.Store, *engine.Graph, error) {
-	cfg, err := config.Load(f.cfgPath)
+	cfgPath, err := f.configPath()
+	if err != nil {
+		return config.Config{}, nil, nil, err
+	}
+	if cfgPath == "" {
+		return config.Config{}, nil, nil, errors.New("no lab.yaml in this directory or ~/.lab; pass --config")
+	}
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return config.Config{}, nil, nil, err
 	}

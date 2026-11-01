@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
 )
 
@@ -45,7 +46,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
-	cmd.Flags().StringVar(&opts.Profile, "profile", "standard", "memory profile to check against: minimal, standard, full")
+	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
 	return cmd
 }

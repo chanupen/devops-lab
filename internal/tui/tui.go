@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -26,6 +28,7 @@ import (
 // Options configure the TUI.
 type Options struct {
 	Config     config.Config
+	ConfigPath string      // the lab.yaml in use; "" when the defaults apply
 	State      state.State // loaded before New; the first frame renders from it alone
 	StatePath  string      // re-read when it changes on disk
 	Kubeconfig string      // the lab cluster; watched while it exists
@@ -41,26 +44,51 @@ type Options struct {
 	// FirstView, when set, is called once, when the first View the running
 	// program asks for returns. LAB_TRACE_FIRSTFRAME uses it.
 	FirstView func()
+	// Actions runs lab up, lab down and the read-only reports. Nil turns the
+	// action keys into hints.
+	Actions Actions
+	// LookPath finds k9s for K. Default exec.LookPath.
+	LookPath func(file string) (string, error)
+	// BranchExists reports whether a GitOps branch still exists on the
+	// remote. Nil skips the deleted-branch check.
+	BranchExists func(ctx context.Context, branch string) (bool, error)
+	// Now is the clock for durations on screen. Default time.Now.
+	Now func() time.Time
 }
 
-// Screens, in tab order.
+// Screens, in tab order. The key is the screen's number in the design;
+// 3, 4 and 6 come in later releases.
 const (
 	screenHome = iota
 	screenStacks
+	screenOps
 )
 
-var screenNames = []string{"Home", "Stacks"}
+var screens = []struct {
+	key  string
+	name string
+}{{"1", "Home"}, {"2", "Stacks"}, {"5", "Ops"}}
 
 // data is what every screen renders from.
 type data struct {
-	cfg    config.Config
-	st     state.State
-	live   cluster
-	ctx    string // kube context name
-	order  []string
-	deps   map[string][]string
-	appURL func(string) string
-	hint   string
+	cfg     config.Config
+	st      state.State
+	live    cluster
+	ctx     string // kube context name
+	order   []string
+	deps    map[string][]string
+	appURL  func(string) string
+	hint    string
+	cfgPath string
+	// branchChecked and branchGone record the deleted-branch check by
+	// revision. Maps, so copies of the model share them.
+	branchChecked map[string]bool
+	branchGone    map[string]bool
+}
+
+// revisionGone reports whether the recorded revision's branch was deleted.
+func (d *data) revisionGone() bool {
+	return d.st.Revision != engine.DefaultRevision && d.branchGone[d.st.Revision]
 }
 
 // mode is the recorded mode, or the configured one before the first apply.
@@ -79,10 +107,18 @@ type Model struct {
 	screen int
 	home   homeModel
 	stacks stacksModel
+	ops    opsModel
 	help   bool
 	flash  string // shown in the ops strip until the next key
 	width  int
 	height int
+
+	op       *opState      // the running operation, if any
+	opEvents chan tea.Msg  // its progress and result
+	confirm  *confirmState // a pending yes/no question
+	palette  *palette      // the open command palette
+	view     *viewer       // the open log or report view
+	viewPath string        // the log file the view is loading
 
 	events   chan tea.Msg
 	gen      int // connect generation; reports from older watchers are dropped
@@ -104,7 +140,14 @@ func New(opts Options) Model {
 	if opts.FirstView != nil {
 		opts.FirstView = sync.OnceFunc(opts.FirstView)
 	}
-	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, deps: map[string][]string{}}
+	if opts.LookPath == nil {
+		opts.LookPath = exec.LookPath
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, cfgPath: opts.ConfigPath, deps: map[string][]string{},
+		branchChecked: map[string]bool{}, branchGone: map[string]bool{}}
 	for _, s := range opts.Catalog {
 		d.order = append(d.order, s.Name)
 		d.deps[s.Name] = s.DependsOn
@@ -115,8 +158,10 @@ func New(opts Options) Model {
 		}
 	}
 	return Model{opts: opts, d: d, stacks: newStacksModel(), width: 100, height: 30,
-		events: make(chan tea.Msg, 1), gen: 1}
+		events: make(chan tea.Msg, 1), opEvents: make(chan tea.Msg, 1), gen: 1}
 }
+
+func (m Model) now() time.Time { return m.opts.Now() }
 
 // Run shows the TUI until the user quits or ctx ends.
 func Run(ctx context.Context, opts Options) error {
@@ -151,9 +196,10 @@ type (
 	tickMsg struct{}
 )
 
-// Init starts the cluster connection, the watcher listener and the file check.
+// Init starts the cluster connection, the watcher listener, the file check
+// and, for a branch revision, the deleted-branch check.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.connect(m.gen), m.listen(), m.tick())
+	return tea.Batch(m.connect(m.gen), m.listen(), m.tick(), m.checkBranch())
 }
 
 func (m Model) listen() tea.Cmd {
@@ -245,6 +291,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tickMsg:
 		return m, m.checkFiles()
+	case opProgressMsg:
+		return m.applyProgress(msg.batch), m.listenOp()
+	case opDoneMsg:
+		return m.finishOp(msg)
+	case planMsg:
+		return m.confirmFor(msg), nil
+	case reportMsg:
+		m.flash = ""
+		lines := newRing(logLines)
+		lines.add(strings.Split(strings.TrimRight(msg.out, "\n"), "\n")...)
+		v := &viewer{title: "$ lab " + msg.name, sub: "output of the CLI command; esc closes", lines: lines}
+		if msg.err != nil {
+			v.err = "exit: " + firstLine(msg.err.Error())
+		}
+		m.view = v
+	case logMsg:
+		if m.view != nil && msg.path == m.viewPath {
+			m.view.loading = false
+			if msg.err != nil {
+				m.view.err = firstLine(msg.err.Error())
+			} else {
+				m.view.lines = msg.lines
+			}
+		}
+	case k9sDoneMsg:
+		m.flash = "back from k9s"
+		if msg.err != nil {
+			m.flash = statusFailed.symbol() + " k9s: " + firstLine(msg.err.Error())
+		}
+	case branchMsg:
+		if msg.err == nil {
+			m.d.branchGone[msg.rev] = !msg.exists
+		}
 	case filesMsg:
 		var cmds []tea.Cmd
 		if !msg.state.Equal(m.stateMod) {
@@ -263,6 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stateMsg:
 		if msg.err == nil {
 			m.d.st = msg.st
+			return m, m.checkBranch()
 		}
 	}
 	return m, nil
@@ -282,44 +362,139 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return next, tea.Batch(cmds...)
 	}
 	m.flash = ""
-	if msg.String() == "ctrl+c" {
-		m.stop()
-		return m, tea.Quit
+	k := msg.String()
+	if k == "ctrl+c" {
+		return m.quit()
 	}
-	if m.screen == screenStacks && m.stacks.filtering {
+	// Overlays take keys first: a question, the palette, a text filter, a
+	// log view, help.
+	switch {
+	case m.confirm != nil:
+		c := m.confirm
+		m.confirm = nil
+		if k == "y" || k == "Y" {
+			return m.request(c.req)
+		}
+		m.flash = "cancelled: " + c.req.Command()
+		return m, nil
+	case m.palette != nil:
+		switch k {
+		case "esc":
+			m.palette = nil
+			return m, nil
+		case "enter":
+			e, ok := m.palette.selected()
+			m.palette = nil
+			if !ok {
+				return m, nil
+			}
+			return m.runEntry(e)
+		}
+		return m, m.palette.key(msg)
+	case m.screen == screenStacks && m.stacks.filtering:
 		var cmd tea.Cmd
 		m.stacks, cmd = m.stacks.update(msg, &m.d)
 		return m, cmd
-	}
-	if m.help {
-		if s := msg.String(); s == "q" {
-			m.stop()
-			return m, tea.Quit
+	case m.view != nil:
+		switch k {
+		case "esc", "q":
+			m.view, m.viewPath = nil, ""
+		default:
+			m.view.key(msg, m.bodyHeight())
+		}
+		return m, nil
+	case m.help:
+		if k == "q" {
+			return m.quit()
 		}
 		m.help = false
 		return m, nil
 	}
-	switch msg.String() {
+	for i, s := range screens {
+		if k == s.key {
+			m.screen = i
+			return m, nil
+		}
+	}
+	switch k {
 	case "q":
-		m.stop()
-		return m, tea.Quit
+		return m.quit()
 	case "?":
 		m.help = true
-	case "1":
-		m.screen = screenHome
-	case "2":
-		m.screen = screenStacks
+	case "3", "4", "6":
+		m.flash = "screen " + k + " comes in a later release"
+	case ":":
+		m.palette = newPalette(m.d.order)
+		return m, textinput.Blink
 	case "U":
-		m.flash = "U runs lab up from the TUI in a later release; for now run: lab up"
+		return m.request(Request{})
+	case "K":
+		return m.k9s()
+	case "u", "d", "r":
+		return m.stackAction(k)
 	default:
-		if m.screen == screenStacks {
+		switch m.screen {
+		case screenStacks:
 			var cmd tea.Cmd
 			m.stacks, cmd = m.stacks.update(msg, &m.d)
 			return m, cmd
+		case screenOps:
+			if k == "enter" {
+				return m.openOp()
+			}
+			m.ops = m.ops.update(msg, opsRows(&m.d, m.op != nil))
 		}
 	}
 	return m, nil
 }
+
+func (m Model) quit() (tea.Model, tea.Cmd) {
+	m.stop()
+	if m.op != nil {
+		m.op.cancel() // the engine stops before its next step
+	}
+	return m, tea.Quit
+}
+
+// stackAction handles u, d and r, which act on the stack selected on the
+// Stacks screen.
+func (m Model) stackAction(k string) (tea.Model, tea.Cmd) {
+	name := ""
+	if m.screen == screenStacks {
+		name = m.stacks.selected(&m.d)
+	}
+	if name == "" {
+		m.flash = k + " acts on the selected stack: open 2 Stacks first (U brings up the whole profile)"
+		return m, nil
+	}
+	switch k {
+	case "u":
+		return m.request(Request{Stacks: []string{name}})
+	case "d":
+		return m.askDown(Request{Down: true, Stacks: []string{name}})
+	default: // r
+		if m.d.st.Stacks[name].Status != state.Failed {
+			m.flash = "r retries a failed stack; " + name + " has not failed (u brings it up)"
+			return m, nil
+		}
+		return m.request(Request{Stacks: []string{name}})
+	}
+}
+
+// runEntry runs a palette entry the way its key would.
+func (m Model) runEntry(e paletteEntry) (tea.Model, tea.Cmd) {
+	switch {
+	case e.req != nil && e.req.Down:
+		return m.askDown(*e.req)
+	case e.req != nil:
+		return m.request(*e.req)
+	default:
+		return m.runReport(e.report)
+	}
+}
+
+// bodyHeight is the number of rows between the tab bar and the ops strip.
+func (m Model) bodyHeight() int { return max(m.height, 10) - 6 }
 
 // View renders the four zones: header, tabs, the list and detail split, and
 // the ops strip with the key hints under it.
@@ -327,15 +502,26 @@ func (m Model) View() string {
 	if m.opts.FirstView != nil {
 		defer m.opts.FirstView()
 	}
-	w, h := max(m.width, 40), max(m.height, 10)
-	bodyH := h - 6
+	w := max(m.width, 40)
+	bodyH := m.bodyHeight()
 
 	var b strings.Builder
 	b.WriteString(fitLine(m.header(), w) + "\n")
 	b.WriteString(fitLine(m.tabs(), w) + "\n")
-	if m.help {
+	full := ""
+	switch {
+	case m.palette != nil:
+		full = m.palette.render(bodyH)
+	case m.view != nil:
+		full = m.view.render(bodyH)
+	case m.help:
+		full = helpFor(m.screen)
+	case m.screen == screenOps:
+		full = m.ops.view(&m.d, m.op, m.now(), bodyH)
+	}
+	if full != "" {
 		b.WriteString(strings.Repeat("─", w) + "\n")
-		for _, l := range fit(helpText, w, bodyH) {
+		for _, l := range fit(full, w, bodyH) {
 			b.WriteString(l + "\n")
 		}
 		b.WriteString(strings.Repeat("─", w) + "\n")
@@ -368,7 +554,7 @@ func (m Model) header() string {
 		ctx = "—"
 	}
 	return fmt.Sprintf("%s  mode: %s  ctx: %s  health: %s  rev: %s  ttl: —",
-		lipgloss.NewStyle().Bold(true).Reverse(true).Render(" lab "), d.mode(), ctx, health(d), revision(d.st))
+		lipgloss.NewStyle().Bold(true).Reverse(true).Render(" lab "), d.mode(), ctx, health(d), revision(d))
 }
 
 // health summarises the cluster in a few characters.
@@ -407,8 +593,10 @@ func health(d *data) string {
 	return fmt.Sprintf("%s %d/%d apps", s.symbol(), ready, len(c.apps))
 }
 
-// revision is the GitOps revision, highlighted when it is not main.
-func revision(st state.State) string {
+// revision is the GitOps revision, highlighted when it is not main and red
+// when its branch is gone from the remote.
+func revision(d *data) string {
+	st := d.st
 	switch {
 	case !st.IsApplied(engine.RevisionStack):
 		return "—"
@@ -416,15 +604,20 @@ func revision(st state.State) string {
 		return st.Revision
 	case st.Revision == "":
 		return warn.Render("unrecorded")
+	case d.revisionGone():
+		return danger.Render(st.Revision + " (deleted)")
 	default:
 		return warn.Render(st.Revision)
 	}
 }
 
+// deletedHint is shown next to a revision whose branch is gone.
+const deletedHint = "press U or run lab up to return to main"
+
 func (m Model) tabs() string {
 	var parts []string
-	for i, name := range screenNames {
-		t := fmt.Sprintf(" %d %s ", i+1, name)
+	for i, s := range screens {
+		t := fmt.Sprintf(" %s %s ", s.key, s.name)
 		if i == m.screen {
 			t = lipgloss.NewStyle().Reverse(true).Render(t)
 		}
@@ -433,8 +626,23 @@ func (m Model) tabs() string {
 	return strings.Join(parts, " ")
 }
 
-// opsStrip shows a message for the last key, else the latest operation.
+// opsStrip shows the running operation, else a message for the last key,
+// else the latest operation.
 func (m Model) opsStrip() string {
+	if m.confirm != nil {
+		return " " + warn.Render(m.confirm.question) + "  y/N  " + faint.Render("$ "+m.confirm.req.Command())
+	}
+	if m.op != nil {
+		s := " ops ▸ " + statusProgressing.symbol() + " $ " + m.op.req.Command() + "  " +
+			m.now().Sub(m.op.started).Round(time.Second).String()
+		if m.op.step != "" {
+			s += "  " + m.op.step
+		}
+		if m.op.last != "" {
+			s += "  " + faint.Render(m.op.last)
+		}
+		return s
+	}
 	if m.flash != "" {
 		return " ops ▸ " + m.flash
 	}
@@ -447,28 +655,24 @@ func (m Model) opsStrip() string {
 
 func (m Model) hints() string {
 	switch {
+	case m.confirm != nil:
+		return "y confirm  any other key cancels"
+	case m.palette != nil:
+		return "type to match  ↑/↓ choose  enter run  esc close"
+	case m.view != nil:
+		return "j/k scroll  space/b page  g/G top/end  esc close"
 	case m.help:
 		return "any key closes help  q quit"
 	case m.screen == screenStacks && m.stacks.filtering:
 		return "type to filter  enter keep  esc clear"
 	case m.screen == screenStacks:
-		return "j/k move  / filter  1 home  2 stacks  U up  ? help  q quit"
+		return "j/k move  u up  d down  r retry  / filter  : palette  K k9s  ? help  q quit"
+	case m.screen == screenOps:
+		return "j/k move  enter output  U up  : palette  K k9s  ? help  q quit"
 	default:
-		return "1 home  2 stacks  U up  ? help  q quit"
+		return "1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit"
 	}
 }
-
-const helpText = `Keys
-
-  1 / 2        Home / Stacks
-  j k ↑ ↓      Move in a list
-  g G          First / last item
-  /            Filter the list (enter keeps it, esc clears it)
-  U            Bring the lab up (later release; run lab up for now)
-  ?            This help
-  q  ctrl+c    Quit
-
-State: ● healthy  ◐ progressing  ○ off  ✕ failed`
 
 // opLine is one ops log entry: symbol, time, command, stack action, duration.
 func opLine(op state.Op) string {

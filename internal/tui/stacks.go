@@ -152,7 +152,7 @@ func stackDetail(d *data, name string) string {
 		}
 	}
 	if name == engine.RevisionStack {
-		row("revision", revision(d.st))
+		row("revision", revision(d))
 	}
 	if d.live.known && !d.live.up && d.st.Stacks[name].Status != "" {
 		b.WriteString("\n  " + faint.Render("The cluster is off ("+d.live.reason+"); "+emptyHint+".") + "\n")
@@ -179,8 +179,12 @@ func stackDetail(d *data, name string) string {
 			health = "—"
 		}
 		fmt.Fprintf(&b, "  %s %-*s  %-10s %s\n", appStatus(a).symbol(), w, a.Name, sync, health)
-		for _, p := range a.Problems {
-			b.WriteString("     " + faint.Render(firstLine(p)) + "\n")
+		// The first condition says why; the rest are usually the same cause.
+		if len(a.Problems) > 0 {
+			b.WriteString("     " + faint.Render(firstLine(a.Problems[0])) + "\n")
+			if more := len(a.Problems) - 1; more > 0 {
+				b.WriteString("     " + faint.Render(fmt.Sprintf("+%d more %s", more, plural(more, "condition", "conditions"))) + "\n")
+			}
 		}
 	}
 	if name == "gitops" {
