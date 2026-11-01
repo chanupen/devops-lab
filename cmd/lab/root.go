@@ -24,6 +24,6 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 	up, down := newUpCmd(newProvider), newDownCmd(newProvider)
 	withLabLock(up)
 	withLabLock(down)
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, newStatusCmd(newProvider))
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, newStatusCmd(newProvider), newCloudCmd())
 	return root
 }

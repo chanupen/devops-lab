@@ -283,7 +283,7 @@ var tools = map[string]tool{
 	"kubectl":   {[]string{"version", "--client"}, version{1, 36, 0}, "install kubectl within one minor of the kind node image"},
 	"helm":      {[]string{"version", "--short"}, version{3, 15, 0}, "sudo dnf install helm"},
 	"k9s":       {[]string{"version", "--short"}, version{0, 40, 0}, "install k9s from the GitHub releases"},
-	"tofu":      {[]string{"version"}, version{1, 8, 0}, "sudo dnf install opentofu"},
+	"tofu":      {[]string{"version"}, version{1, 10, 0}, "install OpenTofu ≥ 1.10 from the GitHub releases into ~/.local/bin"},
 	"terraform": {[]string{"version"}, version{1, 9, 0}, "install terraform from HashiCorp"},
 	"aws":       {[]string{"--version"}, version{2, 0, 0}, "install AWS CLI v2"},
 }

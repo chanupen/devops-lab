@@ -26,6 +26,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make build-all
+      - run: make reaper
       # Exec and page-in of the binary are a large part of a cold first frame.
       - name: Binary size
         run: |

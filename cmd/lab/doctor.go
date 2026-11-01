@@ -16,19 +16,30 @@ import (
 func newDoctorCmd() *cobra.Command {
 	var (
 		asJSON bool
+		mode   string
 		opts   doctor.Options
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check that the host is ready to run the lab",
 		Long: "Checks Podman, cgroup delegation, kernel limits and modules, SELinux, the GPU stack,\n" +
-			"Ollama, tool versions and free memory. Exits non-zero if any check fails.",
+			"Ollama, tool versions and free memory. With --mode cloud it checks OpenTofu, that the\n" +
+			"lab AWS profile assumes lab-admin, and that the state bucket and budget exist. Exits\n" +
+			"non-zero if any check fails.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireLinux(runtime.GOOS, cmd.ErrOrStderr()); err != nil {
-				return err
+			checks := doctor.Checks()
+			switch mode {
+			case "local":
+				if err := requireLinux(runtime.GOOS, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+			case "cloud":
+				checks = doctor.CloudChecks(cloudProbe(cmd.Context(), cmd, !asJSON))
+			default:
+				return fmt.Errorf("--mode %q: want local or cloud", mode)
 			}
-			results := doctor.Run(cmd.Context(), doctor.HostSystem(), opts, doctor.Checks())
+			results := doctor.Run(cmd.Context(), doctor.HostSystem(), opts, checks)
 			out := cmd.OutOrStdout()
 			var err error
 			if asJSON {
@@ -46,6 +57,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
+	cmd.Flags().StringVar(&mode, "mode", "local", "local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget")
 	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
 	return cmd
