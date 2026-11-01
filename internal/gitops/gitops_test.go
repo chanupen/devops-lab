@@ -119,7 +119,9 @@ func markReady(ctx context.Context, apps dynamic.ResourceInterface, a *unstructu
 		"sync":   map[string]any{"status": "Synced", "comparedTo": map[string]any{"source": src}},
 		"health": map[string]any{"status": "Healthy"},
 	}, "status")
-	_, _ = apps.Update(ctx, a, metav1.UpdateOptions{})
+	// Status goes through the status subresource, so tests can tell the
+	// controller's writes from the runner's spec updates.
+	_, _ = apps.UpdateStatus(ctx, a, metav1.UpdateOptions{})
 }
 
 type env struct {
@@ -676,13 +678,18 @@ func TestRootUpdateRetriesOnConflict(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// The fake client's reactor chain is not safe to change while
 			// fakeArgo reads it, so register the reactor before starting it and
-			// arm it once the setup apply is done.
+			// arm it once the setup apply is done. Only spec updates to the root
+			// app count: fakeArgo writes status through the status subresource.
 			e := newEnv(t, false)
 			var armed atomic.Bool
-			var conflicts atomic.Int32
+			var updates, conflicts atomic.Int32
 			e.dyn.PrependReactor("update", "applications", func(a k8stesting.Action) (bool, runtime.Object, error) {
 				u := a.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
-				if armed.Load() && u.GetName() == RootApp && conflicts.Add(1) == 1 {
+				if !armed.Load() || a.GetSubresource() != "" || u.GetName() != RootApp {
+					return false, nil, nil
+				}
+				if updates.Add(1) == 1 {
+					conflicts.Add(1)
 					return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "argoproj.io", Resource: "applications"}, RootApp, errors.New("the object has been modified"))
 				}
 				return false, nil, nil
@@ -697,8 +704,11 @@ func TestRootUpdateRetriesOnConflict(t *testing.T) {
 			if err := tt.apply(e); err != nil {
 				t.Fatalf("err = %v; a single conflict should be retried", err)
 			}
-			if conflicts.Load() < 2 {
-				t.Errorf("root app updated %d times, want a retry after the conflict", conflicts.Load())
+			if got := conflicts.Load(); got != 1 {
+				t.Errorf("runner saw %d conflicts, want 1", got)
+			}
+			if got := updates.Load(); got != 2 {
+				t.Errorf("runner updated the root app %d times, want 2 (the conflict, then one retry)", got)
 			}
 		})
 	}
