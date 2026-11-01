@@ -165,6 +165,7 @@ Keys follow k9s habits so there is nothing new to learn.
 - First frame from cached state on disk before any network call. Target: under 100 ms to first frame.
 - Every action runs as a background command and streams messages to the UI; the key loop never waits.
 - Watch Kubernetes with client-go informers; never poll `kubectl`.
+- `lab up` or `lab down` in another shell shows up within 2 seconds: the TUI checks the modification times of `state.json` and the kubeconfig (a file check, not a cluster call), re-reads the state, and restarts its informers when the cluster changes.
 - Call libraries, not CLIs: Helm SDK, kind library, terraform-exec, AWS SDK v2. Shell-outs only where no library exists.
 - Log panes use a ring buffer (5,000 lines) and redraw at most 20 times a second, so memory and CPU stay flat.
 - Long lists render only the visible rows.
