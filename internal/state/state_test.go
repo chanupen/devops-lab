@@ -245,3 +245,30 @@ func TestStepLogs(t *testing.T) {
 		}
 	}
 }
+
+// A second lab is refused at once with what holds the lab; state updates
+// still work while it is held, and it can be claimed again once released.
+func TestLockLab(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	unlock, err := st.LockLab("the TUI (pid 42 on /dev/pts/3, since 17:20)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another store on the same file stands in for another process: it opens
+	// its own descriptor, which flock treats as a separate holder.
+	_, err = NewStore(st.Path()).LockLab("lab up (pid 43)")
+	var busy *BusyError
+	want := "lab and its components are already running: the TUI (pid 42 on /dev/pts/3, since 17:20)"
+	if !errors.As(err, &busy) || !errors.Is(err, ErrBusy) || err.Error() != want {
+		t.Fatalf("second lab: %v, want %q", err, want)
+	}
+	if err := st.Update(func(s *State) error { s.Mode = "local"; return nil }); err != nil {
+		t.Fatalf("Update while the lab is held: %v", err)
+	}
+	unlock()
+	unlock2, err := st.LockLab("lab down (pid 44)")
+	if err != nil {
+		t.Fatalf("LockLab after unlock: %v", err)
+	}
+	unlock2()
+}

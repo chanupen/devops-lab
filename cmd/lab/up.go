@@ -35,18 +35,25 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			command := upCommand(stacks, prune, revision)
 			eng := engine.New(g, store, nil)
-			p, err := eng.PlanUp(cfg, engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision})
-			if err != nil {
-				return err
-			}
-			out := cmd.OutOrStdout()
-			r := lipgloss.NewRenderer(out)
-			if err := writePlan(out, r, p); err != nil {
+			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision}
+			// Plan once without the provider so a bad request fails before
+			// one is built, then again with what it supports.
+			if _, err := eng.PlanUp(cfg, opts); err != nil {
 				return err
 			}
 			prov, err := newProvider(cfg, homeOf(store), runOptions{Revision: revision, Timeout: timeout})
 			if err != nil {
+				return err
+			}
+			opts.Supports = prov.Supports
+			p, err := eng.PlanUp(cfg, opts)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
 				return err
 			}
 			if p.Changes() == 0 {
@@ -54,12 +61,12 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 					return err
 				}
 			} else {
-				if destroys := countAction(p, engine.Destroy); destroys > 0 {
+				if destroys := p.Count(engine.Destroy); destroys > 0 {
 					if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
 						return err
 					}
 				}
-				if err := run(cmd, prov, g, store, p, upCommand(stacks, prune, revision)); err != nil {
+				if err := run(cmd, prov, g, store, p, command); err != nil {
 					return err
 				}
 			}
@@ -90,16 +97,6 @@ func upCommand(stacks []string, prune bool, revision string) string {
 		c += " --revision " + revision
 	}
 	return c
-}
-
-func countAction(p engine.Plan, a engine.Action) int {
-	n := 0
-	for _, s := range p.Steps {
-		if s.Action == a {
-			n++
-		}
-	}
-	return n
 }
 
 // run checks the provider can handle every changed stack, then executes the

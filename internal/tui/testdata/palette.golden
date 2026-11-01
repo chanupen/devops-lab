@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
+ 1 Home   2 Stacks   5 Ops                                                                          
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ :dow                                                                                               
+  :down registry     $ lab down --stacks registry                                                   
+  :down cluster      $ lab down --stacks cluster                                                    
+  :down gitops       $ lab down --stacks gitops                                                     
+  :down core         $ lab down --stacks core                                                       
+  :down obs          $ lab down --stacks obs                                                        
+  :down secrets      $ lab down --stacks secrets                                                    
+  :down ai           $ lab down --stacks ai                                                         
+  :down chaos        $ lab down --stacks chaos                                                      
+  :down ci           $ lab down --stacks ci                                                         
+  :down policy       $ lab down --stacks policy                                                     
+  :down sample-app   $ lab down --stacks sample-app                                                 
+  :down scaling      $ lab down --stacks scaling                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ type to match  ↑/↓ choose  enter run  esc close                                                    

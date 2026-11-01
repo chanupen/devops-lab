@@ -80,8 +80,11 @@ func waitNodesReady(ctx context.Context, kubeconfig string, want int, log io.Wri
 
 // Supports reports whether Apply and Destroy handle the stack.
 func (p *Provider) Supports(stack string) bool {
-	return slices.Contains([]string{"registry", "cluster"}, stack)
+	return slices.Contains(Stacks(), stack)
 }
+
+// Stacks lists the stacks the local provider runs itself.
+func Stacks() []string { return []string{"registry", "cluster"} }
 
 // AppURL is how a Gateway hostname is reached in local mode: the HTTPS port
 // the kind control plane publishes on 127.0.0.1.

@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
+ 1 Home   2 Stacks   5 Ops                                                                          
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Ops log  4 operations, newest first  ·  enter opens the output                                     
+ ✕ Oct 31 02:29:00  lab up  obs   apply  failed  5m0s  context deadline exceeded                    
+ ● Oct 31 02:27:00  lab up  core  apply  ok       41s                                               
+ ● Oct 31 02:26:00  lab up  core  apply  ok       41s                                               
+ ● Oct 31 02:25:00  lab up  core  apply  ok       41s                                               
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ops ▸ ✕ Oct 31 02:29  lab up  obs apply  5m0s  context deadline exceeded                           
+ j/k move  enter output  U up  : palette  K k9s  ? help  q quit                                     

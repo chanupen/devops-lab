@@ -90,9 +90,16 @@ func TestUpDown(t *testing.T) {
 			wantStacks: []string{"cluster", "registry"},
 		},
 		{
-			name:    "up of the whole profile names unsupported stacks before running",
-			args:    []string{"up"},
-			wantErr: "the local provider cannot run gitops, core, sample-app yet", // the fake routes only registry and cluster
+			// The fake routes only registry and cluster: the rest is skipped at
+			// plan time, so the run applies what it can and succeeds.
+			name: "up skips stacks the provider does not support",
+			args: []string{"up"},
+			wantOut: []string{"- gitops      skip: not supported by the local provider yet",
+				"2 to apply, 0 to destroy, 0 unchanged, 3 skipped",
+				"warning: 3 stacks skipped, not supported by the local provider yet: gitops, core, sample-app"},
+			wantCalls:  []string{"apply registry", "apply cluster"},
+			wantStacks: []string{"cluster", "registry"},
+			wantOp:     "lab up",
 		},
 		{
 			name:       "failed step is reported and recorded",
@@ -130,6 +137,23 @@ func TestUpDown(t *testing.T) {
 			wantOp:    "lab down",
 		},
 		{
+			name:       "down --stacks destroys that stack and what needs it",
+			state:      deployedClusterRegistry,
+			args:       []string{"down", "--stacks", "cluster", "--yes"},
+			wantCalls:  []string{"destroy cluster"},
+			wantOut:    []string{"- cluster", "selected", "● cluster: destroyed in"},
+			wantStacks: []string{"registry"},
+			wantOp:     "lab down --stacks cluster",
+		},
+		{
+			name:      "down --stacks of a dependency takes its dependents",
+			state:     deployedClusterRegistry,
+			args:      []string{"down", "--stacks", "registry", "--yes"},
+			wantCalls: []string{"destroy cluster", "destroy registry"},
+			wantOut:   []string{"- cluster", "needs registry"},
+			wantOp:    "lab down --stacks registry",
+		},
+		{
 			name:      "down --purge passes purge to the provider",
 			state:     deployedClusterRegistry,
 			args:      []string{"down", "--purge", "--yes"},
@@ -150,7 +174,7 @@ func TestUpDown(t *testing.T) {
 			statePath := filepath.Join(dir, "state.json")
 			cfg := tt.config
 			if cfg == "" {
-				cfg = "profile: minimal\n"
+				cfg = "profile: minimal\nextraStacks: []\n"
 			}
 			if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 				t.Fatal(err)
@@ -298,7 +322,7 @@ func TestUpPrintsApps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(statePath, []byte(tt.state), 0o600); err != nil {
@@ -348,5 +372,78 @@ func TestLabRunnerAppURLs(t *testing.T) {
 		if (tt.wantErr == "") != (err == nil) || !slices.Equal(got, tt.want) {
 			t.Errorf("%s: got %v, %v; want %v, %q", tt.name, got, err, tt.want, tt.wantErr)
 		}
+	}
+}
+
+// While another lab holds the lab, every command that touches it is refused
+// at once, naming the holder, without building a provider or printing a
+// plan. --help and --version still work.
+func TestOneLabAtATime(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(deployedClusterRegistry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const holder = "the TUI (pid 42 on /dev/pts/3, since 17:20)"
+	unlock, err := state.NewStore(statePath).LockLab(holder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// doctor has no --state, so it locks ~/.lab, which TestMain points at a
+	// temp HOME; hold that one too.
+	home, _ := state.DefaultPath()
+	unlockHome, err := state.NewStore(home).LockLab(holder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockHome()
+
+	withState := func(args ...string) []string { return append(args, "--config", cfgPath, "--state", statePath) }
+	for _, args := range [][]string{withState("up"), withState("down", "--yes"), withState("plan"), withState("status"),
+		withState(), {"doctor"}} {
+		t.Run(strings.Join(args[:min(1, len(args))], " ")+"_"+args[0], func(t *testing.T) {
+			built := false
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { built = true; return &fakeProvider{}, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(args)
+			err := cmd.Execute()
+			want := "lab and its components are already running: " + holder + ". Only one lab runs at a time"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want %q", err, want)
+			}
+			if built || out.Len() > 0 {
+				t.Errorf("provider built %v, output %q; want neither", built, out.String())
+			}
+		})
+	}
+	for _, args := range [][]string{{"--version"}, {"up", "--help"}} {
+		if out, err := runLab(args...); err != nil || out == "" {
+			t.Errorf("%v while the lab is held: %v, %q", args, err, out)
+		}
+	}
+}
+
+// The holder text names the command and its flags, not --config or --state.
+func TestLabHolder(t *testing.T) {
+	root := newRootCmd()
+	up, _, err := root.Find([]string{"up"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := up.ParseFlags([]string{"--stacks", "obs,core", "--prune", "--state", "/x/state.json"}); err != nil {
+		t.Fatal(err)
+	}
+	got := labHolder(up)
+	if !strings.HasPrefix(got, "lab up --prune --stacks obs,core (pid ") || !strings.Contains(got, ", since ") || strings.Contains(got, "/dev/null") {
+		t.Errorf("holder = %q", got)
+	}
+	if got := labHolder(root); !strings.HasPrefix(got, "the TUI (pid ") {
+		t.Errorf("root holder = %q", got)
 	}
 }

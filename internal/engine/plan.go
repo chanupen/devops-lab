@@ -17,6 +17,9 @@ const (
 	Apply   Action = "apply"
 	Destroy Action = "destroy"
 	Keep    Action = "keep" // already applied; nothing to do
+	// Skip is a stack the profile asks for that the mode's provider cannot run
+	// yet, or one that needs such a stack. Nothing runs for it.
+	Skip Action = "skip"
 )
 
 // Step is one stack and what will happen to it.
@@ -28,9 +31,11 @@ type Step struct {
 
 // Plan is an ordered list of steps for one mode and profile.
 type Plan struct {
-	Mode       string `json:"mode"`
-	Profile    string `json:"profile"`
-	K8sVersion string `json:"k8sVersion"`
+	Mode    string `json:"mode"`
+	Profile string `json:"profile"`
+	// Extra are lab.yaml's extraStacks that the profile does not already have.
+	Extra      []string `json:"extra,omitempty"`
+	K8sVersion string   `json:"k8sVersion"`
 	// Revision is the Git revision the gitops stack syncs in this plan.
 	Revision string `json:"revision,omitempty"`
 	Steps    []Step `json:"steps"`
@@ -51,6 +56,17 @@ type PlanOptions struct {
 	// they merge. Empty means DefaultRevision. A deployed gitops stack on any
 	// other revision is re-applied, so a plain lab up moves it back to main.
 	Revision string
+	// Supports reports whether the mode's provider can run a stack. Stacks it
+	// cannot run, and stacks that need them, become Skip steps with one
+	// warning instead of failing the run. Nil supports every stack.
+	Supports func(stack string) bool
+}
+
+// DownOptions narrow PlanDown.
+type DownOptions struct {
+	// Stacks destroys only these stacks and the deployed stacks that need
+	// them, dependents first. Empty destroys everything deployed.
+	Stacks []string
 }
 
 // RevisionStack is the stack whose Git revision a plan tracks.
@@ -62,11 +78,25 @@ const DefaultRevision = "main"
 // keepReason is the step reason for a deployed stack kept outside the profile.
 const keepReason = "not in profile; run lab up --prune to remove"
 
-// Changes counts the steps that are not Keep.
+// Changes counts the steps that run: Apply and Destroy.
 func (p Plan) Changes() int {
 	n := 0
 	for _, s := range p.Steps {
-		if s.Action != Keep {
+		if s.Action.Runs() {
+			n++
+		}
+	}
+	return n
+}
+
+// Runs reports whether a step with this action calls the provider.
+func (a Action) Runs() bool { return a == Apply || a == Destroy }
+
+// Count returns how many steps have action a.
+func (p Plan) Count(a Action) int {
+	n := 0
+	for _, s := range p.Steps {
+		if s.Action == a {
 			n++
 		}
 	}
@@ -89,6 +119,7 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	if err != nil {
 		return Plan{}, err
 	}
+	want = append(want, cfg.ExtraStacks...)
 	if len(opts.Stacks) > 0 {
 		want = opts.Stacks
 	}
@@ -110,16 +141,25 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 		}
 	}
 	p := newPlan(cfg)
+	profile := p.ProfileName()
 	if slices.Contains(desired, RevisionStack) {
 		p.Revision = rev
 	}
 	if opts.Prune {
 		for _, s := range reversed(extra) {
-			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + cfg.Profile})
+			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + profile})
 		}
 	}
+	skipped := map[string]bool{}
+	var skips []string
 	for _, s := range desired {
 		ss := st.Stacks[s]
+		if why := skipReason(g, cfg.Mode, s, opts.Supports, skipped); why != "" && !deployed(st, s) {
+			skipped[s] = true
+			skips = append(skips, s)
+			p.Steps = append(p.Steps, Step{s, Skip, why})
+			continue
+		}
 		switch {
 		case s == RevisionStack && ss.Status == state.Applied && st.Revision != rev:
 			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev)})
@@ -142,12 +182,37 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 			p.Steps = append(p.Steps, Step{s, Keep, keepReason})
 		}
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d deployed %s not in profile %s, kept: %s. Run lab up --prune to remove.",
-			len(extra), plural(len(extra), "stack is", "stacks are"), cfg.Profile, strings.Join(extra, ", ")))
+			len(extra), plural(len(extra), "stack is", "stacks are"), profile, strings.Join(extra, ", ")))
+	}
+	if skipped[RevisionStack] {
+		p.Revision = "" // nothing syncs a revision this run
+	}
+	if len(skips) > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s skipped, not supported by the %s provider yet: %s",
+			len(skips), plural(len(skips), "stack", "stacks"), cfg.Mode, strings.Join(skips, ", ")))
 	}
 	if p.Revision != "" && p.Revision != DefaultRevision {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("gitops will track %s, not %s; a plain lab up moves it back", p.Revision, DefaultRevision))
 	}
 	return p, nil
+}
+
+// skipReason says why stack cannot run in this plan, or "" if it can: the
+// provider does not support it, or it needs a stack that is skipped.
+// Dependencies come first in plan order, so skipped already holds them.
+func skipReason(g *Graph, mode, stack string, supports func(string) bool, skipped map[string]bool) string {
+	if supports == nil {
+		return ""
+	}
+	if !supports(stack) {
+		return "not supported by the " + mode + " provider yet"
+	}
+	for _, d := range g.stacks[stack].DependsOn {
+		if skipped[d] {
+			return "needs " + d + ", which is skipped"
+		}
+	}
+	return ""
 }
 
 func orUnrecorded(rev string) string {
@@ -157,24 +222,60 @@ func orUnrecorded(rev string) string {
 	return rev
 }
 
-// PlanDown destroys every deployed stack, dependents before dependencies.
-func PlanDown(g *Graph, cfg config.Config, st state.State) (Plan, error) {
+// PlanDown destroys deployed stacks, dependents before dependencies: all of
+// them, or with opts.Stacks those stacks and every deployed stack that needs
+// them.
+func PlanDown(g *Graph, cfg config.Config, st state.State, opts DownOptions) (Plan, error) {
 	if err := checkState(g, cfg, st); err != nil {
 		return Plan{}, err
+	}
+	for _, s := range opts.Stacks {
+		if !g.Has(s) {
+			return Plan{}, fmt.Errorf("unknown stack %q", s)
+		}
 	}
 	p := newPlan(cfg)
 	all, _ := g.Order(g.Names()...)
 	for _, s := range reversed(all) {
-		if deployed(st, s) {
+		if !deployed(st, s) {
+			continue
+		}
+		switch {
+		case len(opts.Stacks) == 0:
 			p.Steps = append(p.Steps, Step{s, Destroy, "lab down"})
+		case slices.Contains(opts.Stacks, s):
+			p.Steps = append(p.Steps, Step{s, Destroy, "selected"})
+		default:
+			if by := g.neededBy(s, opts.Stacks); by != "" {
+				p.Steps = append(p.Steps, Step{s, Destroy, "needs " + by})
+			}
 		}
 	}
 	return p, nil
 }
 
 func newPlan(cfg config.Config) Plan {
-	return Plan{Mode: cfg.Mode, Profile: cfg.Profile, K8sVersion: cfg.K8sVersion}
+	p := Plan{Mode: cfg.Mode, Profile: cfg.Profile, K8sVersion: cfg.K8sVersion}
+	inProfile, _ := ProfileStacks(cfg.Profile)
+	for _, s := range cfg.ExtraStacks {
+		if !slices.Contains(inProfile, s) && !slices.Contains(p.Extra, s) {
+			p.Extra = append(p.Extra, s)
+		}
+	}
+	return p
 }
+
+// ProfileName is the profile with any extra stacks, e.g. "minimal + obs".
+func (p Plan) ProfileName() string {
+	if len(p.Extra) == 0 {
+		return p.Profile
+	}
+	return p.Profile + " + " + strings.Join(p.Extra, ", ")
+}
+
+// ProfileName is cfg's profile with the extra stacks it does not already
+// have, e.g. "minimal + obs".
+func ProfileName(cfg config.Config) string { return newPlan(cfg).ProfileName() }
 
 // checkState refuses to plan across modes or over stacks the catalog no longer knows.
 func checkState(g *Graph, cfg config.Config, st state.State) error {

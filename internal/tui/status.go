@@ -42,9 +42,10 @@ func (s status) word() string {
 }
 
 var (
-	faint = lipgloss.NewStyle().Faint(true)
-	bold  = lipgloss.NewStyle().Bold(true)
-	warn  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	faint  = lipgloss.NewStyle().Faint(true)
+	bold   = lipgloss.NewStyle().Bold(true)
+	warn   = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	danger = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 )
 
 // cluster is the live state the informers report. The zero value means no

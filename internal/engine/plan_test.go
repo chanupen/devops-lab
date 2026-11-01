@@ -20,7 +20,7 @@ func catalogGraph(t *testing.T) *Graph {
 
 func cfgFor(mode, profile string) config.Config {
 	c := config.Default()
-	c.Mode, c.Profile = mode, profile
+	c.Mode, c.Profile, c.ExtraStacks = mode, profile, nil
 	return c
 }
 
@@ -39,7 +39,7 @@ func stateWith(mode string, stacks map[string]string) state.State {
 
 // render turns steps into "+core =gitops -ai" for compact comparisons.
 func render(p Plan) string {
-	sym := map[Action]string{Apply: "+", Destroy: "-", Keep: "="}
+	sym := map[Action]string{Apply: "+", Destroy: "-", Keep: "=", Skip: "~"}
 	var parts []string
 	for _, s := range p.Steps {
 		parts = append(parts, sym[s.Action]+s.Stack)
@@ -226,7 +226,7 @@ func TestPlanDown(t *testing.T) {
 	g := catalogGraph(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := PlanDown(g, cfgFor("local", "standard"), tt.st)
+			p, err := PlanDown(g, cfgFor("local", "standard"), tt.st, DownOptions{})
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
@@ -358,6 +358,150 @@ func TestPlanUpRevision(t *testing.T) {
 					!strings.HasPrefix(s.Reason, "revision ") {
 					t.Errorf("gitops reason = %q", s.Reason)
 				}
+			}
+		})
+	}
+}
+
+// localSupports is what the local provider and the Argo CD runner run today.
+func localSupports(s string) bool {
+	return slices.Contains([]string{"registry", "cluster", "gitops", "core", "obs", "sample-app"}, s)
+}
+
+func TestPlanUpSupport(t *testing.T) {
+	minimalObs := cfgFor("local", "minimal")
+	minimalObs.ExtraStacks = []string{"obs"}
+	allButSecrets := func(s string) bool { return s != "secrets" }
+	tests := []struct {
+		name         string
+		cfg          config.Config
+		supports     func(string) bool
+		st           state.State
+		want         string
+		wantChanges  int
+		wantWarnings []string
+		reasons      map[string]string
+	}{
+		{
+			name: "unsupported stacks are skipped with one warning", cfg: cfgFor("local", "standard"), supports: localSupports,
+			st:           state.New(),
+			want:         "+registry +cluster +gitops +core ~secrets +obs ~policy ~scaling +sample-app",
+			wantChanges:  6,
+			wantWarnings: []string{"3 stacks skipped, not supported by the local provider yet: secrets, policy, scaling"},
+			reasons:      map[string]string{"secrets": "not supported by the local provider yet"},
+		},
+		{
+			name: "stacks that need a skipped stack are skipped too", cfg: cfgFor("local", "full"), supports: allButSecrets,
+			st:           state.New(),
+			want:         "+registry +cluster +gitops +core ~secrets +obs +policy +scaling ~ci +chaos ~ai +sample-app",
+			wantChanges:  9,
+			wantWarnings: []string{"3 stacks skipped, not supported by the local provider yet: secrets, ci, ai"},
+			reasons:      map[string]string{"ci": "needs secrets, which is skipped", "ai": "needs secrets, which is skipped"},
+		},
+		{
+			name: "minimal plus obs is all supported", cfg: minimalObs, supports: localSupports,
+			st:          state.New(),
+			want:        "+registry +cluster +gitops +core +sample-app +obs",
+			wantChanges: 6,
+		},
+		{
+			name: "a deployed stack is never skipped", cfg: cfgFor("local", "standard"), supports: localSupports,
+			st: stateWith("local", map[string]string{"registry": state.Applied, "cluster": state.Applied, "gitops": state.Applied,
+				"core": state.Applied, "secrets": state.Applied, "obs": state.Applied, "sample-app": state.Applied}),
+			want:         "=registry =cluster =gitops =core =secrets =obs ~policy ~scaling =sample-app",
+			wantWarnings: []string{"2 stacks skipped, not supported by the local provider yet: policy, scaling"},
+		},
+		{
+			name: "nil supports skips nothing", cfg: cfgFor("local", "standard"),
+			st:          state.New(),
+			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app",
+			wantChanges: 9,
+		},
+	}
+	g := catalogGraph(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := PlanUp(g, tt.cfg, tt.st, PlanOptions{Supports: tt.supports})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(p); got != tt.want {
+				t.Errorf("plan = %s\nwant   %s", got, tt.want)
+			}
+			if p.Changes() != tt.wantChanges || p.Count(Apply) != tt.wantChanges {
+				t.Errorf("changes = %d, applies = %d, want %d", p.Changes(), p.Count(Apply), tt.wantChanges)
+			}
+			if !slices.Equal(p.Warnings, tt.wantWarnings) {
+				t.Errorf("warnings = %q\nwant       %q", p.Warnings, tt.wantWarnings)
+			}
+			for _, s := range p.Steps {
+				if want, ok := tt.reasons[s.Stack]; ok && s.Reason != want {
+					t.Errorf("%s reason %q, want %q", s.Stack, s.Reason, want)
+				}
+			}
+		})
+	}
+}
+
+func TestProfileNameSkipsStacksInTheProfile(t *testing.T) {
+	cfg := cfgFor("local", "standard")
+	cfg.ExtraStacks = []string{"obs", "ci", "ci"}
+	if got := ProfileName(cfg); got != "standard + ci" {
+		t.Errorf("ProfileName = %q, want %q", got, "standard + ci")
+	}
+}
+
+func TestPlanProfileName(t *testing.T) {
+	for _, tt := range []struct {
+		extra []string
+		want  string
+	}{{nil, "minimal"}, {[]string{"obs"}, "minimal + obs"}, {[]string{"obs", "policy"}, "minimal + obs, policy"}} {
+		if got := (Plan{Profile: "minimal", Extra: tt.extra}).ProfileName(); got != tt.want {
+			t.Errorf("ProfileName(%v) = %q, want %q", tt.extra, got, tt.want)
+		}
+	}
+}
+
+func TestPlanDownStacks(t *testing.T) {
+	applied := state.Applied
+	lab := stateWith("local", map[string]string{
+		"registry": applied, "cluster": applied, "gitops": applied, "core": applied, "obs": applied, "sample-app": state.Failed,
+	})
+	tests := []struct {
+		name    string
+		stacks  []string
+		want    string
+		reasons []string
+		wantErr string
+	}{
+		{name: "one leaf stack", stacks: []string{"sample-app"}, want: "-sample-app", reasons: []string{"selected"}},
+		{name: "deployed dependents go first", stacks: []string{"core"}, want: "-sample-app -obs -core",
+			reasons: []string{"needs core", "needs core", "selected"}},
+		{name: "a stack that is not deployed is nothing to do", stacks: []string{"policy"}, want: ""},
+		{name: "unknown stack", stacks: []string{"harbor"}, wantErr: `unknown stack "harbor"`},
+	}
+	g := catalogGraph(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := PlanDown(g, cfgFor("local", "minimal"), lab, DownOptions{Stacks: tt.stacks})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(p); got != tt.want {
+				t.Errorf("plan = %q, want %q", got, tt.want)
+			}
+			var reasons []string
+			for _, s := range p.Steps {
+				reasons = append(reasons, s.Reason)
+			}
+			if !slices.Equal(reasons, tt.reasons) {
+				t.Errorf("reasons = %q, want %q", reasons, tt.reasons)
 			}
 		})
 	}

@@ -1,11 +1,10 @@
 package main
 
 import (
-	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -24,7 +23,7 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	if !isatty.IsTerminal(os.Stdin.Fd()) || !isatty.IsTerminal(os.Stdout.Fd()) {
 		return cmd.Help()
 	}
-	opts, err := tuiOptions(flags, cmd.Flags().Changed("config"))
+	opts, err := tuiOptions(flags, defaultProvider)
 	if err != nil {
 		return err
 	}
@@ -40,16 +39,19 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	return tui.Run(cmd.Context(), opts)
 }
 
-// tuiOptions loads lab.yaml and the state file. A missing lab.yaml is fine
-// when --config was not given (ssh -t fedora lab starts in the home
-// directory): the defaults apply and state.json still says what is running.
-func tuiOptions(flags labFlags, configSet bool) (tui.Options, error) {
-	cfg, err := config.Load(flags.cfgPath)
-	switch {
-	case errors.Is(err, fs.ErrNotExist) && !configSet:
-		cfg = config.Default()
-	case err != nil:
+// tuiOptions loads lab.yaml and the state file. Without --config it looks
+// in ./lab.yaml, then ~/.lab/lab.yaml; if neither exists the defaults apply
+// and state.json still says what is running.
+func tuiOptions(flags labFlags, newProvider providerFactory) (tui.Options, error) {
+	cfgPath, err := flags.configPath()
+	if err != nil {
 		return tui.Options{}, err
+	}
+	cfg := config.Default()
+	if cfgPath != "" {
+		if cfg, err = config.Load(cfgPath); err != nil {
+			return tui.Options{}, err
+		}
 	}
 	path := flags.statePath
 	if path == "" {
@@ -57,16 +59,20 @@ func tuiOptions(flags labFlags, configSet bool) (tui.Options, error) {
 			return tui.Options{}, err
 		}
 	}
-	st, err := state.NewStore(path).Load()
+	store := state.NewStore(path)
+	st, err := store.Load()
 	if err != nil {
 		return tui.Options{}, err
 	}
 	opts := tui.Options{
-		Config:     cfg,
-		State:      st,
-		StatePath:  path,
-		Kubeconfig: filepath.Join(filepath.Dir(path), "kubeconfig"),
-		Catalog:    engine.Catalog(),
+		Config:       cfg,
+		ConfigPath:   cfgPath,
+		State:        st,
+		StatePath:    path,
+		Kubeconfig:   filepath.Join(filepath.Dir(path), "kubeconfig"),
+		Catalog:      engine.Catalog(),
+		Actions:      tuiActions{cfg: cfg, cfgPath: cfgPath, store: store, newProvider: newProvider, timeout: 30 * time.Minute},
+		BranchExists: branchExists(cfg.Repo),
 	}
 	mode := st.Mode
 	if mode == "" {
@@ -76,4 +82,18 @@ func tuiOptions(flags labFlags, configSet bool) (tui.Options, error) {
 		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
 	}
 	return opts, nil
+}
+
+// terminalName is this process's terminal, e.g. /dev/pts/3, so a second lab
+// can say where the first one is. "" when it cannot tell.
+func terminalName() string {
+	for _, p := range []string{"/proc/self/fd/0", "/dev/fd/0"} {
+		if t, err := os.Readlink(p); err == nil && (strings.HasPrefix(t, "/dev/pts/") || strings.HasPrefix(t, "/dev/tty")) {
+			return t
+		}
+	}
+	if t := os.Getenv("SSH_TTY"); t != "" {
+		return t
+	}
+	return ""
 }

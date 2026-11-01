@@ -60,13 +60,13 @@ Spin-up times are estimates to confirm in phase 1 and phase 3. **When to use whi
 
 ### Memory budget on the Fedora box
 
-The G14 has 22 GiB of RAM and 8 GiB of swap, so the default `standard` profile keeps the lab near 12 GiB and leaves room for the desktop and builds. Profile figures are estimates; the measured row comes from the phase 1 gate.
+The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (about 4.6 GiB measured), because those are the stacks the local provider runs today; `standard` keeps the lab near 12 GiB and becomes the default once its stacks exist. Profile figures are estimates; the measured row comes from the phase 1 gate.
 
 | Profile | Stacks | Estimated RAM |
 | --- | --- | --- |
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
-| measured (phase 1 gate) | minimal + obs | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
-| standard (default) | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
+| minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
+| standard | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 
 Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
@@ -179,7 +179,7 @@ Keys follow k9s habits so there is nothing new to learn.
 
 ## Lab catalog
 
-The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. LocalStack is not a stack: the local provider starts it when a stack such as secrets needs its APIs. `lab up` applies the profile; deployed stacks outside it are removed only with `lab up --prune`.
+The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. LocalStack is not a stack: the local provider starts it when a stack such as secrets needs its APIs. `lab up` applies the profile plus `lab.yaml`'s `extraStacks`; deployed stacks outside it are removed only with `lab up --prune`. A stack the mode's provider cannot run yet, and any stack that needs one, is shown in the plan as `- <stack>  skip: not supported by the local provider yet` with one warning, and the rest is applied; `lab up` never reports a stack as "to apply" and then fails on it.
 
 Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/overlays/local/<stack>/`; multi-source Argo CD apps take the chart from its Helm repo and both value files from this repo. Grafana's admin login is a Secret the obs stack generates in the cluster (`monitoring/grafana-admin`, never in Git); read it with `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
 
@@ -225,13 +225,14 @@ Each drill injects one fault into the sample app, starts a timer and records tim
 
 ## Configuration and repository layout
 
-One file, `lab.yaml`, describes the lab; profiles switch mode and size without editing modules. Secrets and AWS credentials never go in it.
+One file, `lab.yaml`, describes the lab; profiles switch mode and size without editing modules. Secrets and AWS credentials never go in it. Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml`; a symlink there to the repo's file lets `ssh -t fedora lab`, which starts in the home directory, use the same config. The TUI falls back to the defaults (minimal + obs, no repo) and says so on Home.
 
 ```yaml
 lab:
   name: lab
   mode: local              # local | cloud
-  profile: standard        # minimal | standard | full
+  profile: minimal         # minimal | standard | full
+  extraStacks: [obs]       # applied on top of the profile
   gitops: argocd           # argocd | flux
 
 profiles:
@@ -409,7 +410,7 @@ The biggest risk is spending the time on TUI polish instead of labs; build the C
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
 | TUI polish eats the schedule | No labs, no interview proof | Engine and CLI first; TUI screens only after `lab up` works end to end |
-| G14 memory runs out with every stack on | Pods evicted, slow cluster | Stack profiles `minimal`, `standard`, `full`; standard fits in about 12 GiB of the 22 GiB; measure in phase 1 |
+| G14 memory runs out with every stack on | Pods evicted, slow cluster | Stack profiles `minimal`, `standard`, `full`; the default minimal + obs measured 4.6 GiB; standard fits in about 12 GiB of the 22 GiB |
 | kind on rootless Podman (experimental in kind) | Clusters fail to start | Delegate cgroup v2 controllers to the user, raise inotify limits, load the iptables modules, enable the user podman.socket, map ports above 1024; all checked by `lab doctor` |
 | NVIDIA driver on Fedora 45 | Ollama falls back to CPU | Keep the ai stack optional; follow the GPU setup section; lab doctor checks the driver and CDI |
 | LocalStack free tier gaps or licence changes | Some local AWS labs stop working | Check current LocalStack terms before phase 2; MinIO as the S3 fallback |
@@ -422,7 +423,7 @@ The biggest risk is spending the time on TUI polish instead of labs; build the C
 | Repo | Private repo `github.com/chanupen/devops-lab`; kept generic so it can go public later |
 | Container runtime | Rootless Podman on Fedora, always; no Docker |
 | GitOps | Argo CD by default; Flux as the second option |
-| Fedora RAM | 22 GiB + 8 GiB swap; default profile `standard` |
+| Fedora RAM | 22 GiB + 8 GiB swap; default profile `minimal` + obs |
 | AWS | Existing account through IAM user `devops`; move to an MFA-assumed role in phase 3 |
 | Tool name | `lab` |
 

@@ -23,6 +23,9 @@ Design doc: "DevOps Lab Control Center — Plan and Design" (Claude Docs). Expor
 ## Architecture
 
 - `lab` TUI (Bubble Tea + Bubbles + Lip Gloss) → engine (plan, apply, destroy, dependency order, state in `~/.lab/state.json`) → providers.
+  - Only one lab runs at a time: every command (the TUI, `up`, `down`, `plan`, `status`, `doctor`) takes a non-blocking flock on `~/.lab/state.json.lab.lock` for its whole run, and a second one exits at once with "lab and its components are already running: <holder> (pid, terminal, since)". `--help`, `--version` and completion never take it. Inside the TUI, actions run one at a time and its reports run in-process under its lock.
+  - Stacks a provider cannot run yet are skipped at plan time (`- <stack>  skip: …`, one warning), never failed at run time.
+  - Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml` (on Fedora a symlink to the repo's file, so `ssh -t fedora lab` gets the real config).
 - Providers implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`.
   - `local`: kind on rootless Podman, LocalStack, Zot registry, Ollama on the host.
   - `aws`: Terraform via terraform-exec, AWS SDK v2, EKS + Karpenter (spot), ECR, Secrets Manager, EKS Pod Identity.
@@ -33,7 +36,7 @@ Design doc: "DevOps Lab Control Center — Plan and Design" (Claude Docs). Expor
 
 core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (Ollama, Langfuse) · sample-app.
 
-Local memory profiles: `minimal` (~4 GiB), `standard` default (~10–12 GiB), `full` (~16–19 GiB). Harbor only when a lab needs it.
+Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~16–19 GiB). The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured), because those are the stacks the local provider runs today; `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 
 ## TUI rules
 
@@ -41,7 +44,7 @@ Local memory profiles: `minimal` (~4 GiB), `standard` default (~10–12 GiB), `f
 - Watch Kubernetes with client-go informers; never poll `kubectl`.
 - Use libraries over CLIs: Helm SDK, kind library, terraform-exec, AWS SDK v2.
 - Log panes: ring buffer of 5,000 lines, at most 20 redraws a second.
-- k9s-style keys: `1`–`6` screens, `:` palette, `/` filter, `u`/`d` up/down, `l` logs, `K` open k9s, `m` mode, `v` verify, `?` help.
+- k9s-style keys: `1`–`6` screens, `:` palette, `/` filter, `u`/`d` up/down the selected stack (`d` asks first), `U` the whole profile, `r` retry a failed stack, `l` logs, `K` open k9s, `m` mode, `v` verify, `?` help.
 - State shown with symbol and colour together: ● healthy, ◐ progressing, ○ off, ✕ failed.
 - Every TUI action logs the equivalent CLI command.
 

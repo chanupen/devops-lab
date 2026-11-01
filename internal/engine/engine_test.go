@@ -198,7 +198,7 @@ func TestExecute(t *testing.T) {
 				err error
 			)
 			if tt.down {
-				p, err = eng.PlanDown(cfg)
+				p, err = eng.PlanDown(cfg, DownOptions{})
 			} else {
 				p, err = eng.PlanUp(cfg, PlanOptions{Prune: tt.prune})
 			}
@@ -289,6 +289,21 @@ func TestExecuteGuards(t *testing.T) {
 		err := New(g, &memStore{st: state.New()}, runner).Execute(ctx, plan, "lab up", nil)
 		if !errors.Is(err, context.Canceled) || len(runner.calls) != 1 {
 			t.Fatalf("err = %v, calls = %v; want Canceled after one call", err, runner.calls)
+		}
+	})
+
+	t.Run("skip and keep steps do not run", func(t *testing.T) {
+		store := &memStore{st: state.New()}
+		runner := &fakeRunner{}
+		p := Plan{Mode: "local", Steps: []Step{{"registry", Keep, ""}, {"secrets", Skip, "not supported"}, {"cluster", Apply, ""}}}
+		if err := New(g, store, runner).Execute(context.Background(), p, "lab up", nil); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(runner.calls, []string{"apply cluster"}) {
+			t.Errorf("calls = %v, want only apply cluster", runner.calls)
+		}
+		if _, ok := store.st.Stacks["secrets"]; ok {
+			t.Error("a skipped stack was recorded in state")
 		}
 	})
 

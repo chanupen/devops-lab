@@ -70,13 +70,13 @@ func (e *Engine) PlanUp(cfg config.Config, opts PlanOptions) (Plan, error) {
 	return PlanUp(e.graph, cfg, st, opts)
 }
 
-// PlanDown loads state and plans destroying everything deployed.
-func (e *Engine) PlanDown(cfg config.Config) (Plan, error) {
+// PlanDown loads state and plans destroying deployed stacks.
+func (e *Engine) PlanDown(cfg config.Config, opts DownOptions) (Plan, error) {
 	st, err := e.store.Load()
 	if err != nil {
 		return Plan{}, err
 	}
-	return PlanDown(e.graph, cfg, st)
+	return PlanDown(e.graph, cfg, st, opts)
 }
 
 // Execute runs the plan's steps in order and stops at the first failure.
@@ -92,7 +92,7 @@ func (e *Engine) Execute(ctx context.Context, p Plan, command string, events fun
 		}
 	}
 	for _, step := range p.Steps {
-		if step.Action == Keep {
+		if !step.Action.Runs() {
 			continue
 		}
 		if err := ctx.Err(); err != nil {

@@ -1,6 +1,7 @@
 # Lab configuration. Read by `lab` from phase 1 onward.
 mode: local          # local | cloud
-profile: standard    # minimal | standard | full
+profile: minimal     # minimal | standard | full
+extraStacks: [obs]   # on top of the profile; minimal + obs is what the local provider runs today
 gitops: argocd       # argocd | flux
 k8sVersion: "1.37"   # pinned; kind node image, EKS and kubectl follow it
 

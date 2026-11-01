@@ -3,14 +3,18 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
@@ -26,7 +30,7 @@ type labFlags struct {
 }
 
 func (f *labFlags) register(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.cfgPath, "config", "lab.yaml", "path to lab.yaml")
+	cmd.Flags().StringVar(&f.cfgPath, "config", "", "path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)")
 	cmd.Flags().StringVar(&f.statePath, "state", "", "path to the state file (default ~/.lab/state.json)")
 }
 
@@ -36,9 +40,37 @@ func registerTimeout(cmd *cobra.Command, d *time.Duration) {
 		"how long each stack may wait for Argo CD and its apps (image pulls dominate on a slow network)")
 }
 
+// configPath is where lab.yaml is: --config when given, else ./lab.yaml,
+// else ~/.lab/lab.yaml (a symlink to the repo's file lets ssh -t fedora lab,
+// which starts in the home directory, find it). "" when none exists.
+func (f *labFlags) configPath() (string, error) {
+	if f.cfgPath != "" {
+		return f.cfgPath, nil
+	}
+	candidates := []string{"lab.yaml"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".lab", "lab.yaml"))
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
 // load reads the config and returns the state store and stack graph.
 func (f *labFlags) load() (config.Config, *state.Store, *engine.Graph, error) {
-	cfg, err := config.Load(f.cfgPath)
+	cfgPath, err := f.configPath()
+	if err != nil {
+		return config.Config{}, nil, nil, err
+	}
+	if cfgPath == "" {
+		return config.Config{}, nil, nil, errors.New("no lab.yaml in this directory or ~/.lab; pass --config")
+	}
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return config.Config{}, nil, nil, err
 	}
@@ -125,7 +157,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	}
 	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
 		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
-		for _, s := range []string{"gitops", "core", "obs", "sample-app"} {
+		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
 		l.hosts = g.AppHosts
@@ -133,15 +165,91 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	return l, nil
 }
 
-// unsupported lists stacks the plan would change that the provider cannot run.
+// stackSupport reports which stacks cfg's mode can run, without building a
+// provider (which needs Podman or AWS). It matches defaultProvider's routes.
+func stackSupport(cfg config.Config) func(string) bool {
+	var stacks []string
+	if cfg.Mode == "local" {
+		stacks = append(stacks, local.Stacks()...)
+	}
+	if cfg.GitOps == "argocd" {
+		stacks = append(stacks, gitops.Stacks()...)
+	}
+	return func(s string) bool { return slices.Contains(stacks, s) }
+}
+
+// unsupported lists stacks the plan would run that the provider cannot. Plans
+// made with PlanOptions.Supports skip those already; this guards the rest.
 func unsupported(p engine.Plan, prov provider) []string {
 	var out []string
 	for _, s := range p.Steps {
-		if s.Action != engine.Keep && !prov.Supports(s.Stack) {
+		if s.Action.Runs() && !prov.Supports(s.Stack) {
 			out = append(out, s.Stack)
 		}
 	}
 	return out
+}
+
+// withLabLock makes c claim the lab before it runs, so only one lab runs at
+// a time. --help, --version and completion never reach RunE, so a running
+// lab never refuses them.
+func withLabLock(c *cobra.Command) {
+	run := c.RunE
+	if run == nil {
+		return
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		unlock, err := lockLab(cmd)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		return run(cmd, args)
+	}
+}
+
+// lockLab claims the lab for cmd: the state directory from --state when the
+// command has it, else ~/.lab. A second lab is refused with what holds it.
+func lockLab(cmd *cobra.Command) (func(), error) {
+	path := ""
+	if f := cmd.Flags().Lookup("state"); f != nil {
+		path = f.Value.String()
+	}
+	if path == "" {
+		var err error
+		if path, err = state.DefaultPath(); err != nil {
+			return nil, err
+		}
+	}
+	unlock, err := state.NewStore(path).LockLab(labHolder(cmd))
+	var busy *state.BusyError
+	if errors.As(err, &busy) {
+		return nil, fmt.Errorf("%w. Only one lab runs at a time: use that one, or wait for it to finish (q quits the TUI)", busy)
+	}
+	return unlock, err
+}
+
+// labHolder describes this process for a second lab's message, e.g.
+// "lab up --stacks obs (pid 42 on /dev/pts/3, since 17:20)".
+func labHolder(cmd *cobra.Command) string {
+	what := "the TUI"
+	if cmd.HasParent() {
+		what = cmd.CommandPath()
+		cmd.Flags().Visit(func(f *pflag.Flag) {
+			if f.Name == "config" || f.Name == "state" {
+				return
+			}
+			what += " --" + f.Name
+			if f.Value.Type() != "bool" {
+				what += " " + strings.Trim(f.Value.String(), "[]")
+			}
+		})
+	}
+	where := fmt.Sprintf("pid %d", os.Getpid())
+	if t := terminalName(); t != "" {
+		where += " on " + t
+	}
+	return fmt.Sprintf("%s (%s, since %s)", what, where, time.Now().Format("15:04"))
 }
 
 // confirm asks a yes/no question on a terminal. Without a terminal it refuses

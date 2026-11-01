@@ -1,14 +1,14 @@
  lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
- 1 Home   2 Stacks                                                                                  
+ 1 Home   2 Stacks   5 Ops                                                                          
 ──────────────────────────────────────────────────────┬─────────────────────────────────────────────
  Lab                                                  │ Last operations                             
                                                       │  ● Oct 31 02:31  lab up  core apply  41s    
-  mode       local (standard profile)                 │  ● Oct 31 02:30  lab up  core apply  41s    
-  revision   main                                     │  ● Oct 31 02:29  lab up  core apply  41s    
-  nodes      ● 3/3 Ready                              │  ● Oct 31 02:28  lab up  core apply  41s    
-  apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed │  ● Oct 31 02:27  lab up  core apply  41s    
-  stacks     ● 4 healthy  ◐ 1 progressing  ✕ 1 failed │                                             
-                                                      │ App URLs                                    
+  mode       local (minimal + obs profile)            │  ● Oct 31 02:30  lab up  core apply  41s    
+  config     /home/user/devops-lab/lab.yaml           │  ● Oct 31 02:29  lab up  core apply  41s    
+  revision   main                                     │  ● Oct 31 02:28  lab up  core apply  41s    
+  nodes      ● 3/3 Ready                              │  ● Oct 31 02:27  lab up  core apply  41s    
+  apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed │                                             
+  stacks     ● 4 healthy  ◐ 1 progressing  ✕ 1 failed │ App URLs                                    
                                                       │  https://grafana.localtest.me:8443          
                                                       │  https://podinfo.localtest.me:8443          
                                                       │  on the Mac: ssh -N fedora-lab              
@@ -27,4 +27,4 @@
                                                       │                                             
 ──────────────────────────────────────────────────────┴─────────────────────────────────────────────
  ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
- 1 home  2 stacks  U up  ? help  q quit                                                             
+ 1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit                                    

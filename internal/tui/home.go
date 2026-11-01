@@ -19,16 +19,25 @@ func (homeModel) view(d *data) (left, right string) {
 	var l strings.Builder
 	row := func(k, v string) { fmt.Fprintf(&l, "  %s %s\n", faint.Render(fmt.Sprintf("%-10s", k)), v) }
 	l.WriteString(bold.Render(" Lab") + "\n\n")
-	row("mode", fmt.Sprintf("%s (%s profile)", d.mode(), d.cfg.Profile))
+	row("mode", fmt.Sprintf("%s (%s profile)", d.mode(), engine.ProfileName(d.cfg)))
+	if d.cfgPath == "" {
+		row("config", warn.Render("defaults")+faint.Render(" (no lab.yaml here or in ~/.lab)"))
+	} else {
+		row("config", faint.Render(d.cfgPath))
+	}
 	if len(d.st.Stacks) == 0 {
 		l.WriteString("\n  Nothing is deployed.\n\n  " + warn.Render(emptyHint) + ".\n")
 		return l.String(), homeRight(d)
 	}
-	rev := revision(d.st)
-	if d.st.IsApplied(engine.RevisionStack) && d.st.Revision != engine.DefaultRevision {
+	rev := revision(d)
+	gone := d.st.IsApplied(engine.RevisionStack) && d.revisionGone()
+	if !gone && d.st.IsApplied(engine.RevisionStack) && d.st.Revision != engine.DefaultRevision {
 		rev += faint.Render(" (not " + engine.DefaultRevision + ")")
 	}
 	row("revision", rev)
+	if gone {
+		row("", warn.Render(deletedHint))
+	}
 	c := d.live
 	switch {
 	case !c.known:
