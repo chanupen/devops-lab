@@ -99,7 +99,7 @@ func reconcile(ctx context.Context, apps dynamic.ResourceInterface) {
 			case on[stack] && !exists:
 				child := &unstructured.Unstructured{Object: map[string]any{
 					"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
-					"metadata": map[string]any{"name": name, "namespace": Namespace, "labels": map[string]any{stackLabel: stack}},
+					"metadata": map[string]any{"name": name, "namespace": Namespace, "labels": map[string]any{StackLabel: stack}},
 					"spec":     map[string]any{"source": map[string]any{"path": name}},
 				}}
 				_, _ = apps.Create(ctx, child, metav1.CreateOptions{})
@@ -134,7 +134,7 @@ type env struct {
 func newEnv(t *testing.T, argo bool, objs ...runtime.Object) *env {
 	t.Helper()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{kube.AppGVR: "ApplicationList", httpRouteGVR: "HTTPRouteList"}, objs...)
+		map[schema.GroupVersionResource]string{kube.AppGVR: "ApplicationList", HTTPRouteGVR: "HTTPRouteList"}, objs...)
 	core := fake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace}})
 	h := &fakeHelm{}
 	r := newRunner(Options{
@@ -393,7 +393,7 @@ func TestDestroyGitOps(t *testing.T) {
 
 func TestAppsDone(t *testing.T) {
 	ready := func(name, stack string) kube.App {
-		return kube.App{Name: name, Labels: map[string]string{stackLabel: stack}, Sync: "Synced", Health: "Healthy", Current: true}
+		return kube.App{Name: name, Labels: map[string]string{StackLabel: stack}, Sync: "Synced", Health: "Healthy", Current: true}
 	}
 	root := ready(RootApp, "gitops")
 	stale := root

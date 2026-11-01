@@ -85,15 +85,21 @@ func (p *Provider) Supports(stack string) bool {
 
 // AppURL is how a Gateway hostname is reached in local mode: the HTTPS port
 // the kind control plane publishes on 127.0.0.1.
-func (p *Provider) AppURL(host string) string {
+func AppURL(host string) string {
 	return fmt.Sprintf("https://%s:%d", host, GatewayHTTPSHostPort)
 }
 
-// AccessHint is the one-line reminder lab up prints under the app URLs.
-func (p *Provider) AccessHint() string {
+// AccessHint is the one-line reminder shown under the app URLs.
+func AccessHint() string {
 	return fmt.Sprintf("On the Mac, run ssh -N %s first; it forwards %d and %d to 127.0.0.1 on this host.",
 		TunnelHost, GatewayHTTPHostPort, GatewayHTTPSHostPort)
 }
+
+// AppURL implements the CLI's app access for local mode.
+func (p *Provider) AppURL(host string) string { return AppURL(host) }
+
+// AccessHint implements the CLI's app access for local mode.
+func (p *Provider) AccessHint() string { return AccessHint() }
 
 // Apply brings one stack up. It is idempotent.
 func (p *Provider) Apply(ctx context.Context, stack string, log io.Writer) error {
