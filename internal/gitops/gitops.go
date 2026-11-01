@@ -36,7 +36,8 @@ const (
 	// DefaultRevision is what lab-bootstrap and the in-repo apps it renders
 	// track; lab up --revision overrides it to test a branch before merging.
 	DefaultRevision = "main"
-	stackLabel      = "lab.stack"
+	// StackLabel names the stack an Argo CD Application belongs to.
+	StackLabel = "lab.stack"
 )
 
 // Argo CD chart, pinned.
@@ -332,7 +333,7 @@ func appsDone(apps []kube.App, stack string, on bool) (bool, string) {
 		if a.Name == RootApp {
 			rootSeen = true
 		}
-		if stack != "" && a.Labels[stackLabel] == stack {
+		if stack != "" && a.Labels[StackLabel] == stack {
 			stackApps++
 		}
 		if !a.Ready() {

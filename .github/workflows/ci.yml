@@ -18,6 +18,20 @@ jobs:
           go-version-file: go.mod
       - run: go test -race ./...
 
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make build-all
+      # Exec and page-in of the binary are a large part of a cold first frame.
+      - name: Binary size
+        run: |
+          file bin/lab-*
+          ls -l bin/lab-* | awk '{printf "%s %d bytes (%.1f MiB)\n", $9, $5, $5/1048576}' | tee -a "$GITHUB_STEP_SUMMARY"
+
   lint:
     runs-on: ubuntu-latest
     steps:

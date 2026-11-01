@@ -16,8 +16,8 @@ const (
 	GatewayNamespace = "envoy-gateway-system"
 )
 
-// httpRouteGVR is the Gateway API HTTPRoute resource.
-var httpRouteGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
+// HTTPRouteGVR is the Gateway API HTTPRoute resource.
+var HTTPRouteGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
 
 // AppHosts returns the sorted hostnames of HTTPRoutes attached to the lab
 // Gateway, in every namespace. How a host becomes a URL is up to the mode.
@@ -26,12 +26,18 @@ func (r *Runner) AppHosts(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	list, err := c.Dynamic.Resource(httpRouteGVR).List(ctx, metav1.ListOptions{})
+	list, err := c.Dynamic.Resource(HTTPRouteGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	return RouteHosts(list.Items), nil
+}
+
+// RouteHosts returns the sorted hostnames of the routes attached to the lab
+// Gateway.
+func RouteHosts(routes []unstructured.Unstructured) []string {
 	var hosts []string
-	for _, route := range list.Items {
+	for _, route := range routes {
 		if !attachedToLab(route) {
 			continue
 		}
@@ -39,7 +45,7 @@ func (r *Runner) AppHosts(ctx context.Context) ([]string, error) {
 		hosts = append(hosts, names...)
 	}
 	slices.Sort(hosts)
-	return slices.Compact(hosts), nil
+	return slices.Compact(hosts)
 }
 
 // attachedToLab reports whether a parentRef names the lab Gateway. A parentRef

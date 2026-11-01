@@ -8,12 +8,17 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	// Must stay imported: it stops Bubble Tea's start-up terminal query.
+	_ "github.com/chanupen/devops-lab/cmd/lab/internal/termbg"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
 func main() {
+	startTrace(time.Now())
 	// Ctrl-C cancels the context: the engine stops before the next step.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := newRootCmd().ExecuteContext(ctx)

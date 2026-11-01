@@ -37,7 +37,7 @@ func nodesReady(items []any, want int) (bool, string) {
 	var notReady []string
 	for _, it := range items {
 		n := it.(*corev1.Node)
-		if !isReady(n) {
+		if !NodeReady(n) {
 			notReady = append(notReady, n.Name)
 		}
 	}
@@ -50,7 +50,8 @@ func nodesReady(items []any, want int) (bool, string) {
 	return len(items) >= want && len(notReady) == 0, status
 }
 
-func isReady(n *corev1.Node) bool {
+// NodeReady reports whether the node's Ready condition is True.
+func NodeReady(n *corev1.Node) bool {
 	for _, c := range n.Status.Conditions {
 		if c.Type == corev1.NodeReady {
 			return c.Status == corev1.ConditionTrue

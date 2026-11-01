@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ○ off  rev: —  ttl: —                                    
+ 1 Home   2 Stacks                                                                                  
+──────────────────────────────────────┬─────────────────────────────────────────────────────────────
+ Lab                                  │ Last operations                                             
+                                      │  none yet                                                   
+  mode       local (standard profile) │                                                             
+                                      │ App URLs                                                    
+  Nothing is deployed.                │  shown once the cluster is up                               
+                                      │                                                             
+  press U to bring the lab up.        │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+                                      │                                                             
+──────────────────────────────────────┴─────────────────────────────────────────────────────────────
+ ops ▸ none yet                                                                                     
+ 1 home  2 stacks  U up  ? help  q quit                                                             

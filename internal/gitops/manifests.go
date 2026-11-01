@@ -84,7 +84,7 @@ func rootApp(mode string, repo config.Repo, revision string, stacks map[string]a
 		"metadata": map[string]any{
 			"name":       RootApp,
 			"namespace":  Namespace,
-			"labels":     map[string]any{stackLabel: "gitops"},
+			"labels":     map[string]any{StackLabel: "gitops"},
 			"finalizers": []any{"resources-finalizer.argocd.argoproj.io"},
 		},
 		"spec": map[string]any{

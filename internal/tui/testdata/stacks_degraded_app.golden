@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
+ 1 Home   2 Stacks                                                                                  
+───────────────────────────────┬────────────────────────────────────────────────────────────────────
+ Stacks                        │ sample-app  ✕ failed                                               
+ ● registry    applied         │                                                                    
+ ● cluster     3/3 nodes Ready │  state       0/1 apps ready                                        
+ ● gitops      1/1 apps ready  │  depends on  core, registry                                        
+ ● core        2/2 apps ready  │  updated     2026-10-31 02:25                                      
+ ◐ obs         0/1 apps ready  │                                                                    
+ ○ secrets     not deployed    │ Argo CD apps                                                       
+ ○ ai          not deployed    │  ✕ podinfo-frontend  Synced     Degraded                           
+ ○ chaos       not deployed    │     ComparisonError: revision feat/old not found                   
+ ○ ci          not deployed    │                                                                    
+ ○ policy      not deployed    │                                                                    
+ ✕ sample-app  0/1 apps ready  │                                                                    
+ ○ scaling     not deployed    │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+───────────────────────────────┴────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ j/k move  / filter  1 home  2 stacks  U up  ? help  q quit                                         

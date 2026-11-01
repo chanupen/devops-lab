@@ -5,8 +5,10 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build build-all test lint fmt clean doctor
 
+# Static like the release binaries: smaller (no cgo) and no dynamic loader at
+# exec. go test -race still needs cgo, so only the build targets set it.
 build:
-	go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) $(PKG)
+	CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) $(PKG)
 
 build-all:
 	GOOS=linux  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-linux-amd64 $(PKG)
