@@ -17,6 +17,9 @@ func TestFrameTraceReport(t *testing.T) {
 		{"no frame", &frameTrace{main: t0, run: t0.Add(time.Millisecond)}, "lab: first frame: View was never called\n"},
 		{"timed", &frameTrace{main: t0, run: t0.Add(1100 * time.Microsecond), view: t0.Add(1400 * time.Microsecond)},
 			"lab: first frame 1.4 ms after main (setup 1.1 ms, program start to first View 0.3 ms)\n"},
+		{"with init", &frameTrace{init: t0.Add(-40 * time.Millisecond), main: t0, run: t0.Add(time.Millisecond), view: t0.Add(2 * time.Millisecond)},
+			"lab: first frame 42.0 ms after package init began (init 40.0 ms)\n" +
+				"lab: first frame 2.0 ms after main (setup 1.0 ms, program start to first View 1.0 ms)\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

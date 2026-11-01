@@ -38,8 +38,8 @@ type Options struct {
 	// FilePoll is how often state.json and the kubeconfig are checked for
 	// changes made by lab up or lab down in another shell. Default 2s.
 	FilePoll time.Duration
-	// FirstView, when set, is called once, at the start of the first View
-	// the running program asks for. LAB_TRACE_FIRSTFRAME uses it.
+	// FirstView, when set, is called once, when the first View the running
+	// program asks for returns. LAB_TRACE_FIRSTFRAME uses it.
 	FirstView func()
 }
 
@@ -325,7 +325,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // the ops strip with the key hints under it.
 func (m Model) View() string {
 	if m.opts.FirstView != nil {
-		m.opts.FirstView()
+		defer m.opts.FirstView()
 	}
 	w, h := max(m.width, 40), max(m.height, 10)
 	bodyH := h - 6
