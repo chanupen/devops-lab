@@ -190,9 +190,8 @@ func unsupported(p engine.Plan, prov provider) []string {
 	return out
 }
 
-// withLabLock makes c claim the lab before it runs, so only one lab runs at
-// a time. --help, --version and completion never reach RunE, so a running
-// lab never refuses them.
+// withLabLock makes c claim the lab before it runs, so only one lab changes
+// it at a time. --help never reaches RunE, so a running lab never refuses it.
 func withLabLock(c *cobra.Command) {
 	run := c.RunE
 	if run == nil {
@@ -224,7 +223,8 @@ func lockLab(cmd *cobra.Command) (func(), error) {
 	unlock, err := state.NewStore(path).LockLab(labHolder(cmd))
 	var busy *state.BusyError
 	if errors.As(err, &busy) {
-		return nil, fmt.Errorf("%w. Only one lab runs at a time: use that one, or wait for it to finish (q quits the TUI)", busy)
+		return nil, fmt.Errorf("%w. Only one lab changes things at a time: use that one, or wait for it to finish (q quits the TUI); "+
+			"lab status, lab plan and lab doctor still work", busy)
 	}
 	return unlock, err
 }
