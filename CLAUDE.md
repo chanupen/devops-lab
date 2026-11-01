@@ -97,4 +97,5 @@ Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controll
 
 - Go: standard layout, `golangci-lint`, table-driven tests, no global state outside `cmd/`.
 - Commits: small, conventional (`feat:`, `fix:`, `docs:`, `chore:`).
+- Never push to `main`; push a branch and open a PR. `.githooks/pre-push` refuses pushes to `refs/heads/main`, and `.claude/settings.json` denies `git push origin main` and `git push -f`/`--force`. **Every new clone must run `git config core.hooksPath .githooks` once**, or the hook does nothing.
 - Writing: plain, professional, short sentences. No marketing tone.
