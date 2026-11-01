@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,11 +103,11 @@ func TestTUIActionsRun(t *testing.T) {
 	}
 }
 
-// Reports are read-only: they run while another lab holds the lock, so a
-// read-only TUI can show them.
-func TestTUIReportsRunBesideAHeldLab(t *testing.T) {
+// The TUI holds the lab lock for its whole run; its reports run in-process
+// under that lock instead of being refused by it.
+func TestTUIReportsRunUnderTheTUILock(t *testing.T) {
 	a := newTUIActions(t, &fakeProvider{}, deployedClusterRegistry)
-	unlock, err := a.store.LockLab("lab up (pid 1)")
+	unlock, err := a.store.LockLab("the TUI (pid 1)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,36 +117,12 @@ func TestTUIReportsRunBesideAHeldLab(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.cfgPath = cfgPath
-	for _, name := range []string{"status", "plan"} {
-		if out, err := a.Report(context.Background(), name); err != nil || !strings.Contains(out, "registry") {
-			t.Errorf("%s beside a held lab: %v\n%s", name, err, out)
-		}
+	if out, err := a.Report(context.Background(), "status"); err != nil || !strings.Contains(out, "registry") {
+		t.Errorf("status under the TUI lock: %v\n%s", err, out)
 	}
-}
-
-// The first TUI claims the lab; a second opens read-only naming the
-// holder, and can claim the lab once the first is done.
-func TestClaimTUI(t *testing.T) {
-	statePath := filepath.Join(t.TempDir(), "state.json")
-	first := &tui.Options{StatePath: statePath}
-	release, readOnly, err := claimTUI(first, "the TUI (pid 7 on /dev/pts/3, since 17:20)")
-	if err != nil || release == nil || readOnly != "" {
-		t.Fatalf("first TUI: release %v, readOnly %q, err %v; want the lock", release != nil, readOnly, err)
+	if _, err := a.Run(context.Background(), tui.Request{Stacks: []string{"cluster"}}, func(tui.Progress) {}); err != nil {
+		t.Errorf("an action under the TUI lock: %v", err)
 	}
-	second := &tui.Options{StatePath: statePath}
-	release2, readOnly, err := claimTUI(second, "the TUI (pid 8)")
-	if err != nil || release2 != nil || readOnly != "the TUI (pid 7 on /dev/pts/3, since 17:20)" {
-		t.Fatalf("second TUI: release %v, readOnly %q, err %v; want read-only naming the first", release2 != nil, readOnly, err)
-	}
-	if _, err := second.Claim(); !errors.Is(err, state.ErrBusy) {
-		t.Errorf("claim while the first holds the lab: %v, want busy", err)
-	}
-	release()
-	later, err := second.Claim()
-	if err != nil {
-		t.Fatalf("claim after the first is done: %v", err)
-	}
-	later()
 }
 
 // The TUI records the same command the CLI would.

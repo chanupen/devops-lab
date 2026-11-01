@@ -211,9 +211,6 @@ func (m Model) finishOp(msg opDoneMsg) (Model, tea.Cmd) {
 // Run returns.
 func (m Model) request(req Request) (Model, tea.Cmd) {
 	switch {
-	case m.d.readOnly != "":
-		m.flash = m.readOnlyFlash(req)
-		return m, nil
 	case m.opts.Actions == nil:
 		m.flash = "actions are not available; run: " + req.Command()
 		return m, nil
@@ -226,10 +223,6 @@ func (m Model) request(req Request) (Model, tea.Cmd) {
 
 // askDown plans req in the background, then asks before destroying.
 func (m Model) askDown(req Request) (Model, tea.Cmd) {
-	if m.d.readOnly != "" {
-		m.flash = m.readOnlyFlash(req)
-		return m, nil
-	}
 	if m.op != nil {
 		return m.request(req) // reports busy
 	}
@@ -294,9 +287,4 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
-}
-
-// readOnlyFlash says why an action did nothing in a read-only TUI.
-func (m Model) readOnlyFlash(req Request) string {
-	return statusOff.symbol() + " read-only: another lab is running: " + m.d.readOnly + "; " + req.Command() + " did not run"
 }

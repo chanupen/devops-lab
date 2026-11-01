@@ -64,10 +64,6 @@ func TestGolden(t *testing.T) {
 		{"palette", onMain, upCluster, []string{":", "d", "o", "w"}, nil},
 		{"help_stacks", onMain, upCluster, []string{"2", "?"}, nil},
 		{"help_ops", onMain, upCluster, []string{"5", "?"}, nil},
-		{"home_read_only", onMain, upCluster, nil, func(m Model) Model {
-			m.d.readOnly = "lab up --stacks obs (pid 42 on /dev/pts/3, since 17:20)"
-			return m
-		}},
 		{"confirm_down", onMain, upCluster, []string{"2", "G", "k"}, func(m Model) Model {
 			m.confirm = &confirmState{req: Request{Down: true, Stacks: []string{"sample-app"}}, question: "Destroy sample-app?"}
 			return m

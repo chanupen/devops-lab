@@ -54,14 +54,6 @@ type Options struct {
 	BranchExists func(ctx context.Context, branch string) (bool, error)
 	// Now is the clock for durations on screen. Default time.Now.
 	Now func() time.Time
-	// ReadOnly, when set, names the lab that holds the lab lock: the TUI
-	// opens read-only, with views and reports but no actions. Release is
-	// called on exit when this TUI holds the lock. Claim tries to take it,
-	// on the file check, so a read-only TUI turns read-write once the other
-	// lab is done; it returns an error wrapping state.ErrBusy while held.
-	ReadOnly string
-	Release  func()
-	Claim    func() (release func(), err error)
 }
 
 // Screens, in tab order. The key is the screen's number in the design;
@@ -88,8 +80,6 @@ type data struct {
 	appURL  func(string) string
 	hint    string
 	cfgPath string
-	// readOnly names the lab holding the lock while this TUI cannot act.
-	readOnly string
 	// branchChecked and branchGone record the deleted-branch check by
 	// revision. Maps, so copies of the model share them.
 	branchChecked map[string]bool
@@ -129,8 +119,6 @@ type Model struct {
 	palette  *palette      // the open command palette
 	view     *viewer       // the open log or report view
 	viewPath string        // the log file the view is loading
-	lease    *lease        // the lab lock, once this TUI holds it
-	claiming bool          // a Claim is in flight
 
 	events   chan tea.Msg
 	gen      int // connect generation; reports from older watchers are dropped
@@ -159,7 +147,7 @@ func New(opts Options) Model {
 		opts.Now = time.Now
 	}
 	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, cfgPath: opts.ConfigPath, deps: map[string][]string{},
-		branchChecked: map[string]bool{}, branchGone: map[string]bool{}, readOnly: opts.ReadOnly}
+		branchChecked: map[string]bool{}, branchGone: map[string]bool{}}
 	for _, s := range opts.Catalog {
 		d.order = append(d.order, s.Name)
 		d.deps[s.Name] = s.DependsOn
@@ -170,47 +158,14 @@ func New(opts Options) Model {
 		}
 	}
 	return Model{opts: opts, d: d, stacks: newStacksModel(), width: 100, height: 30,
-		events: make(chan tea.Msg, 1), opEvents: make(chan tea.Msg, 1), gen: 1, lease: &lease{release: opts.Release}}
-}
-
-// lease holds the release for the lab lock. A pointer, so every copy of the
-// model releases the same one, once.
-type lease struct {
-	once    sync.Once
-	release func()
-}
-
-func (l *lease) drop() {
-	if l != nil && l.release != nil {
-		l.once.Do(l.release)
-	}
-}
-
-// claimMsg reports a background attempt to take the lab lock.
-type claimMsg struct {
-	release func()
-	err     error
-}
-
-// claim tries to take the lab lock off the key loop. Nil unless read-only.
-func (m Model) claim() tea.Cmd {
-	if m.d.readOnly == "" || m.opts.Claim == nil || m.claiming {
-		return nil
-	}
-	c := m.opts.Claim
-	return func() tea.Msg {
-		release, err := c()
-		return claimMsg{release: release, err: err}
-	}
+		events: make(chan tea.Msg, 1), opEvents: make(chan tea.Msg, 1), gen: 1}
 }
 
 func (m Model) now() time.Time { return m.opts.Now() }
 
 // Run shows the TUI until the user quits or ctx ends.
 func Run(ctx context.Context, opts Options) error {
-	m0 := New(opts)
-	defer m0.lease.drop() // the same lease as the final model's
-	final, err := tea.NewProgram(m0, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	final, err := tea.NewProgram(New(opts), tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 	if m, ok := final.(Model); ok {
 		m.stop()
 	}
@@ -335,21 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.d.live = cluster{known: true, reason: firstLine(msg.err.Error())}
 		}
 	case tickMsg:
-		c := m.claim()
-		if c != nil {
-			m.claiming = true
-		}
-		return m, tea.Batch(m.checkFiles(), c)
-	case claimMsg:
-		m.claiming = false
-		var busy *state.BusyError
-		switch {
-		case msg.err == nil:
-			m.lease.release, m.d.readOnly = msg.release, ""
-			m.flash = statusHealthy.symbol() + " the other lab is done; this TUI can act now"
-		case errors.As(msg.err, &busy) && busy.Holder != "":
-			m.d.readOnly = busy.Holder
-		}
+		return m, m.checkFiles()
 	case opProgressMsg:
 		return m.applyProgress(msg.batch), m.listenOp()
 	case opDoneMsg:
@@ -612,25 +553,8 @@ func (m Model) header() string {
 	if ctx == "" {
 		ctx = "—"
 	}
-	note := ""
-	if d.readOnly != "" {
-		note = "  " + warn.Render("read-only: another lab is running ("+holderPID(d.readOnly)+")")
-	}
-	return fmt.Sprintf("%s%s  mode: %s  ctx: %s  health: %s  rev: %s  ttl: —",
-		lipgloss.NewStyle().Bold(true).Reverse(true).Render(" lab "), note, d.mode(), ctx, health(d), revision(d))
-}
-
-// holderPID cuts "pid 42" out of a lock holder such as
-// "lab up (pid 42 on /dev/pts/3, since 17:20)", for the header.
-func holderPID(holder string) string {
-	if i := strings.Index(holder, "pid "); i >= 0 {
-		end := i + 4
-		for end < len(holder) && holder[end] >= '0' && holder[end] <= '9' {
-			end++
-		}
-		return holder[i:end]
-	}
-	return holder
+	return fmt.Sprintf("%s  mode: %s  ctx: %s  health: %s  rev: %s  ttl: —",
+		lipgloss.NewStyle().Bold(true).Reverse(true).Render(" lab "), d.mode(), ctx, health(d), revision(d))
 }
 
 // health summarises the cluster in a few characters.
@@ -749,8 +673,6 @@ func (m Model) hints() string {
 		return "j/k move  u up  d down  r retry  / filter  : palette  K k9s  ? help  q quit"
 	case m.screen == screenOps:
 		return "j/k move  enter output  U up  : palette  K k9s  ? help  q quit"
-	case m.d.readOnly != "":
-		return "read-only: views and reports only  1 home  2 stacks  5 ops  : palette  K k9s  ? help  q quit"
 	default:
 		return "1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit"
 	}
