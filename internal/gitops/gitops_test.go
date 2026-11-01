@@ -674,18 +674,26 @@ func TestRootUpdateRetriesOnConflict(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newEnv(t, true)
-			if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
-				t.Fatal(err)
-			}
+			// The fake client's reactor chain is not safe to change while
+			// fakeArgo reads it, so register the reactor before starting it and
+			// arm it once the setup apply is done.
+			e := newEnv(t, false)
+			var armed atomic.Bool
 			var conflicts atomic.Int32
 			e.dyn.PrependReactor("update", "applications", func(a k8stesting.Action) (bool, runtime.Object, error) {
 				u := a.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
-				if u.GetName() == RootApp && conflicts.Add(1) == 1 {
+				if armed.Load() && u.GetName() == RootApp && conflicts.Add(1) == 1 {
 					return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "argoproj.io", Resource: "applications"}, RootApp, errors.New("the object has been modified"))
 				}
 				return false, nil, nil
 			})
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			fakeArgo(ctx, t, e.dyn)
+			if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			armed.Store(true)
 			if err := tt.apply(e); err != nil {
 				t.Fatalf("err = %v; a single conflict should be retried", err)
 			}
