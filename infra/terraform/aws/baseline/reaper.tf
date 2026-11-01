@@ -1,5 +1,8 @@
-# TTL reaper: every 15 minutes, delete lab=true resources whose expires-at
-# has passed. In dry-run mode it only logs, and its role cannot delete.
+# TTL reaper: every 15 minutes, delete controller-created lab=true resources
+# whose expires-at has passed and start the teardown build (teardown.tf) for
+# the tofu-managed rest. After a clean run it writes a heartbeat to the
+# state bucket; lab up --mode cloud refuses without a recent one. In
+# dry-run mode it only logs, and its role cannot delete or start builds.
 locals {
   reaper_name = "lab-ttl-reaper"
 }
@@ -32,9 +35,19 @@ data "aws_iam_policy_document" "reaper" {
   }
 
   statement {
-    sid       = "FindTaggedResources"
-    actions   = ["tag:GetResources", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses", "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups"]
+    sid = "FindTaggedResources"
+    actions = [
+      "tag:GetResources", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses",
+      "ec2:DescribeSecurityGroupRules", "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups",
+      "codebuild:ListBuildsForProject", "codebuild:BatchGetBuilds",
+    ]
     resources = ["*"]
+  }
+
+  statement {
+    sid       = "Heartbeat"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.state.arn}/reaper/heartbeat.json"]
   }
 
   # Deletes exist only when dry-run is off, and only for lab=true resources.
@@ -46,9 +59,11 @@ data "aws_iam_policy_document" "reaper" {
         "ec2:TerminateInstances",
         "ec2:DeleteVolume",
         "ec2:ReleaseAddress",
+        "ec2:DeleteSecurityGroup",
         "eks:DeleteNodegroup",
         "eks:DeleteCluster",
         "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteTargetGroup",
       ]
       resources = ["*"]
       condition {
@@ -56,6 +71,32 @@ data "aws_iam_policy_document" "reaper" {
         variable = "aws:ResourceTag/lab"
         values   = ["true"]
       }
+    }
+  }
+
+  # Before deleting a controller's security group, the rule pointing at it
+  # in the EKS cluster security group goes. That group is created by EKS,
+  # so it is matched by the cluster-name tag EKS puts on it.
+  dynamic "statement" {
+    for_each = var.reaper_dry_run ? [] : [1]
+    content {
+      sid       = "RevokeRulesOnLabGroups"
+      actions   = ["ec2:RevokeSecurityGroupIngress"]
+      resources = ["*"]
+      condition {
+        test     = "StringEquals"
+        variable = "aws:ResourceTag/aws:eks:cluster-name"
+        values   = ["lab"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.reaper_dry_run ? [] : [1]
+    content {
+      sid       = "StartTeardown"
+      actions   = ["codebuild:StartBuild"]
+      resources = ["${local.arn}:codebuild:${var.region}:${local.account}:project/${local.teardown_name}"] # by name: the project depends on the reaper
     }
   }
 }
@@ -75,12 +116,14 @@ resource "aws_lambda_function" "reaper" {
   handler          = "bootstrap"
   runtime          = "provided.al2023"
   architectures    = ["arm64"]
-  timeout          = 120
+  timeout          = 300
   memory_size      = 128
 
   environment {
     variables = {
-      DRY_RUN = tostring(var.reaper_dry_run)
+      DRY_RUN          = tostring(var.reaper_dry_run)
+      TEARDOWN_PROJECT = local.teardown_name
+      HEARTBEAT_BUCKET = aws_s3_bucket.state.id
     }
   }
 
