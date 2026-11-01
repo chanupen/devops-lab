@@ -35,7 +35,7 @@ func handle(ctx context.Context) (reaper.Result, error) {
 		return res, err
 	}
 	summary, _ := json.Marshal(map[string]any{"dryRun": res.DryRun, "deleted": len(res.Deleted), "kept": res.Kept,
-		"skipped": len(res.Skipped), "errors": res.Errors})
+		"skipped": len(res.Skipped), "waiting": res.Waiting, "errors": res.Errors})
 	log.Printf("summary %s", summary)
 	if len(res.Errors) > 0 {
 		return res, fmt.Errorf("%d deletes failed", len(res.Errors))

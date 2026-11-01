@@ -22,18 +22,34 @@ const (
 // Kind is a resource type the reaper knows how to delete.
 type Kind string
 
-// Kinds, in the order the reaper deletes them: node groups and instances
-// first, so the volumes and addresses they hold are free when their turn
-// comes.
+// Kinds, in the order the reaper deletes them:
+//
+//  1. EKS node groups, which takes down the controllers running on them
+//     (Karpenter, the Load Balancer Controller), so nothing relaunches
+//     instances or recreates load balancers behind the reaper;
+//  2. instances, including the spot nodes Karpenter launched;
+//  3. load balancers the Load Balancer Controller created;
+//  4. EKS clusters, once none of their node groups is left;
+//  5. volumes and addresses, free by then.
 const (
 	NodeGroup    Kind = "eks-nodegroup"
 	Instance     Kind = "ec2-instance"
 	LoadBalancer Kind = "load-balancer"
+	Cluster      Kind = "eks-cluster"
 	Volume       Kind = "ebs-volume"
 	Address      Kind = "elastic-ip"
 )
 
-var order = map[Kind]int{NodeGroup: 0, Instance: 1, LoadBalancer: 2, Volume: 3, Address: 4}
+var order = map[Kind]int{NodeGroup: 0, Instance: 1, LoadBalancer: 2, Cluster: 3, Volume: 4, Address: 5}
+
+// ErrNotYet is returned by a Deleter when a resource cannot go yet, such as
+// a cluster whose node groups are still deleting. The run reports it as
+// waiting, not failed; the next run (15 minutes later) tries again.
+var ErrNotYet = errors.New("not yet")
+
+// NodeGroupTag is set by EKS on the instances of a managed node group.
+// Deleting the node group removes them, so the reaper leaves them to it.
+const NodeGroupTag = "eks:nodegroup-name"
 
 // Resource is one tagged resource as the tagging API reports it.
 type Resource struct {
@@ -45,7 +61,7 @@ type Resource struct {
 type Target struct {
 	Kind    Kind
 	ARN     string
-	ID      string // instance, volume or allocation ID; "cluster/nodegroup" for node groups; the ARN for load balancers
+	ID      string // instance, volume or allocation ID; "cluster/nodegroup" for node groups; the name for clusters; the ARN for load balancers
 	Expires time.Time
 }
 
@@ -65,6 +81,7 @@ type Result struct {
 	Deleted []Target // or, in dry run, would delete
 	Kept    int      // tagged lab=true but not expired, or no expires-at
 	Skipped []string // could not be handled: unknown type or bad expires-at
+	Waiting []string // expired, but must wait for something else to go first
 	Errors  []string
 }
 
@@ -97,7 +114,13 @@ func Run(ctx context.Context, l Lister, d Deleter, now time.Time, dryRun bool, l
 			res.Deleted = append(res.Deleted, t)
 			continue
 		}
-		if err := d.Delete(ctx, t); err != nil {
+		err := d.Delete(ctx, t)
+		if errors.Is(err, ErrNotYet) {
+			res.Waiting = append(res.Waiting, fmt.Sprintf("%s %s: %v", t.Kind, t.ID, err))
+			logf("wait %s %s: %v", t.Kind, t.ID, err)
+			continue
+		}
+		if err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("%s %s: %v", t.Kind, t.ID, err))
 			logf("delete %s %s failed: %v", t.Kind, t.ID, err)
 			continue
@@ -131,6 +154,9 @@ func classify(r Resource, now time.Time) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
+	if kind == Instance && r.Tags[NodeGroupTag] != "" {
+		return Target{}, errKeep // its node group's deletion removes it
+	}
 	return Target{Kind: kind, ARN: r.ARN, ID: id, Expires: exp}, nil
 }
 
@@ -149,6 +175,11 @@ func parseARN(arn string) (Kind, string, error) {
 		return Volume, rest, nil
 	case service == "ec2" && typ == "elastic-ip":
 		return Address, rest, nil
+	case service == "eks" && typ == "cluster":
+		if rest == "" || strings.Contains(rest, "/") {
+			return "", "", fmt.Errorf("cluster ARN without a name")
+		}
+		return Cluster, rest, nil
 	case service == "eks" && typ == "nodegroup":
 		// nodegroup/<cluster>/<nodegroup>/<uuid>
 		p := strings.Split(rest, "/")

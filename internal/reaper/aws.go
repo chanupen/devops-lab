@@ -14,7 +14,7 @@ import (
 )
 
 // ResourceTypes are the tagging API types the reaper asks for.
-var ResourceTypes = []string{"ec2:instance", "ec2:volume", "ec2:elastic-ip", "eks:nodegroup", "elasticloadbalancing:loadbalancer"}
+var ResourceTypes = []string{"ec2:instance", "ec2:volume", "ec2:elastic-ip", "eks:cluster", "eks:nodegroup", "elasticloadbalancing:loadbalancer"}
 
 // AWS lists and deletes through the AWS SDK.
 type AWS struct {
@@ -65,10 +65,27 @@ func (a *AWS) Delete(ctx context.Context, t Target) error {
 	case NodeGroup:
 		cluster, ng, _ := strings.Cut(t.ID, "/")
 		_, err = a.EKS.DeleteNodegroup(ctx, &eks.DeleteNodegroupInput{ClusterName: aws.String(cluster), NodegroupName: aws.String(ng)})
+	case Cluster:
+		err = a.deleteCluster(ctx, t.ID)
 	case LoadBalancer:
 		_, err = a.ELB.DeleteLoadBalancer(ctx, &elbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(t.ARN)})
 	default:
 		err = fmt.Errorf("no delete for kind %q", t.Kind)
 	}
+	return err
+}
+
+// deleteCluster deletes an EKS cluster once it has no node groups. EKS
+// refuses earlier, and node group deletion takes several minutes, so a
+// cluster whose node groups are still there waits for the next run.
+func (a *AWS) deleteCluster(ctx context.Context, name string) error {
+	ngs, err := a.EKS.ListNodegroups(ctx, &eks.ListNodegroupsInput{ClusterName: aws.String(name)})
+	if err != nil {
+		return err
+	}
+	if n := len(ngs.Nodegroups); n > 0 {
+		return fmt.Errorf("%w: %d node groups still deleting", ErrNotYet, n)
+	}
+	_, err = a.EKS.DeleteCluster(ctx, &eks.DeleteClusterInput{Name: aws.String(name)})
 	return err
 }

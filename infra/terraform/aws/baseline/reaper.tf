@@ -33,7 +33,7 @@ data "aws_iam_policy_document" "reaper" {
 
   statement {
     sid       = "FindTaggedResources"
-    actions   = ["tag:GetResources", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses", "eks:DescribeNodegroup"]
+    actions   = ["tag:GetResources", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses", "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups"]
     resources = ["*"]
   }
 
@@ -47,6 +47,7 @@ data "aws_iam_policy_document" "reaper" {
         "ec2:DeleteVolume",
         "ec2:ReleaseAddress",
         "eks:DeleteNodegroup",
+        "eks:DeleteCluster",
         "elasticloadbalancing:DeleteLoadBalancer",
       ]
       resources = ["*"]
