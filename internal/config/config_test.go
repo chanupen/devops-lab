@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +18,7 @@ func TestParse(t *testing.T) {
 		check   func(t *testing.T, c Config)
 	}{
 		{name: "empty file uses defaults", yaml: "", check: func(t *testing.T, c Config) {
-			if c != Default() {
+			if !reflect.DeepEqual(c, Default()) {
 				t.Errorf("got %+v, want defaults", c)
 			}
 		}},
@@ -34,6 +36,22 @@ cloud:
 				t.Errorf("got %+v", c)
 			}
 		}},
+		{name: "default is minimal plus obs", yaml: "mode: local\n", check: func(t *testing.T, c Config) {
+			if c.Profile != "minimal" || !slices.Equal(c.ExtraStacks, []string{"obs"}) {
+				t.Errorf("profile %q extra %v, want minimal [obs]", c.Profile, c.ExtraStacks)
+			}
+		}},
+		{name: "extraStacks replaces the default", yaml: "extraStacks: [policy]\n", check: func(t *testing.T, c Config) {
+			if !slices.Equal(c.ExtraStacks, []string{"policy"}) {
+				t.Errorf("extra = %v, want [policy]", c.ExtraStacks)
+			}
+		}},
+		{name: "empty extraStacks clears the default", yaml: "extraStacks: []\n", check: func(t *testing.T, c Config) {
+			if len(c.ExtraStacks) != 0 {
+				t.Errorf("extra = %v, want none", c.ExtraStacks)
+			}
+		}},
+		{name: "blank extra stack", yaml: "extraStacks: [\"\"]\n", wantErr: []string{"extraStacks: empty stack name"}},
 		{name: "k8sVersion defaults when omitted", yaml: "mode: local\n", check: func(t *testing.T, c Config) {
 			if c.K8sVersion != "1.37" {
 				t.Errorf("k8sVersion = %q", c.K8sVersion)

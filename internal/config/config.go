@@ -30,12 +30,14 @@ const CloudRegion = "ap-south-1"
 
 // Config is the parsed lab.yaml.
 type Config struct {
-	Mode       string `yaml:"mode"`
-	Profile    string `yaml:"profile"`
-	GitOps     string `yaml:"gitops"`
-	K8sVersion string `yaml:"k8sVersion"`
-	Repo       Repo   `yaml:"repo"`
-	Cloud      Cloud  `yaml:"cloud"`
+	Mode    string `yaml:"mode"`
+	Profile string `yaml:"profile"`
+	// ExtraStacks are applied on top of the profile, e.g. obs on minimal.
+	ExtraStacks []string `yaml:"extraStacks"`
+	GitOps      string   `yaml:"gitops"`
+	K8sVersion  string   `yaml:"k8sVersion"`
+	Repo        Repo     `yaml:"repo"`
+	Cloud       Cloud    `yaml:"cloud"`
 }
 
 // Repo is the Git repository Argo CD (or Flux) syncs from. The lab always
@@ -73,11 +75,14 @@ func (d Duration) MarshalYAML() (any, error) { return time.Duration(d).String(),
 // Default returns the config used for fields lab.yaml leaves out.
 func Default() Config {
 	return Config{
-		Mode:       "local",
-		Profile:    "standard",
-		GitOps:     "argocd",
-		K8sVersion: K8sVersion,
-		Cloud:      Cloud{Region: CloudRegion, TTL: Duration(4 * time.Hour)},
+		Mode:    "local",
+		Profile: "minimal",
+		// minimal + obs is what the local provider runs today; matches lab.yaml,
+		// so lab run without a lab.yaml (ssh -t fedora lab) plans the same lab.
+		ExtraStacks: []string{"obs"},
+		GitOps:      "argocd",
+		K8sVersion:  K8sVersion,
+		Cloud:       Cloud{Region: CloudRegion, TTL: Duration(4 * time.Hour)},
 	}
 }
 
@@ -120,6 +125,11 @@ func (c Config) Validate() error {
 	oneOf("mode", c.Mode, Modes)
 	oneOf("profile", c.Profile, Profiles)
 	oneOf("gitops", c.GitOps, GitOps)
+	for _, s := range c.ExtraStacks {
+		if strings.TrimSpace(s) == "" {
+			errs = append(errs, fmt.Errorf("extraStacks: empty stack name"))
+		}
+	}
 	if c.K8sVersion != K8sVersion {
 		errs = append(errs, fmt.Errorf("k8sVersion %q: the lab is pinned to %s", c.K8sVersion, K8sVersion))
 	}

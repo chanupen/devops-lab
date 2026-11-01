@@ -54,7 +54,7 @@ func writeStatus(w io.Writer, r *lipgloss.Renderer, cfg config.Config, st state.
 	if mode == "" {
 		mode = cfg.Mode
 	}
-	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n", mode, cfg.Profile, cfg.K8sVersion)
+	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n", mode, engine.ProfileName(cfg), cfg.K8sVersion)
 	warn := r.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	switch {
 	case !st.IsApplied(engine.RevisionStack):

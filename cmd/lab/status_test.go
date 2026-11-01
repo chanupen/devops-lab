@@ -44,7 +44,7 @@ func TestStatusCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if tt.state != "" {
@@ -81,7 +81,7 @@ func TestStatusCmd(t *testing.T) {
 func TestUpRevisionFlag(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var gotRev string
@@ -103,7 +103,7 @@ func TestUpRevisionFlag(t *testing.T) {
 func TestRevisionRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fp := &fakeProvider{also: []string{"gitops"}}

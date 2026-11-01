@@ -128,8 +128,12 @@ func newRunner(opts Options, h Helm, clients func(io.Writer) (*kube.Clients, err
 
 // Supports reports whether the runner handles the stack.
 func (r *Runner) Supports(stack string) bool {
-	return stack == "gitops" || slices.Contains(appStacks, stack)
+	return slices.Contains(Stacks(), stack)
 }
+
+// Stacks lists the stacks the GitOps runner handles: gitops itself and the
+// stacks whose apps it switches on in the app-of-apps.
+func Stacks() []string { return append([]string{"gitops"}, appStacks...) }
 
 // Apply implements engine.Runner.
 func (r *Runner) Apply(ctx context.Context, stack string, log io.Writer) error {

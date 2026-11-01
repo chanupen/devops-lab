@@ -35,9 +35,9 @@ func newPlanCmd() *cobra.Command {
 			eng := engine.New(g, store, nil)
 			var p engine.Plan
 			if destroy {
-				p, err = eng.PlanDown(cfg)
+				p, err = eng.PlanDown(cfg, engine.DownOptions{})
 			} else {
-				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune, Revision: revision})
+				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune, Revision: revision, Supports: stackSupport(cfg)})
 			}
 			if err != nil {
 				return err
@@ -68,11 +68,12 @@ var planMark = map[engine.Action]struct {
 	engine.Apply:   {"+", "2"},
 	engine.Destroy: {"-", "1"},
 	engine.Keep:    {"=", "8"},
+	engine.Skip:    {"-", "8"},
 }
 
 func writePlan(w io.Writer, r *lipgloss.Renderer, p engine.Plan) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s", p.Mode, p.Profile, p.K8sVersion)
+	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s", p.Mode, p.ProfileName(), p.K8sVersion)
 	if p.Revision != "" {
 		fmt.Fprintf(&b, ", gitops revision %s", p.Revision)
 	}
@@ -85,12 +86,20 @@ func writePlan(w io.Writer, r *lipgloss.Renderer, p engine.Plan) error {
 	for _, s := range p.Steps {
 		counts[s.Action]++
 		m := planMark[s.Action]
-		fmt.Fprintf(&b, "  %s %-*s  %s\n", r.NewStyle().Foreground(m.colour).Render(m.symbol), width, s.Stack, s.Reason)
+		reason := s.Reason
+		if s.Action == engine.Skip {
+			reason = r.NewStyle().Faint(true).Render("skip: " + reason)
+		}
+		fmt.Fprintf(&b, "  %s %-*s  %s\n", r.NewStyle().Foreground(m.colour).Render(m.symbol), width, s.Stack, reason)
 	}
 	if len(p.Steps) == 0 {
 		b.WriteString("  nothing deployed\n")
 	}
-	fmt.Fprintf(&b, "\n%d to apply, %d to destroy, %d unchanged\n", counts[engine.Apply], counts[engine.Destroy], counts[engine.Keep])
+	fmt.Fprintf(&b, "\n%d to apply, %d to destroy, %d unchanged", counts[engine.Apply], counts[engine.Destroy], counts[engine.Keep])
+	if n := counts[engine.Skip]; n > 0 {
+		fmt.Fprintf(&b, ", %d skipped", n)
+	}
+	b.WriteString("\n")
 	for _, w := range p.Warnings {
 		fmt.Fprintf(&b, "%s %s\n", r.NewStyle().Foreground(lipgloss.Color("3")).Render("warning:"), w)
 	}

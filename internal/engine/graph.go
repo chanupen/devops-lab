@@ -109,3 +109,18 @@ func (g *Graph) Order(names ...string) ([]string, error) {
 	}
 	return order, nil
 }
+
+// neededBy returns the first of targets that stack depends on, directly or
+// through other stacks, or "" if it needs none of them.
+func (g *Graph) neededBy(stack string, targets []string) string {
+	deps, err := g.Order(stack)
+	if err != nil {
+		return ""
+	}
+	for _, t := range targets {
+		if t != stack && slices.Contains(deps, t) {
+			return t
+		}
+	}
+	return ""
+}

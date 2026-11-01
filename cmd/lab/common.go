@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -125,7 +127,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	}
 	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
 		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
-		for _, s := range []string{"gitops", "core", "obs", "sample-app"} {
+		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
 		l.hosts = g.AppHosts
@@ -133,15 +135,40 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	return l, nil
 }
 
-// unsupported lists stacks the plan would change that the provider cannot run.
+// stackSupport reports which stacks cfg's mode can run, without building a
+// provider (which needs Podman or AWS). It matches defaultProvider's routes.
+func stackSupport(cfg config.Config) func(string) bool {
+	var stacks []string
+	if cfg.Mode == "local" {
+		stacks = append(stacks, local.Stacks()...)
+	}
+	if cfg.GitOps == "argocd" {
+		stacks = append(stacks, gitops.Stacks()...)
+	}
+	return func(s string) bool { return slices.Contains(stacks, s) }
+}
+
+// unsupported lists stacks the plan would run that the provider cannot. Plans
+// made with PlanOptions.Supports skip those already; this guards the rest.
 func unsupported(p engine.Plan, prov provider) []string {
 	var out []string
 	for _, s := range p.Steps {
-		if s.Action != engine.Keep && !prov.Supports(s.Stack) {
+		if s.Action.Runs() && !prov.Supports(s.Stack) {
 			out = append(out, s.Stack)
 		}
 	}
 	return out
+}
+
+// lockOp claims the lab for command and turns a busy lock into a plain
+// message for the CLI.
+func lockOp(store *state.Store, command string) (func(), error) {
+	unlock, err := store.LockOp(command)
+	var busy *state.BusyError
+	if errors.As(err, &busy) {
+		return nil, fmt.Errorf("%w; wait for it to finish", busy)
+	}
+	return unlock, err
 }
 
 // confirm asks a yes/no question on a terminal. Without a terminal it refuses

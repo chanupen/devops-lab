@@ -90,9 +90,16 @@ func TestUpDown(t *testing.T) {
 			wantStacks: []string{"cluster", "registry"},
 		},
 		{
-			name:    "up of the whole profile names unsupported stacks before running",
-			args:    []string{"up"},
-			wantErr: "the local provider cannot run gitops, core, sample-app yet", // the fake routes only registry and cluster
+			// The fake routes only registry and cluster: the rest is skipped at
+			// plan time, so the run applies what it can and succeeds.
+			name: "up skips stacks the provider does not support",
+			args: []string{"up"},
+			wantOut: []string{"- gitops      skip: not supported by the local provider yet",
+				"2 to apply, 0 to destroy, 0 unchanged, 3 skipped",
+				"warning: 3 stacks skipped, not supported by the local provider yet: gitops, core, sample-app"},
+			wantCalls:  []string{"apply registry", "apply cluster"},
+			wantStacks: []string{"cluster", "registry"},
+			wantOp:     "lab up",
 		},
 		{
 			name:       "failed step is reported and recorded",
@@ -130,6 +137,23 @@ func TestUpDown(t *testing.T) {
 			wantOp:    "lab down",
 		},
 		{
+			name:       "down --stacks destroys that stack and what needs it",
+			state:      deployedClusterRegistry,
+			args:       []string{"down", "--stacks", "cluster", "--yes"},
+			wantCalls:  []string{"destroy cluster"},
+			wantOut:    []string{"- cluster", "selected", "● cluster: destroyed in"},
+			wantStacks: []string{"registry"},
+			wantOp:     "lab down --stacks cluster",
+		},
+		{
+			name:      "down --stacks of a dependency takes its dependents",
+			state:     deployedClusterRegistry,
+			args:      []string{"down", "--stacks", "registry", "--yes"},
+			wantCalls: []string{"destroy cluster", "destroy registry"},
+			wantOut:   []string{"- cluster", "needs registry"},
+			wantOp:    "lab down --stacks registry",
+		},
+		{
 			name:      "down --purge passes purge to the provider",
 			state:     deployedClusterRegistry,
 			args:      []string{"down", "--purge", "--yes"},
@@ -150,7 +174,7 @@ func TestUpDown(t *testing.T) {
 			statePath := filepath.Join(dir, "state.json")
 			cfg := tt.config
 			if cfg == "" {
-				cfg = "profile: minimal\n"
+				cfg = "profile: minimal\nextraStacks: []\n"
 			}
 			if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 				t.Fatal(err)
@@ -298,7 +322,7 @@ func TestUpPrintsApps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
-			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(statePath, []byte(tt.state), 0o600); err != nil {
@@ -348,5 +372,40 @@ func TestLabRunnerAppURLs(t *testing.T) {
 		if (tt.wantErr == "") != (err == nil) || !slices.Equal(got, tt.want) {
 			t.Errorf("%s: got %v, %v; want %v, %q", tt.name, got, err, tt.want, tt.wantErr)
 		}
+	}
+}
+
+// While another operation holds the lab, up and down refuse at once and name
+// it, without planning or building a provider.
+func TestUpDownRefusedWhileBusy(t *testing.T) {
+	for _, args := range [][]string{{"up"}, {"down", "--yes"}} {
+		t.Run(args[0], func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(statePath, []byte(deployedClusterRegistry), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := state.NewStore(statePath).LockOp("lab up --stacks obs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unlock()
+			built := false
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { built = true; return &fakeProvider{}, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(append(args, "--config", cfgPath, "--state", statePath))
+			err = cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "another lab operation is running: lab up --stacks obs (pid") {
+				t.Fatalf("err = %v, want busy naming the running op", err)
+			}
+			if built || out.Len() > 0 {
+				t.Errorf("provider built %v, output %q; want neither", built, out.String())
+			}
+		})
 	}
 }

@@ -245,3 +245,31 @@ func TestStepLogs(t *testing.T) {
 		}
 	}
 }
+
+func TestLockOp(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	unlock, err := st.LockOp("lab up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second claim fails at once and names the holder, even from another
+	// store on the same file (another process opens its own descriptor).
+	_, err = NewStore(st.Path()).LockOp("lab down")
+	var busy *BusyError
+	if !errors.As(err, &busy) || !errors.Is(err, ErrBusy) {
+		t.Fatalf("second LockOp: %v, want a BusyError", err)
+	}
+	if want := fmt.Sprintf("lab up (pid %d)", os.Getpid()); busy.Holder != want {
+		t.Errorf("holder = %q, want %q", busy.Holder, want)
+	}
+	// State updates still work while an operation holds the lab.
+	if err := st.Update(func(s *State) error { s.Mode = "local"; return nil }); err != nil {
+		t.Fatalf("Update during an operation: %v", err)
+	}
+	unlock()
+	unlock2, err := st.LockOp("lab down")
+	if err != nil {
+		t.Fatalf("LockOp after unlock: %v", err)
+	}
+	unlock2()
+}

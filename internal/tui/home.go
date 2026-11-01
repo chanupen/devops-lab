@@ -19,7 +19,7 @@ func (homeModel) view(d *data) (left, right string) {
 	var l strings.Builder
 	row := func(k, v string) { fmt.Fprintf(&l, "  %s %s\n", faint.Render(fmt.Sprintf("%-10s", k)), v) }
 	l.WriteString(bold.Render(" Lab") + "\n\n")
-	row("mode", fmt.Sprintf("%s (%s profile)", d.mode(), d.cfg.Profile))
+	row("mode", fmt.Sprintf("%s (%s profile)", d.mode(), engine.ProfileName(d.cfg)))
 	if len(d.st.Stacks) == 0 {
 		l.WriteString("\n  Nothing is deployed.\n\n  " + warn.Render(emptyHint) + ".\n")
 		return l.String(), homeRight(d)

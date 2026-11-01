@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -15,20 +16,29 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 		flags   labFlags
 		purge   bool
 		yes     bool
+		stacks  []string
 		timeout time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "down",
 		Short: "Destroy every deployed stack, dependents first",
-		Long: "Destroys every stack recorded in ~/.lab/state.json in reverse dependency order. In local\n" +
+		Long: "Destroys every stack recorded in ~/.lab/state.json in reverse dependency order. With\n" +
+			"--stacks, destroys only those stacks and the deployed stacks that need them. In local\n" +
 			"mode the registry's image cache volume is kept unless --purge is given.",
-		Args: cobra.NoArgs,
+		Example: "  lab down\n  lab down --stacks sample-app",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, store, g, err := flags.load()
 			if err != nil {
 				return err
 			}
-			p, err := engine.New(g, store, nil).PlanDown(cfg)
+			command := downCommand(stacks, purge)
+			unlock, err := lockOp(store, command)
+			if err != nil {
+				return err
+			}
+			defer unlock()
+			p, err := engine.New(g, store, nil).PlanDown(cfg, engine.DownOptions{Stacks: stacks})
 			if err != nil {
 				return err
 			}
@@ -46,10 +56,6 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			if err := confirm(cmd, yes, q); err != nil {
 				return err
 			}
-			command := "lab down"
-			if purge {
-				command += " --purge"
-			}
 			prov, err := newProvider(cfg, homeOf(store), runOptions{Purge: purge, Timeout: timeout})
 			if err != nil {
 				return err
@@ -60,6 +66,19 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 	flags.register(cmd)
 	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the registry's image cache volume")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
+	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "destroy only these stacks and the deployed stacks that need them")
 	registerTimeout(cmd, &timeout)
 	return cmd
+}
+
+// downCommand is the CLI command recorded in the ops log.
+func downCommand(stacks []string, purge bool) string {
+	c := "lab down"
+	if len(stacks) > 0 {
+		c += " --stacks " + strings.Join(stacks, ",")
+	}
+	if purge {
+		c += " --purge"
+	}
+	return c
 }

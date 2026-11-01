@@ -29,45 +29,55 @@ func TestPlanCmd(t *testing.T) {
 		{
 			name:   "fresh standard",
 			config: "profile: standard\n",
-			want: []string{"local mode, standard profile, Kubernetes 1.37", "+ cluster", "+ core", "+ sample-app",
-				"9 to apply, 0 to destroy, 0 unchanged"},
+			// lab plan checks what the local provider supports: the rest is
+			// skipped at plan time rather than failing lab up later.
+			want: []string{"local mode, standard profile, Kubernetes 1.37", "+ cluster", "+ core", "+ sample-app", "+ obs",
+				"- secrets     skip: not supported by the local provider yet",
+				"- policy      skip: not supported by the local provider yet",
+				"6 to apply, 0 to destroy, 0 unchanged, 3 skipped",
+				"warning: 3 stacks skipped, not supported by the local provider yet: secrets, policy, scaling"},
+		},
+		{
+			name:   "default profile is minimal plus obs, all supported",
+			config: "mode: local\n",
+			want:   []string{"local mode, minimal + obs profile", "+ obs", "6 to apply, 0 to destroy, 0 unchanged"},
 		},
 		{
 			name:   "partial state",
-			config: "profile: minimal\n",
+			config: "profile: minimal\nextraStacks: []\n",
 			state:  partial,
 			want:   []string{"= cluster", "= gitops", "+ core", "+ registry", "3 to apply, 0 to destroy, 2 unchanged"},
 		},
 		{
 			name:   "extras kept with a warning",
-			config: "profile: minimal\n",
+			config: "profile: minimal\nextraStacks: []\n",
 			state:  withExtras,
 			want: []string{"= obs", "not in profile; run lab up --prune to remove", "0 to apply, 0 to destroy, 7 unchanged",
 				"warning: 2 deployed stacks are not in profile minimal, kept: obs, chaos. Run lab up --prune to remove."},
 		},
 		{
 			name:   "prune destroys extras",
-			config: "profile: minimal\n",
+			config: "profile: minimal\nextraStacks: []\n",
 			state:  withExtras,
 			args:   []string{"--prune"},
 			want:   []string{"- chaos", "- obs", "0 to apply, 2 to destroy, 5 unchanged"},
 		},
 		{
 			name:    "prune and destroy are exclusive",
-			config:  "profile: minimal\n",
+			config:  "profile: minimal\nextraStacks: []\n",
 			args:    []string{"--prune", "--destroy"},
 			wantErr: "none of the others can be",
 		},
 		{
 			name:   "destroy",
-			config: "profile: minimal\n",
+			config: "profile: minimal\nextraStacks: []\n",
 			state:  partial,
 			args:   []string{"--destroy"},
 			want:   []string{"- gitops", "- cluster", "0 to apply, 2 to destroy, 0 unchanged"},
 		},
 		{
 			name:   "destroy with nothing deployed",
-			config: "profile: minimal\n",
+			config: "profile: minimal\nextraStacks: []\n",
 			args:   []string{"--destroy"},
 			want:   []string{"nothing deployed", "0 to apply, 0 to destroy"},
 		},
@@ -124,7 +134,7 @@ func TestPlanCmd(t *testing.T) {
 func TestPlanCmdJSON(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "lab.yaml")
-	if err := os.WriteFile(cfgPath, []byte("profile: minimal\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runLab("plan", "--json", "--config", cfgPath, "--state", filepath.Join(dir, "state.json"))
