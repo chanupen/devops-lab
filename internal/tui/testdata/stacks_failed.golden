@@ -1,30 +1,30 @@
  lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
  1 Home   2 Stacks                                                                                  
-────────────────────────────────────────┬───────────────────────────────────────────────────────────
- Stacks  /obs                           │ obs  ✕ failed                                             
- ✕ obs         failed                   │                                                           
-                                        │  state       failed                                       
-                                        │  depends on  gitops, core                                 
-                                        │  updated     2026-10-31 02:30                             
-                                        │  error       helm install loki: context deadline exceeded 
-                                        │                                                           
-                                        │ Argo CD apps                                              
-                                        │  ◐ loki  OutOfSync  Progressing                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-                                        │                                                           
-────────────────────────────────────────┴───────────────────────────────────────────────────────────
+───────────────────────────────┬────────────────────────────────────────────────────────────────────
+ Stacks  /obs                  │ obs  ✕ failed                                                      
+ ✕ obs         failed          │                                                                    
+                               │  state       failed                                                
+                               │  depends on  gitops, core                                          
+                               │  updated     2026-10-31 02:30                                      
+                               │  error       helm install loki: context deadline exceeded          
+                               │                                                                    
+                               │ Argo CD apps                                                       
+                               │  ◐ loki  OutOfSync  Progressing                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+                               │                                                                    
+───────────────────────────────┴────────────────────────────────────────────────────────────────────
  ops ▸ ✕ Oct 31 02:29  lab up  obs apply  5m0s  context deadline exceeded                           
  j/k move  / filter  1 home  2 stacks  U up  ? help  q quit                                         

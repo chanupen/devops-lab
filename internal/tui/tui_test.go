@@ -90,6 +90,29 @@ func TestViewFitsTheWindow(t *testing.T) {
 	}
 }
 
+func TestLeftWidth(t *testing.T) {
+	tests := []struct {
+		name string
+		left string
+		w    int
+		want int
+	}{
+		{"narrow content keeps the minimum", "short", 100, minLeft},
+		{"sizes to the widest line plus a margin", "a\n" + strings.Repeat("x", 50) + "\nb", 100, 51},
+		{"ANSI codes take no width", "\x1b[1m" + strings.Repeat("x", 50) + "\x1b[0m", 100, 51},
+		{"wide symbols count as cells", strings.Repeat("●", 45), 100, 46},
+		{"leaves room for the detail pane", strings.Repeat("x", 90), 100, 100 - 1 - minRight},
+		{"a narrow window keeps the minimum", strings.Repeat("x", 90), 50, minLeft},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := leftWidth(tt.left, tt.w); got != tt.want {
+				t.Errorf("leftWidth = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func key(s string) tea.KeyMsg {
 	switch s {
 	case "down":
@@ -223,7 +246,8 @@ func TestHome(t *testing.T) {
 		{"empty state", state.New(), cluster{known: true, reason: "no cluster"},
 			[]string{"Nothing is deployed.", "press U to bring the lab up", "health: ○ off", "ops ▸ none yet"}, []string{"error"}},
 		{"cluster down", labState(1), cluster{known: true, reason: "not reachable: connection refused"},
-			[]string{"cluster    ○ off (not reachable: connection refused)", "press U to bring the lab up", "shown once the cluster is up"}, []string{"error"}},
+			[]string{"cluster    ○ off (not reachable: connection refused)", "stacks     ○ off — cluster not running",
+				"press U to bring the lab up", "shown once the cluster is up"}, []string{"error"}},
 		{"connecting", labState(1), cluster{}, []string{"health: ◐ connecting", "cluster    ◐ connecting"}, nil},
 		{"branch revision", labState(1), upCluster, []string{"rev: feat/x", "revision   feat/x (not main)"}, nil},
 		{"up on main", onMain, upCluster, []string{

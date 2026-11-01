@@ -329,8 +329,6 @@ func (m Model) View() string {
 	}
 	w, h := max(m.width, 40), max(m.height, 10)
 	bodyH := h - 6
-	leftW := max(30, w*2/5)
-	rightW := w - leftW - 1
 
 	var b strings.Builder
 	b.WriteString(fitLine(m.header(), w) + "\n")
@@ -349,6 +347,8 @@ func (m Model) View() string {
 		case screenStacks:
 			left, right = m.stacks.view(&m.d, bodyH)
 		}
+		leftW := leftWidth(left, w)
+		rightW := w - leftW - 1
 		b.WriteString(strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", rightW) + "\n")
 		l, r := fit(left, leftW, bodyH), fit(right, rightW, bodyH)
 		for i := range bodyH {
@@ -479,6 +479,23 @@ func opLine(op state.Op) string {
 		s += "  " + faint.Render(firstLine(op.Error))
 	}
 	return s
+}
+
+// Pane widths. The left pane sizes to its widest line, between minLeft and
+// whatever leaves minRight for the detail pane; only past that is it cut.
+const (
+	minLeft  = 30
+	minRight = 40
+)
+
+// leftWidth is the left pane's width for content left in a window w wide.
+func leftWidth(left string, w int) int {
+	widest := 0
+	for _, l := range strings.Split(left, "\n") {
+		widest = max(widest, ansi.StringWidth(l))
+	}
+	// One cell of margin before the divider.
+	return min(max(widest+1, minLeft), max(minLeft, w-1-minRight))
 }
 
 // fitLine truncates s to w cells and pads it to exactly w.

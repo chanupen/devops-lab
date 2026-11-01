@@ -67,7 +67,9 @@ func appSummary(c cluster) string {
 	return strings.Join(parts, "  ")
 }
 
-// stackSummary counts catalog stacks by status.
+// stackSummary counts catalog stacks by status. Stacks that are not deployed
+// are left out; with the cluster down every applied stack is off, so the
+// summary says so instead of going blank.
 func stackSummary(d *data) string {
 	n := map[status]int{}
 	for _, s := range d.order {
@@ -75,6 +77,9 @@ func stackSummary(d *data) string {
 		n[st]++
 	}
 	var parts []string
+	if d.live.known && !d.live.up {
+		parts = append(parts, statusOff.symbol()+" off — cluster not running")
+	}
 	for _, s := range []status{statusHealthy, statusProgressing, statusFailed} {
 		if n[s] > 0 {
 			parts = append(parts, fmt.Sprintf("%s %d %s", s.symbol(), n[s], statusLooks[s].word))

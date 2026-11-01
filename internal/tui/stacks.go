@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/gitops"
@@ -103,17 +104,27 @@ func (s stacksModel) view(d *data, height int) (left, right string) {
 	for _, name := range d.order {
 		width = max(width, len(name))
 	}
-	for i := start; i < len(v) && i < start+rows; i++ {
-		st, text := stackStatus(v[i], d.st, d.live)
-		name := fmt.Sprintf(" %-*s ", width, v[i])
-		if i == cursor {
-			name = lipgloss.NewStyle().Reverse(true).Render(name)
+	row := func(name string, selected bool) string {
+		st, text := stackStatus(name, d.st, d.live)
+		n := fmt.Sprintf(" %-*s ", width, name)
+		if selected {
+			n = lipgloss.NewStyle().Reverse(true).Render(n)
 		}
-		l.WriteString(" " + st.symbol() + name + " " + faint.Render(text) + "\n")
+		return " " + st.symbol() + n + " " + faint.Render(text)
+	}
+	for i := start; i < len(v) && i < start+rows; i++ {
+		l.WriteString(row(v[i], i == cursor) + "\n")
 	}
 	if len(v) == 0 {
 		l.WriteString(faint.Render("  no stack matches") + "\n")
 	}
+	// The pane sizes to its widest line; measure the whole catalog so the
+	// divider stays put while a filter narrows the list.
+	full := 0
+	for _, name := range d.order {
+		full = max(full, ansi.StringWidth(row(name, false)))
+	}
+	l.WriteString(strings.Repeat(" ", full))
 	return l.String(), stackDetail(d, s.selected(d))
 }
 
