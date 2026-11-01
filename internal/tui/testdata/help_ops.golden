@@ -15,11 +15,11 @@
   q  ctrl+c   Quit                                                                                  
                                                                                                     
   Only one operation runs at a time; other action keys say busy.                                    
+  A TUI opened while another lab changes things is read-only: views and                             
+  reports work, actions do not, until the other lab is done.                                        
   Every action shows its CLI command in the ops strip.                                              
                                                                                                     
   State: ● healthy  ◐ progressing  ○ off  ✕ failed                                                  
-                                                                                                    
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
