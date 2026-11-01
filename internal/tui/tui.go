@@ -633,7 +633,11 @@ func (m Model) opsStrip() string {
 		return " " + warn.Render(m.confirm.question) + "  y/N  " + faint.Render("$ "+m.confirm.req.Command())
 	}
 	if m.op != nil {
-		s := " ops ▸ " + statusProgressing.symbol() + " $ " + m.op.req.Command() + "  " +
+		s := " ops ▸ "
+		if m.flash != "" { // e.g. busy: say why the key did nothing, then what runs
+			s += m.flash + "  ·  "
+		}
+		s += statusProgressing.symbol() + " $ " + m.op.req.Command() + "  " +
 			m.now().Sub(m.op.started).Round(time.Second).String()
 		if m.op.step != "" {
 			s += "  " + m.op.step

@@ -137,8 +137,8 @@ func TestOneOperationAtATime(t *testing.T) {
 		if next.op != m.op {
 			t.Errorf("%v: replaced the running operation", keys)
 		}
-		if !strings.Contains(next.flash, "busy: lab up is running") {
-			t.Errorf("%v: flash = %q, want busy", keys, next.flash)
+		if s := strip(next); !strings.Contains(s, "busy: lab up is running") || !strings.Contains(s, "$ lab up") {
+			t.Errorf("%v: ops strip = %q, want busy and the running op", keys, s)
 		}
 	}
 	close(acts.release)
