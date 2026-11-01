@@ -11,7 +11,7 @@
                                                       │ App URLs                                    
                                                       │  https://grafana.localtest.me:8443          
                                                       │  https://podinfo.localtest.me:8443          
-                                                      │  run the tunnel                             
+                                                      │  on the Mac: ssh -N fedora-lab              
                                                       │                                             
                                                       │                                             
                                                       │                                             

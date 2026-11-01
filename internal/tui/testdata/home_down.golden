@@ -6,9 +6,9 @@
   mode       local (standard profile)                  │  ● Oct 31 02:25  lab up  core apply  41s   
   revision   feat/x (not main)                         │                                            
   cluster    ○ off (not reachable: connection refused) │ App URLs                                   
-                                                       │  shown once the cluster is up              
+  stacks     ○ off — cluster not running               │  shown once the cluster is up              
+                                                       │                                            
   press U to bring the lab up.                         │                                            
-  stacks     ○ off — cluster not running               │                                            
                                                        │                                            
                                                        │                                            
                                                        │                                            

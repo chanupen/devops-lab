@@ -36,7 +36,7 @@ func labState(ops int) state.State {
 
 func newModel(st state.State) Model {
 	return New(Options{Config: config.Default(), State: st, Catalog: engine.Catalog(),
-		AppURL: func(h string) string { return "https://" + h + ":8443" }, AccessHint: "run the tunnel"})
+		AppURL: func(h string) string { return "https://" + h + ":8443" }, AccessHint: "on the Mac: ssh -N fedora-lab"})
 }
 
 func plain(m Model) string { return ansi.Strip(m.View()) }
@@ -252,7 +252,7 @@ func TestHome(t *testing.T) {
 		{"branch revision", labState(1), upCluster, []string{"rev: feat/x", "revision   feat/x (not main)"}, nil},
 		{"up on main", onMain, upCluster, []string{
 			"rev: main", "health: ✕ 3/5 apps", "nodes      ● 3/3 Ready", "apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed",
-			"https://grafana.localtest.me:8443", "https://podinfo.localtest.me:8443", "run the tunnel",
+			"https://grafana.localtest.me:8443", "https://podinfo.localtest.me:8443", "on the Mac: ssh -N fedora-lab",
 			at(6) + "  lab up  core apply  41s", at(2)}, []string{"(not main)", at(1), emptyHint}},
 	}
 	for _, tt := range tests {

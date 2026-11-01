@@ -35,7 +35,6 @@ func (homeModel) view(d *data) (left, right string) {
 		row("cluster", statusProgressing.symbol()+" connecting")
 	case !c.up:
 		row("cluster", statusOff.symbol()+" off "+faint.Render("("+c.reason+")"))
-		l.WriteString("\n  " + warn.Render(emptyHint) + ".\n")
 	default:
 		s := statusHealthy
 		if c.nodesReady < c.nodes {
@@ -45,6 +44,9 @@ func (homeModel) view(d *data) (left, right string) {
 		row("apps", appSummary(c))
 	}
 	row("stacks", stackSummary(d))
+	if c.known && !c.up {
+		l.WriteString("\n  " + warn.Render(emptyHint) + ".\n")
+	}
 	return l.String(), homeRight(d)
 }
 

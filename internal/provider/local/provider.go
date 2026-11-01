@@ -95,6 +95,9 @@ func AccessHint() string {
 		TunnelHost, GatewayHTTPHostPort, GatewayHTTPSHostPort)
 }
 
+// TunnelHint is the short form of AccessHint for the TUI's Home screen.
+func TunnelHint() string { return "on the Mac: ssh -N " + TunnelHost }
+
 // AppURL implements the CLI's app access for local mode.
 func (p *Provider) AppURL(host string) string { return AppURL(host) }
 

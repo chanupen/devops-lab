@@ -512,4 +512,7 @@ func TestAppAccess(t *testing.T) {
 	if strings.Contains(hint, "\n") || !strings.Contains(hint, "ssh -N fedora-lab") || !strings.Contains(hint, "8443") {
 		t.Errorf("hint = %q, want one line naming ssh -N fedora-lab and the ports", hint)
 	}
+	if got, want := TunnelHint(), "on the Mac: ssh -N fedora-lab"; got != want {
+		t.Errorf("TunnelHint() = %q, want %q", got, want)
+	}
 }

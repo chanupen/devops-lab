@@ -73,7 +73,7 @@ func tuiOptions(flags labFlags, configSet bool) (tui.Options, error) {
 		mode = cfg.Mode
 	}
 	if mode == "local" {
-		opts.AppURL, opts.AccessHint = local.AppURL, local.AccessHint()
+		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
 	}
 	return opts, nil
 }
