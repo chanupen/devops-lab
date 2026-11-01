@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	// Must stay imported: it stops Bubble Tea's start-up terminal query.
+	_ "github.com/chanupen/devops-lab/cmd/lab/internal/termbg"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
