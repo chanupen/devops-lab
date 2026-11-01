@@ -195,7 +195,7 @@ func lockOp(store *state.Store, command string) (func(), error) {
 	unlock, err := store.LockOp(command)
 	var busy *state.BusyError
 	if errors.As(err, &busy) {
-		return nil, fmt.Errorf("%w; wait for it to finish", busy)
+		return nil, fmt.Errorf("%w; wait for it to finish, then run %s again", busy, command)
 	}
 	return unlock, err
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -26,6 +29,15 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := state.NewStore(opts.StatePath).LockTUI(terminalName())
+	var busy *state.BusyError
+	if errors.As(err, &busy) {
+		return fmt.Errorf("%w; switch to that terminal, or quit it there first", busy)
+	}
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// client-go logs reflector errors through klog to stderr, which would
 	// draw over the screen. The TUI shows the cluster as off instead.
 	klog.SetOutput(io.Discard)
@@ -81,4 +93,18 @@ func tuiOptions(flags labFlags, newProvider providerFactory) (tui.Options, error
 		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
 	}
 	return opts, nil
+}
+
+// terminalName is this process's terminal, e.g. /dev/pts/3, so a second lab
+// can say where the first one is. "" when it cannot tell.
+func terminalName() string {
+	for _, p := range []string{"/proc/self/fd/0", "/dev/fd/0"} {
+		if t, err := os.Readlink(p); err == nil && strings.HasPrefix(t, "/dev/") {
+			return t
+		}
+	}
+	if t := os.Getenv("SSH_TTY"); t != "" {
+		return t
+	}
+	return ""
 }

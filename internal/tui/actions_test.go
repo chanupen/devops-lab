@@ -157,7 +157,7 @@ func TestBusyElsewhere(t *testing.T) {
 	m := modelWith(acts, labState(1))
 	m, cmd := press(m, "2", "u")
 	m = drive(t, m, cmd, func(msg tea.Msg) bool { _, ok := msg.(opDoneMsg); return ok })
-	if !strings.Contains(m.flash, "busy: another lab operation is running: lab up (pid 42)") {
+	if !strings.Contains(m.flash, "lab is already running: lab up (pid 42); lab up --stacks registry did not run") {
 		t.Errorf("flash = %q", m.flash)
 	}
 }

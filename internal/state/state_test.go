@@ -273,3 +273,29 @@ func TestLockOp(t *testing.T) {
 	}
 	unlock2()
 }
+
+// A second TUI is refused at once with where the first one runs; the TUI
+// lock is separate from the op lock, so operations still run beside it.
+func TestLockTUI(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	unlock, err := st.LockTUI("/dev/pts/3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewStore(st.Path()).LockTUI("/dev/pts/4")
+	want := fmt.Sprintf("lab is already running: the TUI (pid %d on /dev/pts/3)", os.Getpid())
+	if !errors.Is(err, ErrBusy) || err.Error() != want {
+		t.Fatalf("second TUI: %v, want %q", err, want)
+	}
+	unlockOp, err := st.LockOp("lab up")
+	if err != nil {
+		t.Fatalf("an operation beside the TUI: %v", err)
+	}
+	unlockOp()
+	unlock()
+	unlock2, err := st.LockTUI("")
+	if err != nil {
+		t.Fatalf("LockTUI after unlock: %v", err)
+	}
+	unlock2()
+}

@@ -212,12 +212,12 @@ func (st *Store) RemoveLogs(ops []Op) {
 	}
 }
 
-// ErrBusy is returned by LockOp while another operation holds the lock.
-var ErrBusy = errors.New("another lab operation is running")
+// ErrBusy is returned by LockOp and LockTUI while another lab holds the lock.
+var ErrBusy = errors.New("lab is already running")
 
-// BusyError says which operation holds the lock.
+// BusyError says which lab holds the lock.
 type BusyError struct {
-	Holder string // command and pid of the running operation, if recorded
+	Holder string // e.g. "lab up --stacks obs (pid 42)", if recorded
 }
 
 func (e *BusyError) Error() string {
@@ -237,24 +237,42 @@ func (e *BusyError) Is(target error) bool { return target == ErrBusy }
 // .op.lock file, separate from the state file's own lock, which Update takes
 // for each step while the operation runs.
 func (st *Store) LockOp(command string) (unlock func(), err error) {
+	return st.tryLock(".op.lock", fmt.Sprintf("%s (pid %d)", command, os.Getpid()))
+}
+
+// LockTUI claims the lab for one TUI, so a second lab TUI is refused instead
+// of racing the first. Like LockOp it does not wait. where says how to find
+// the holder, e.g. its terminal.
+func (st *Store) LockTUI(where string) (unlock func(), err error) {
+	holder := fmt.Sprintf("the TUI (pid %d", os.Getpid())
+	if where != "" {
+		holder += " on " + where
+	}
+	return st.tryLock(".tui.lock", holder+")")
+}
+
+// tryLock takes a non-blocking flock on the sibling file with suffix and
+// writes holder into it. flock is released when the process exits, so a
+// crashed lab never leaves a stale lock.
+func (st *Store) tryLock(suffix, holder string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(st.path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(st.path+".op.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(st.path+suffix, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		holder, _ := io.ReadAll(io.LimitReader(f, 512))
+		held, _ := io.ReadAll(io.LimitReader(f, 512))
 		_ = f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, &BusyError{Holder: string(bytes.TrimSpace(holder))}
+			return nil, &BusyError{Holder: string(bytes.TrimSpace(held))}
 		}
 		return nil, fmt.Errorf("lock %s: %w", f.Name(), err)
 	}
 	// Best effort: the holder text only improves the busy message.
 	if err := f.Truncate(0); err == nil {
-		_, _ = f.WriteAt([]byte(fmt.Sprintf("%s (pid %d)\n", command, os.Getpid())), 0)
+		_, _ = f.WriteAt([]byte(holder+"\n"), 0)
 	}
 	return func() {
 		_ = f.Truncate(0)

@@ -400,7 +400,8 @@ func TestUpDownRefusedWhileBusy(t *testing.T) {
 			cmd.SetErr(&out)
 			cmd.SetArgs(append(args, "--config", cfgPath, "--state", statePath))
 			err = cmd.Execute()
-			if err == nil || !strings.Contains(err.Error(), "another lab operation is running: lab up --stacks obs (pid") {
+			if err == nil || !strings.Contains(err.Error(), "lab is already running: lab up --stacks obs (pid") ||
+				!strings.Contains(err.Error(), "wait for it to finish, then run lab") {
 				t.Fatalf("err = %v, want busy naming the running op", err)
 			}
 			if built || out.Len() > 0 {

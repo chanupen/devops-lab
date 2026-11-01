@@ -187,7 +187,7 @@ func (m Model) finishOp(msg opDoneMsg) (Model, tea.Cmd) {
 	var busy *state.BusyError
 	switch {
 	case errors.As(msg.err, &busy):
-		m.flash = statusFailed.symbol() + " busy: " + busy.Error()
+		m.flash = statusFailed.symbol() + " " + busy.Error() + "; " + msg.req.Command() + " did not run"
 	case msg.err != nil:
 		m.flash = statusFailed.symbol() + " " + cmd + " failed: " + firstLine(msg.err.Error()) + "  (5 for the ops log)"
 	case msg.plan.Changes() == 0:
