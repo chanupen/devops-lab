@@ -225,7 +225,7 @@ Each drill injects one fault into the sample app, starts a timer and records tim
 
 ## Configuration and repository layout
 
-One file, `lab.yaml`, describes the lab; profiles switch mode and size without editing modules. Secrets and AWS credentials never go in it.
+One file, `lab.yaml`, describes the lab; profiles switch mode and size without editing modules. Secrets and AWS credentials never go in it. Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml`; a symlink there to the repo's file lets `ssh -t fedora lab`, which starts in the home directory, use the same config. The TUI falls back to the defaults (minimal + obs, no repo) and says so on Home.
 
 ```yaml
 lab:
