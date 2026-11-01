@@ -60,11 +60,12 @@ Spin-up times are estimates to confirm in phase 1 and phase 3. **When to use whi
 
 ### Memory budget on the Fedora box
 
-The G14 has 22 GiB of RAM and 8 GiB of swap, so the default `standard` profile keeps the lab near 12 GiB and leaves room for the desktop and builds. Figures are estimates to measure in phase 1.
+The G14 has 22 GiB of RAM and 8 GiB of swap, so the default `standard` profile keeps the lab near 12 GiB and leaves room for the desktop and builds. Profile figures are estimates; the measured row comes from the phase 1 gate.
 
 | Profile | Stacks | Estimated RAM |
 | --- | --- | --- |
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
+| measured (phase 1 gate) | minimal + obs | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
 | standard (default) | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 
@@ -179,6 +180,8 @@ Keys follow k9s habits so there is nothing new to learn.
 
 The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. LocalStack is not a stack: the local provider starts it when a stack such as secrets needs its APIs. `lab up` applies the profile; deployed stacks outside it are removed only with `lab up --prune`.
 
+Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/overlays/local/<stack>/`; multi-source Argo CD apps take the chart from its Helm repo and both value files from this repo. Grafana's admin login is a Secret the obs stack generates in the cluster (`monitoring/grafana-admin`, never in Git); read it with `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
+
 | Stack | Installs | Depends on | Practises |
 | --- | --- | --- | --- |
 | registry | Zot pull-through cache (Harbor optional) locally, ECR in cloud | — | Image build, scan, retag-to-promote |
@@ -187,12 +190,12 @@ The lab is a set of stacks; each stack is a module that declares its dependencie
 | core | metrics-server, Envoy Gateway (Gateway API), cert-manager, as Argo CD apps | gitops | Cluster add-ons, ingress, TLS |
 | ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
 | secrets | External Secrets Operator, LocalStack or AWS Secrets Manager | gitops | Secret sync, rotation, Pod Identity |
-| obs | kube-prometheus-stack, Loki, Tempo, OpenTelemetry Collector, Grafana | gitops | Metrics, logs, traces, SLOs with burn-rate alerts (Sloth) |
+| obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
 | policy | Kyverno with baseline policies | gitops | Admission control, policy as code |
 | scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
 | chaos | Chaos Mesh | obs | Fault injection for drills |
 | ai | Ollama locally (G14 GPU), small model on a GPU spot node in cloud; Langfuse | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
-| sample-app | A small multi-service demo app with a database; ServiceMonitor only when obs is present | core, registry | Target for every lab and drill |
+| sample-app | podinfo as a frontend calling a backend, pulled through the Zot cache, at `podinfo.localtest.me`; ServiceMonitors only when obs is present. A small DB-backed app for the drills comes in phase 4 | core, registry | Target for every lab and drill |
 
 ### Labs
 
@@ -247,11 +250,19 @@ profiles:
     owner: chanupen
 
 repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
-  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap always tracks main
+  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap tracks main
   sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.
+
+### GitOps revision
+
+The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo apps it renders track `main`, so work reaches the lab by merging.
+
+- **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
+- **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
+- **`lab status`:** lists every stack with its state, the revision (highlighted when it is not `main`) and, once core is up, the app URLs. It changes nothing.
 
 ### Repository layout
 

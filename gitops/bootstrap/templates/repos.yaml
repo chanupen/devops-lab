@@ -1,0 +1,20 @@
+# OCI Helm repositories for the lab's charts, registered with Argo CD (no
+# credentials: all are public). Through the local mirror they are plain HTTP.
+{{- range $upstream := include "lab.ociUpstreams" . | fromYamlArray }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oci-{{ $upstream | replace "/" "-" | replace "." "-" }}
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: helm
+  name: {{ $upstream }}
+  url: {{ include "lab.ociRepo" (list $ $upstream) }}
+  enableOCI: "true"
+  {{- if $.Values.charts.ociMirror }}
+  insecureOCIForceHttp: "true"
+  {{- end }}
+{{- end }}

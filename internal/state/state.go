@@ -28,10 +28,13 @@ const (
 
 // State is the content of state.json.
 type State struct {
-	Version int                   `json:"version"`
-	Mode    string                `json:"mode,omitempty"` // set by the first apply; cleared when nothing is left
-	Stacks  map[string]StackState `json:"stacks"`
-	Ops     []Op                  `json:"ops"`
+	Version int    `json:"version"`
+	Mode    string `json:"mode,omitempty"` // set by the first apply; cleared when nothing is left
+	// Revision is the Git revision the gitops stack last applied. Empty when
+	// gitops is not deployed (or was deployed before revisions were recorded).
+	Revision string                `json:"revision,omitempty"`
+	Stacks   map[string]StackState `json:"stacks"`
+	Ops      []Op                  `json:"ops"`
 }
 
 // StackState is the last known result for one stack.

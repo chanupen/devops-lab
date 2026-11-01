@@ -31,7 +31,9 @@ type Plan struct {
 	Mode       string `json:"mode"`
 	Profile    string `json:"profile"`
 	K8sVersion string `json:"k8sVersion"`
-	Steps      []Step `json:"steps"`
+	// Revision is the Git revision the gitops stack syncs in this plan.
+	Revision string `json:"revision,omitempty"`
+	Steps    []Step `json:"steps"`
 	// Warnings are shown before the plan runs, e.g. stacks kept outside the profile.
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -45,7 +47,17 @@ type PlanOptions struct {
 	// Prune destroys deployed stacks outside the profile. Without it they are
 	// kept and the plan warns. It cannot be combined with Stacks.
 	Prune bool
+	// Revision overrides the Git revision for testing GitOps changes before
+	// they merge. Empty means DefaultRevision. A deployed gitops stack on any
+	// other revision is re-applied, so a plain lab up moves it back to main.
+	Revision string
 }
+
+// RevisionStack is the stack whose Git revision a plan tracks.
+const RevisionStack = "gitops"
+
+// DefaultRevision is what the lab syncs unless lab up --revision says otherwise.
+const DefaultRevision = "main"
 
 // keepReason is the step reason for a deployed stack kept outside the profile.
 const keepReason = "not in profile; run lab up --prune to remove"
@@ -84,6 +96,12 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	if err != nil {
 		return Plan{}, err
 	}
+	rev := opts.Revision
+	if rev == "" {
+		rev = DefaultRevision
+	} else if !slices.Contains(desired, RevisionStack) {
+		return Plan{}, fmt.Errorf("--revision applies to the %s stack, which this selection does not include", RevisionStack)
+	}
 	all, _ := g.Order(g.Names()...) // NewGraph proved this has no cycles
 	var extra []string              // deployed but not wanted, dependency order
 	for _, s := range all {
@@ -92,6 +110,9 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 		}
 	}
 	p := newPlan(cfg)
+	if slices.Contains(desired, RevisionStack) {
+		p.Revision = rev
+	}
 	if opts.Prune {
 		for _, s := range reversed(extra) {
 			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + cfg.Profile})
@@ -99,10 +120,12 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	}
 	for _, s := range desired {
 		ss := st.Stacks[s]
-		switch ss.Status {
-		case state.Applied:
+		switch {
+		case s == RevisionStack && ss.Status == state.Applied && st.Revision != rev:
+			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev)})
+		case ss.Status == state.Applied:
 			p.Steps = append(p.Steps, Step{s, Keep, "applied"})
-		case state.Failed:
+		case ss.Status == state.Failed:
 			p.Steps = append(p.Steps, Step{s, Apply, "retry: " + ss.Error})
 		default:
 			p.Steps = append(p.Steps, Step{s, Apply, "not deployed"})
@@ -121,7 +144,17 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d deployed %s not in profile %s, kept: %s. Run lab up --prune to remove.",
 			len(extra), plural(len(extra), "stack is", "stacks are"), cfg.Profile, strings.Join(extra, ", ")))
 	}
+	if p.Revision != "" && p.Revision != DefaultRevision {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("gitops will track %s, not %s; a plain lab up moves it back", p.Revision, DefaultRevision))
+	}
 	return p, nil
+}
+
+func orUnrecorded(rev string) string {
+	if rev == "" {
+		return "unrecorded"
+	}
+	return rev
 }
 
 // PlanDown destroys every deployed stack, dependents before dependencies.

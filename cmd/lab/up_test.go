@@ -18,6 +18,7 @@ import (
 
 // fakeProvider supports registry and cluster, and lists app URLs.
 type fakeProvider struct {
+	also    []string // stacks supported beyond registry and cluster
 	calls   []string
 	fail    map[string]bool
 	urls    []string
@@ -28,7 +29,9 @@ func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.url
 
 func (f *fakeProvider) AccessHint() string { return "On the Mac, run ssh -N fedora-lab first." }
 
-func (f *fakeProvider) Supports(s string) bool { return s == "registry" || s == "cluster" }
+func (f *fakeProvider) Supports(s string) bool {
+	return s == "registry" || s == "cluster" || slices.Contains(f.also, s)
+}
 
 func (f *fakeProvider) Apply(_ context.Context, s string, _ io.Writer) error {
 	return f.do("apply " + s)
@@ -257,18 +260,18 @@ func TestDefaultProviderRoutes(t *testing.T) {
 				t.Errorf("%s: %s not routed", tt.gitops, s)
 			}
 		}
-		for _, s := range []string{"gitops", "core"} {
+		for _, s := range []string{"gitops", "core", "obs", "sample-app"} {
 			if p.Supports(s) != tt.wantGitOps {
 				t.Errorf("%s: Supports(%s) = %v, want %v", tt.gitops, s, p.Supports(s), tt.wantGitOps)
 			}
 		}
-		if p.Supports("obs") {
-			t.Errorf("%s: obs should not be routed yet", tt.gitops)
+		if p.Supports("secrets") {
+			t.Errorf("%s: secrets should not be routed yet", tt.gitops)
 		}
 	}
 }
 
-const deployedWithCore = `{"version":1,"mode":"local","stacks":{
+const deployedWithCore = `{"version":1,"mode":"local","revision":"main","stacks":{
 	"registry":{"status":"applied"},"cluster":{"status":"applied"},
 	"gitops":{"status":"applied"},"core":{"status":"applied"}},"ops":[]}`
 

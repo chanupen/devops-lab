@@ -161,6 +161,13 @@ func (e *Engine) record(p Plan, step Step, command string, started time.Time, lo
 		} else {
 			s.Stacks[step.Stack] = ss
 		}
+		if step.Stack == RevisionStack && runErr == nil {
+			if step.Action == Apply {
+				s.Revision = p.Revision
+			} else {
+				s.Revision = ""
+			}
+		}
 		if len(s.Stacks) == 0 {
 			s.Mode = ""
 		} else if s.Mode == "" {

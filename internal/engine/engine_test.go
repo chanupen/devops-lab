@@ -385,3 +385,34 @@ func TestTimestampWriter(t *testing.T) {
 		})
 	}
 }
+
+func TestExecuteRecordsRevision(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  Plan
+		start string
+		fail  bool
+		want  string
+	}{
+		{"gitops apply records the plan revision", Plan{Revision: "feat/obs", Steps: []Step{{"gitops", Apply, ""}}}, "", false, "feat/obs"},
+		{"failed gitops apply keeps the old revision", Plan{Revision: "main", Steps: []Step{{"gitops", Apply, ""}}}, "feat/obs", true, "feat/obs"},
+		{"gitops destroy clears it", Plan{Steps: []Step{{"gitops", Destroy, ""}}}, "main", false, ""},
+		{"other stacks leave it alone", Plan{Revision: "main", Steps: []Step{{"core", Apply, ""}}}, "feat/obs", false, "feat/obs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := state.New()
+			st.Revision = tt.start
+			st.Stacks["gitops"] = state.StackState{Status: state.Applied}
+			store := &memStore{st: st}
+			r := &fakeRunner{}
+			if tt.fail {
+				r.fail = map[string]bool{"gitops": true}
+			}
+			_ = New(catalogGraph(t), store, r).Execute(context.Background(), tt.plan, "lab up", nil)
+			if store.st.Revision != tt.want {
+				t.Errorf("revision = %q, want %q", store.st.Revision, tt.want)
+			}
+		})
+	}
+}

@@ -8,10 +8,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/kube"
@@ -45,8 +48,12 @@ func (f *fakeHelm) Uninstall(_ context.Context, name, ns string, _ io.Writer) er
 	return nil
 }
 
-// coreApps are the children the bootstrap chart renders for stacks.core.
-var coreApps = []string{"cert-manager", "core-gateway", "envoy-gateway", "metrics-server"}
+// childApps are the children the bootstrap chart renders for each stack.
+var childApps = map[string][]string{
+	"core":       {"cert-manager", "core-gateway", "envoy-gateway", "metrics-server"},
+	"obs":        {"kube-prometheus-stack", "loki", "obs-routes", "otel-collector"},
+	"sample-app": {"podinfo-backend", "podinfo-frontend", "sample-app-routes"},
+}
 
 // fakeArgo plays the Argo CD controller: it marks apps Synced and Healthy
 // against their current source and adds or prunes core's child apps to match
@@ -74,27 +81,31 @@ func reconcile(ctx context.Context, apps dynamic.ResourceInterface) {
 	if err != nil {
 		return
 	}
-	coreOn := false
+	on := map[string]bool{}
 	for i := range list.Items {
 		a := &list.Items[i]
 		if a.GetName() == RootApp {
-			coreOn, _, _ = unstructured.NestedBool(a.Object, "spec", "source", "helm", "valuesObject", "stacks", "core")
+			for stack := range childApps {
+				on[stack], _, _ = unstructured.NestedBool(a.Object, "spec", "source", "helm", "valuesObject", "stacks", stack)
+			}
 		}
 		markReady(ctx, apps, a)
 	}
-	for _, name := range coreApps {
-		_, err := apps.Get(ctx, name, metav1.GetOptions{})
-		exists := err == nil
-		switch {
-		case coreOn && !exists:
-			child := &unstructured.Unstructured{Object: map[string]any{
-				"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
-				"metadata": map[string]any{"name": name, "namespace": Namespace, "labels": map[string]any{stackLabel: "core"}},
-				"spec":     map[string]any{"source": map[string]any{"path": name}},
-			}}
-			_, _ = apps.Create(ctx, child, metav1.CreateOptions{})
-		case !coreOn && exists:
-			_ = apps.Delete(ctx, name, metav1.DeleteOptions{})
+	for stack, names := range childApps {
+		for _, name := range names {
+			_, err := apps.Get(ctx, name, metav1.GetOptions{})
+			exists := err == nil
+			switch {
+			case on[stack] && !exists:
+				child := &unstructured.Unstructured{Object: map[string]any{
+					"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
+					"metadata": map[string]any{"name": name, "namespace": Namespace, "labels": map[string]any{stackLabel: stack}},
+					"spec":     map[string]any{"source": map[string]any{"path": name}},
+				}}
+				_, _ = apps.Create(ctx, child, metav1.CreateOptions{})
+			case !on[stack] && exists:
+				_ = apps.Delete(ctx, name, metav1.DeleteOptions{})
+			}
 		}
 	}
 }
@@ -108,7 +119,9 @@ func markReady(ctx context.Context, apps dynamic.ResourceInterface, a *unstructu
 		"sync":   map[string]any{"status": "Synced", "comparedTo": map[string]any{"source": src}},
 		"health": map[string]any{"status": "Healthy"},
 	}, "status")
-	_, _ = apps.Update(ctx, a, metav1.UpdateOptions{})
+	// Status goes through the status subresource, so tests can tell the
+	// controller's writes from the runner's spec updates.
+	_, _ = apps.UpdateStatus(ctx, a, metav1.UpdateOptions{})
 }
 
 type env struct {
@@ -130,6 +143,7 @@ func newEnv(t *testing.T, argo bool, objs ...runtime.Object) *env {
 		Timeout: 3 * time.Second,
 	}, h, func(io.Writer) (*kube.Clients, error) { return &kube.Clients{Core: core, Dynamic: dyn}, nil })
 	r.home = func() (string, error) { return "/home/u", nil }
+	r.password = func() (string, error) { return "generated-pw", nil }
 	r.readFile = func(p string) ([]byte, error) {
 		if p == "/home/u/.ssh/deploy" {
 			return []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n"), nil
@@ -207,12 +221,16 @@ func TestApplyGitOps(t *testing.T) {
 		{[]string{"spec", "source", "helm", "valuesObject", "repo", "revision"}, "main"},
 		{[]string{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]string{"spec", "syncPolicy", "automated", "allowEmpty"}, true},
+		{[]string{"spec", "source", "helm", "ignoreMissingValueFiles"}, true},
 	}
 	for _, c := range checks {
 		got, _, _ := unstructured.NestedFieldNoCopy(root.Object, c.field...)
 		if got != c.want {
 			t.Errorf("%s = %v, want %v", strings.Join(c.field, "."), got, c.want)
 		}
+	}
+	if vf, _, _ := unstructured.NestedStringSlice(root.Object, "spec", "source", "helm", "valueFiles"); !slices.Equal(vf, []string{"../overlays/local/bootstrap/values.yaml"}) {
+		t.Errorf("root valueFiles = %v, want the local bootstrap overlay", vf)
 	}
 	if !slices.Contains(root.GetFinalizers(), "resources-finalizer.argocd.argoproj.io") {
 		t.Errorf("finalizers = %v", root.GetFinalizers())
@@ -223,11 +241,8 @@ func TestApplyGitOps(t *testing.T) {
 }
 
 func TestApplyGitOpsKeepsEnabledStacks(t *testing.T) {
-	existing := rootApp("local", config.Repo{URL: "git@github.com:o/old.git"}, map[string]any{"core": true})
-	// A root created while it could point at a branch is moved back to main.
-	if err := unstructured.SetNestedField(existing.Object, "feat/x", "spec", "source", "targetRevision"); err != nil {
-		t.Fatal(err)
-	}
+	existing := rootApp("local", config.Repo{URL: "git@github.com:o/old.git"}, "feat/x", map[string]any{"core": true})
+	// A root left on a branch moves back to main on a plain apply.
 	e := newEnv(t, true, existing)
 	if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
 		t.Fatal(err)
@@ -320,7 +335,7 @@ func TestCoreStack(t *testing.T) {
 }
 
 func TestSetStackAddsAllowEmpty(t *testing.T) {
-	old := rootApp("local", config.Repo{URL: "git@github.com:o/r.git"}, map[string]any{"core": true})
+	old := rootApp("local", config.Repo{URL: "git@github.com:o/r.git"}, "main", map[string]any{"core": true})
 	unstructured.RemoveNestedField(old.Object, "spec", "syncPolicy", "automated", "allowEmpty")
 	e := newEnv(t, true, old)
 	if err := e.runner.Destroy(context.Background(), "core", io.Discard); err != nil {
@@ -469,7 +484,7 @@ func TestExpand(t *testing.T) {
 
 func TestSupports(t *testing.T) {
 	r := newRunner(Options{}, nil, nil)
-	for stack, want := range map[string]bool{"gitops": true, "core": true, "cluster": false, "obs": false} {
+	for stack, want := range map[string]bool{"gitops": true, "core": true, "obs": true, "sample-app": true, "cluster": false, "secrets": false} {
 		if r.Supports(stack) != want {
 			t.Errorf("Supports(%s) != %v", stack, want)
 		}
@@ -532,6 +547,168 @@ func TestAppHosts(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("hosts = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyGitOpsRevisionOverride(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.opts.Revision = "feat/obs"
+	if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	root := e.root(t)
+	for _, f := range [][]string{{"spec", "source", "targetRevision"}, {"spec", "source", "helm", "valuesObject", "repo", "revision"}} {
+		if got, _, _ := unstructured.NestedString(root.Object, f...); got != "feat/obs" {
+			t.Errorf("%s = %q, want feat/obs", strings.Join(f, "."), got)
+		}
+	}
+}
+
+func TestObsStack(t *testing.T) {
+	e := newEnv(t, true)
+	ctx := context.Background()
+	if err := e.runner.Apply(ctx, "gitops", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	if err := e.runner.Apply(ctx, "obs", &log); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	sec, err := e.core.CoreV1().Secrets(ObsNamespace).Get(ctx, GrafanaSecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sec.StringData["admin-user"] != "admin" || sec.StringData["admin-password"] != "generated-pw" {
+		t.Errorf("secret = %v", sec.StringData)
+	}
+	if strings.Contains(log.String(), "generated-pw") {
+		t.Error("the Grafana password reached the log")
+	}
+	for _, name := range childApps["obs"] {
+		if !slices.Contains(e.appNames(t), name) {
+			t.Errorf("app %s missing after obs apply", name)
+		}
+	}
+
+	// Re-applying keeps the password the user may already know.
+	e.runner.password = func() (string, error) { return "other-pw", nil }
+	if err := e.runner.Apply(ctx, "obs", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	sec, _ = e.core.CoreV1().Secrets(ObsNamespace).Get(ctx, GrafanaSecret, metav1.GetOptions{})
+	if sec.StringData["admin-password"] != "generated-pw" {
+		t.Errorf("password rotated to %q on re-apply", sec.StringData["admin-password"])
+	}
+
+	if err := e.runner.Destroy(ctx, "obs", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.core.CoreV1().Namespaces().Get(ctx, ObsNamespace, metav1.GetOptions{}); err == nil {
+		t.Error("namespace monitoring still exists after destroying obs")
+	}
+	for _, name := range childApps["obs"] {
+		if slices.Contains(e.appNames(t), name) {
+			t.Errorf("app %s left after obs destroy", name)
+		}
+	}
+}
+
+func TestDestroyDeletesStackNamespaces(t *testing.T) {
+	tests := []struct {
+		stack string
+		ns    []string
+	}{
+		{"core", []string{"cert-manager", "envoy-gateway-system"}},
+		{"sample-app", []string{"podinfo"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stack, func(t *testing.T) {
+			e := newEnv(t, true)
+			ctx := context.Background()
+			for _, ns := range tt.ns {
+				if _, err := e.core.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := e.runner.Apply(ctx, "gitops", io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.runner.Apply(ctx, tt.stack, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.runner.Destroy(ctx, tt.stack, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			for _, ns := range tt.ns {
+				if _, err := e.core.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err == nil {
+					t.Errorf("namespace %s still exists", ns)
+				}
+			}
+			if _, err := e.core.CoreV1().Namespaces().Get(ctx, Namespace, metav1.GetOptions{}); err != nil {
+				t.Error("argocd namespace must survive destroying an app stack")
+			}
+		})
+	}
+}
+
+func TestRandomPassword(t *testing.T) {
+	a, err := randomPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := randomPassword()
+	if len(a) != 32 || a == b || strings.ContainsAny(a, "+/=") {
+		t.Errorf("passwords %q, %q: want 32 distinct URL-safe characters", a, b)
+	}
+}
+
+// Argo CD updates the root app's status constantly; a stale write must be
+// retried, not fail the step.
+func TestRootUpdateRetriesOnConflict(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(e *env) error
+	}{
+		{"setStack", func(e *env) error { return e.runner.Apply(context.Background(), "core", io.Discard) }},
+		{"gitops re-apply", func(e *env) error { return e.runner.Apply(context.Background(), "gitops", io.Discard) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The fake client's reactor chain is not safe to change while
+			// fakeArgo reads it, so register the reactor before starting it and
+			// arm it once the setup apply is done. Only spec updates to the root
+			// app count: fakeArgo writes status through the status subresource.
+			e := newEnv(t, false)
+			var armed atomic.Bool
+			var updates, conflicts atomic.Int32
+			e.dyn.PrependReactor("update", "applications", func(a k8stesting.Action) (bool, runtime.Object, error) {
+				u := a.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
+				if !armed.Load() || a.GetSubresource() != "" || u.GetName() != RootApp {
+					return false, nil, nil
+				}
+				if updates.Add(1) == 1 {
+					conflicts.Add(1)
+					return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "argoproj.io", Resource: "applications"}, RootApp, errors.New("the object has been modified"))
+				}
+				return false, nil, nil
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			fakeArgo(ctx, t, e.dyn)
+			if err := e.runner.Apply(context.Background(), "gitops", io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			armed.Store(true)
+			if err := tt.apply(e); err != nil {
+				t.Fatalf("err = %v; a single conflict should be retried", err)
+			}
+			if got := conflicts.Load(); got != 1 {
+				t.Errorf("runner saw %d conflicts, want 1", got)
+			}
+			if got := updates.Load(); got != 2 {
+				t.Errorf("runner updated the root app %d times, want 2 (the conflict, then one retry)", got)
 			}
 		})
 	}

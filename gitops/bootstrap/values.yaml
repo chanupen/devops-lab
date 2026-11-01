@@ -3,5 +3,12 @@ mode: local          # local | cloud; selects gitops/overlays/<mode>
 repo:
   url: ""
   revision: main     # always main; lab-bootstrap passes it to in-repo apps
+# Charts published as OCI on a registry the mirror caches are pulled through
+# it ("<mirror>/<registry>/<path>"). Empty pulls from the registries directly.
+# Set per mode in gitops/overlays/<mode>/bootstrap/values.yaml.
+charts:
+  ociMirror: ""
 stacks:
   core: false
+  obs: false
+  sample-app: false

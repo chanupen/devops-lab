@@ -22,7 +22,8 @@ func Catalog() []Stack {
 		// metrics-server, Envoy Gateway (Gateway API), cert-manager as Argo CD apps.
 		{Name: "core", DependsOn: []string{"gitops"}},
 		{Name: "secrets", DependsOn: []string{"gitops"}},
-		{Name: "obs", DependsOn: []string{"gitops"}},
+		// Grafana is reached through the Gateway, so obs needs core.
+		{Name: "obs", DependsOn: []string{"gitops", "core"}},
 		{Name: "policy", DependsOn: []string{"gitops"}},
 		{Name: "scaling", DependsOn: []string{"gitops", "obs"}},
 		{Name: "ci", DependsOn: []string{"gitops", "registry", "secrets"}},
