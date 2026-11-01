@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/loader"
 	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
+	"helm.sh/helm/v4/pkg/registry"
 	"helm.sh/helm/v4/pkg/storage/driver"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest"
@@ -91,16 +93,28 @@ func (h *sdkHelm) Ensure(ctx context.Context, r HelmRelease, log io.Writer) erro
 // retries, keeping a copy for next time.
 func (h *sdkHelm) chart(ctx context.Context, settings *cli.EnvSettings, r HelmRelease, log io.Writer) (string, error) {
 	charts := filepath.Join(h.home, "charts")
-	if p, ok := cachedChart(charts, r.Chart, r.Version); ok {
+	name := path.Base(r.Chart) // oci://registry/repo/name -> name
+	if p, ok := cachedChart(charts, name, r.Version); ok {
 		_, _ = fmt.Fprintf(log, "using cached chart %s\n", p)
 		return p, nil
 	}
-	cpo := action.ChartPathOptions{RepoURL: r.RepoURL, Version: r.Version}
+	// An Install carries the chart path options plus, for oci:// charts,
+	// the registry client LocateChart needs (anonymous pulls).
+	loc := action.NewInstall(&action.Configuration{})
+	loc.RepoURL, loc.Version = r.RepoURL, r.Version
+	if registry.IsOCI(r.Chart) {
+		rc, err := registry.NewClient(registry.ClientOptWriter(log),
+			registry.ClientOptCredentialsFile(filepath.Join(h.home, "registry.json")))
+		if err != nil {
+			return "", err
+		}
+		loc.SetRegistryClient(rc)
+	}
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		var p string
-		if p, err = cpo.LocateChart(r.Chart, settings); err == nil {
-			return keepChart(p, charts, r.Chart, r.Version), nil
+		if p, err = loc.LocateChart(r.Chart, settings); err == nil {
+			return keepChart(p, charts, name, r.Version), nil
 		}
 		_, _ = fmt.Fprintf(log, "fetch chart %s %s, attempt %d: %v\n", r.Chart, r.Version, attempt, err)
 		select {

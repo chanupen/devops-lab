@@ -86,6 +86,18 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, ".lab", "state.json"), nil
 }
 
+// PathFor is the state file for a mode. A cloud lab keeps its own state
+// (and kubeconfig, expiry, Helm cache) under ~/.lab/cloud, so it can run
+// beside a local lab. The lab lock stays on DefaultPath for both, so only
+// one lab changes things at a time.
+func PathFor(mode string) (string, error) {
+	p, err := DefaultPath()
+	if err != nil || mode != "cloud" {
+		return p, err
+	}
+	return filepath.Join(filepath.Dir(p), "cloud", "state.json"), nil
+}
+
 // Store reads and writes one state file.
 type Store struct {
 	path string

@@ -1,15 +1,21 @@
 // Package aws is the cloud provider: AWS sessions (the lab profile assumes
-// lab-admin with MFA), the account baseline run through OpenTofu, and the
-// probes lab doctor --mode cloud uses.
+// lab-admin with MFA), OpenTofu modules (account baseline, ECR, EKS), the
+// in-cluster pieces lab installs itself (Karpenter, the Load Balancer
+// Controller), tags and TTL, and the probes lab doctor --mode cloud uses.
 package aws
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // the AWS CLI names its cache files by SHA-1; not a security use
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -25,28 +31,55 @@ const Region = "ap-south-1"
 // DefaultProfile is the CLI profile that assumes lab-admin.
 const DefaultProfile = "lab"
 
+// defaultDuration is the role session length when the profile sets none:
+// lab-admin's maximum.
+const defaultDuration = 4 * time.Hour
+
 // ErrNeedMFA is returned when the profile needs an MFA code and no prompt
 // is available (for example lab doctor --json) and no cached session is
 // valid. lab cloud login fixes it.
 var ErrNeedMFA = errors.New("this profile needs an MFA code: run lab cloud login first")
 
 // Session resolves credentials for one profile. For a profile that assumes
-// a role with MFA it asks for the code once and caches the temporary keys
-// under CacheDir (0600) until shortly before they expire, so later lab
-// commands, and tofu, do not ask again.
+// a role it shares the AWS CLI's role cache: a session the aws CLI cached
+// is used as is, and a session lab gets (asking for the MFA code once) is
+// written where the CLI looks. So one MFA code serves lab, tofu, kubectl
+// (through aws eks get-token) and the aws CLI until the session expires.
 type Session struct {
 	Profile  string
-	CacheDir string                                 // e.g. ~/.lab/aws
+	CacheDir string                                 // the AWS CLI cache, ~/.aws/cli/cache
 	Prompt   func(mfaSerial string) (string, error) // nil: never prompt
 	Now      func() time.Time
+	// Role reads the profile's role settings; nil reads ~/.aws/config.
+	Role func(ctx context.Context, profile string) (Role, error)
 }
 
-// cached is the on-disk form of temporary credentials.
-type cached struct {
-	AccessKeyID     string    `json:"accessKeyId"`
-	SecretAccessKey string    `json:"secretAccessKey"`
-	SessionToken    string    `json:"sessionToken"`
-	Expires         time.Time `json:"expires"`
+// Role is what the AWS CLI hashes into its cache file name.
+type Role struct {
+	ARN        string
+	MFASerial  string
+	ExternalID string
+	Duration   time.Duration // 0 when the profile sets no duration_seconds
+}
+
+// DefaultCacheDir is the AWS CLI's role session cache.
+func DefaultCacheDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".aws", "cli", "cache"), nil
+}
+
+// cliCache is the part of the AWS CLI's cache file that lab reads and
+// writes: the AssumeRole response.
+type cliCache struct {
+	Credentials struct {
+		AccessKeyID     string `json:"AccessKeyId"`
+		SecretAccessKey string `json:"SecretAccessKey"`
+		SessionToken    string `json:"SessionToken"`
+		Expiration      string `json:"Expiration"`
+	} `json:"Credentials"`
 }
 
 // renewBefore is how long before expiry a cached session is replaced.
@@ -59,20 +92,71 @@ func (s Session) now() time.Time {
 	return time.Now()
 }
 
-func (s Session) cachePath() string { return filepath.Join(s.CacheDir, s.Profile+".json") }
+func (s Session) role(ctx context.Context) (Role, error) {
+	if s.Role != nil {
+		return s.Role(ctx, s.Profile)
+	}
+	sc, err := config.LoadSharedConfigProfile(ctx, s.Profile)
+	if err != nil {
+		return Role{}, fmt.Errorf("profile %s: %w", s.Profile, err)
+	}
+	r := Role{ARN: sc.RoleARN, MFASerial: sc.MFASerial, ExternalID: sc.ExternalID}
+	if sc.RoleDurationSeconds != nil {
+		r.Duration = *sc.RoleDurationSeconds
+	}
+	return r, nil
+}
 
-// Config returns an AWS config for the profile in the lab region, using
-// the cached session when it is still valid.
+// CacheKey is the AWS CLI's cache file name for an AssumeRole call: the
+// SHA-1 of the call's arguments as Python's json.dumps(sort_keys=True)
+// writes them, without the random session name.
+func CacheKey(r Role) string {
+	args := map[string]string{"RoleArn": strconv.Quote(r.ARN)}
+	if r.MFASerial != "" {
+		args["SerialNumber"] = strconv.Quote(r.MFASerial)
+	}
+	if r.ExternalID != "" {
+		args["ExternalId"] = strconv.Quote(r.ExternalID)
+	}
+	if r.Duration > 0 {
+		args["DurationSeconds"] = strconv.Itoa(int(r.Duration / time.Second))
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = strconv.Quote(k) + ": " + args[k]
+	}
+	sum := sha1.Sum([]byte("{" + strings.Join(parts, ", ") + "}")) //nolint:gosec // file name, see import
+	return hex.EncodeToString(sum[:])
+}
+
+func (s Session) cachePath(r Role) string { return filepath.Join(s.CacheDir, CacheKey(r)+".json") }
+
+// Config returns an AWS config for the profile in the lab region, using a
+// cached role session when one is still valid.
 func (s Session) Config(ctx context.Context) (aws.Config, error) {
-	if c, ok := s.readCache(); ok {
-		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(Region),
+	r, err := s.role(ctx)
+	if err != nil {
+		return aws.Config{}, err
+	}
+	if r.ARN == "" { // long-term keys, e.g. the devops profile
+		return config.LoadDefaultConfig(ctx, config.WithRegion(Region), config.WithSharedConfigProfile(s.Profile))
+	}
+	if c, ok := s.readCache(r); ok {
+		return config.LoadDefaultConfig(ctx, config.WithRegion(Region),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken)))
-		return cfg, err
 	}
 	needed := false
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(Region), config.WithSharedConfigProfile(s.Profile),
 		config.WithAssumeRoleCredentialOptions(func(o *stscreds.AssumeRoleOptions) {
-			o.Duration = 4 * time.Hour
+			o.Duration = defaultDuration
+			if r.Duration > 0 {
+				o.Duration = r.Duration
+			}
 			o.TokenProvider = func() (string, error) {
 				needed = true
 				if s.Prompt == nil || o.SerialNumber == nil {
@@ -92,7 +176,7 @@ func (s Session) Config(ctx context.Context) (aws.Config, error) {
 		return aws.Config{}, fmt.Errorf("credentials for profile %s: %w", s.Profile, err)
 	}
 	if creds.CanExpire {
-		s.writeCache(cached{creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken, creds.Expires})
+		s.writeCache(r, creds)
 	}
 	return cfg, nil
 }
@@ -125,36 +209,69 @@ func Identity(ctx context.Context, cfg aws.Config) (arn, account string, err err
 	return aws.ToString(out.Arn), aws.ToString(out.Account), nil
 }
 
-func (s Session) readCache() (cached, bool) {
-	if s.CacheDir == "" {
-		return cached{}, false
-	}
-	b, err := os.ReadFile(s.cachePath())
-	if err != nil {
-		return cached{}, false
-	}
-	var c cached
-	if json.Unmarshal(b, &c) != nil || c.AccessKeyID == "" || !s.now().Add(renewBefore).Before(c.Expires) {
-		return cached{}, false
-	}
-	return c, true
+type cachedCreds struct {
+	AccessKeyID, SecretAccessKey, SessionToken string
+	Expires                                    time.Time
 }
 
-// writeCache is best effort: a failed write only means the next command
-// asks for the MFA code again.
-func (s Session) writeCache(c cached) {
+func (s Session) readCache(r Role) (cachedCreds, bool) {
+	if s.CacheDir == "" {
+		return cachedCreds{}, false
+	}
+	b, err := os.ReadFile(s.cachePath(r))
+	if err != nil {
+		return cachedCreds{}, false
+	}
+	var c cliCache
+	if json.Unmarshal(b, &c) != nil || c.Credentials.AccessKeyID == "" {
+		return cachedCreds{}, false
+	}
+	exp, err := time.Parse(time.RFC3339, c.Credentials.Expiration)
+	if err != nil || !s.now().Add(renewBefore).Before(exp) {
+		return cachedCreds{}, false
+	}
+	return cachedCreds{c.Credentials.AccessKeyID, c.Credentials.SecretAccessKey, c.Credentials.SessionToken, exp}, true
+}
+
+// writeCache stores the session in the CLI's format. It is best effort: a
+// failed write only means the next command asks for the MFA code again.
+func (s Session) writeCache(r Role, creds aws.Credentials) {
 	if s.CacheDir == "" {
 		return
 	}
 	if err := os.MkdirAll(s.CacheDir, 0o700); err != nil {
 		return
 	}
+	var c cliCache
+	c.Credentials.AccessKeyID = creds.AccessKeyID
+	c.Credentials.SecretAccessKey = creds.SecretAccessKey
+	c.Credentials.SessionToken = creds.SessionToken
+	c.Credentials.Expiration = creds.Expires.UTC().Format("2006-01-02T15:04:05-07:00")
 	b, _ := json.Marshal(c)
-	tmp := s.cachePath() + ".tmp"
+	tmp := s.cachePath(r) + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, s.cachePath())
+		_ = os.Rename(tmp, s.cachePath(r))
 	}
 }
 
-// Forget removes the cached session, for example after a role change.
-func (s Session) Forget() { _ = os.Remove(s.cachePath()) }
+// Forget removes the cached session, so the next command asks for a code.
+func (s Session) Forget(ctx context.Context) error {
+	r, err := s.role(ctx)
+	if err != nil || r.ARN == "" || s.CacheDir == "" {
+		return err
+	}
+	if err := os.Remove(s.cachePath(r)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Expires reports when the cached role session ends, if there is one.
+func (s Session) Expires(ctx context.Context) (time.Time, bool) {
+	r, err := s.role(ctx)
+	if err != nil || r.ARN == "" {
+		return time.Time{}, false
+	}
+	c, ok := s.readCache(r)
+	return c.Expires, ok
+}

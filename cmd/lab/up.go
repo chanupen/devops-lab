@@ -28,7 +28,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 		Long: "Plans against ~/.lab/state.json and applies stacks in dependency order. Stacks already\n" +
 			"applied are kept; failed ones are retried. Deployed stacks outside the profile are kept\n" +
 			"unless --prune is given.",
-		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs",
+		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n  lab up --mode cloud",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, store, g, err := flags.load()
@@ -43,7 +43,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if _, err := eng.PlanUp(cfg, opts); err != nil {
 				return err
 			}
-			prov, err := newProvider(cfg, homeOf(store), runOptions{Revision: revision, Timeout: timeout})
+			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Revision: revision, Timeout: timeout}))
 			if err != nil {
 				return err
 			}
@@ -61,6 +61,9 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 					return err
 				}
 			} else {
+				if err := confirmCloudApply(cmd, prov, p, time.Duration(cfg.Cloud.TTL), yes); err != nil {
+					return err
+				}
 				if destroys := p.Count(engine.Destroy); destroys > 0 {
 					if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
 						return err
@@ -74,9 +77,10 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 		},
 	}
 	flags.register(cmd)
+	flags.registerMode(cmd)
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "apply only these stacks and their dependencies")
 	cmd.Flags().BoolVar(&prune, "prune", false, "destroy deployed stacks that are not in the profile")
-	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks")
+	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks or, in cloud mode, applying to AWS")
 	cmd.Flags().StringVar(&revision, "revision", "",
 		"sync the gitops stack from this Git branch to test changes before they merge (default main)")
 	registerTimeout(cmd, &timeout)

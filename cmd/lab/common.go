@@ -19,6 +19,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/gitops"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -27,6 +28,12 @@ import (
 type labFlags struct {
 	cfgPath   string
 	statePath string
+	mode      string // --mode: overrides lab.yaml's mode
+}
+
+// registerMode adds --mode to commands that plan, run or show a lab.
+func (f *labFlags) registerMode(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.mode, "mode", "", "local or cloud (default: mode in lab.yaml); each mode keeps its own state")
 }
 
 func (f *labFlags) register(cmd *cobra.Command) {
@@ -74,9 +81,15 @@ func (f *labFlags) load() (config.Config, *state.Store, *engine.Graph, error) {
 	if err != nil {
 		return config.Config{}, nil, nil, err
 	}
+	if f.mode != "" {
+		cfg.Mode = f.mode
+		if err := cfg.Validate(); err != nil {
+			return config.Config{}, nil, nil, fmt.Errorf("--mode %s: %w", f.mode, err)
+		}
+	}
 	path := f.statePath
 	if path == "" {
-		if path, err = state.DefaultPath(); err != nil {
+		if path, err = state.PathFor(cfg.Mode); err != nil {
 			return config.Config{}, nil, nil, err
 		}
 	}
@@ -133,6 +146,10 @@ type runOptions struct {
 	Revision string        // lab up --revision; empty means main
 	Purge    bool          // lab down --purge
 	Timeout  time.Duration // per-stack wait (Argo CD install, apps healthy)
+	RepoRoot string        // the repo (directory of lab.yaml); cloud mode finds its modules there
+	// MFAPrompt asks for the MFA code when the cloud session needs one;
+	// nil never asks (the cached AWS CLI session must be valid).
+	MFAPrompt func(serial string) (string, error)
 }
 
 // providerFactory builds the runner for cfg.Mode. home is the directory
@@ -144,6 +161,7 @@ type providerFactory func(cfg config.Config, home string, opts runOptions) (prov
 func defaultProvider(cfg config.Config, home string, opts runOptions) (provider, error) {
 	kubeconfig := filepath.Join(home, "kubeconfig")
 	l := labRunner{Router: engine.Router{}}
+	var cloud *labaws.Provider
 	switch cfg.Mode {
 	case "local":
 		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: opts.Purge})
@@ -152,15 +170,26 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
 		l.url, l.hint = p.AppURL, p.AccessHint()
+	case "cloud":
+		p, err := newCloudProvider(cfg, home, opts)
+		if err != nil {
+			return nil, err
+		}
+		l.Router["registry"], l.Router["cluster"] = p, p
+		l.url, l.hint = func(host string) string { return "https://" + host }, ""
+		cloud = p
 	default:
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
-	if cfg.GitOps == "argocd" { // Flux is the second option and not built yet
+	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) { // Flux is the second option and not built yet
 		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
 		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
 		l.hosts = g.AppHosts
+	}
+	if cloud != nil {
+		return cloudRunner{labRunner: l, Provider: cloud}, nil
 	}
 	return l, nil
 }
@@ -169,10 +198,13 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 // provider (which needs Podman or AWS). It matches defaultProvider's routes.
 func stackSupport(cfg config.Config) func(string) bool {
 	var stacks []string
-	if cfg.Mode == "local" {
+	switch cfg.Mode {
+	case "local":
 		stacks = append(stacks, local.Stacks()...)
+	case "cloud":
+		stacks = append(stacks, labaws.Stacks()...)
 	}
-	if cfg.GitOps == "argocd" {
+	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) {
 		stacks = append(stacks, gitops.Stacks()...)
 	}
 	return func(s string) bool { return slices.Contains(stacks, s) }

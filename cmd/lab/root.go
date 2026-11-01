@@ -21,9 +21,10 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return runTUI(cmd, flags) },
 	}
 	flags.register(root)
-	up, down := newUpCmd(newProvider), newDownCmd(newProvider)
+	up, down, extend := newUpCmd(newProvider), newDownCmd(newProvider), newExtendCmd(newProvider)
 	withLabLock(up)
 	withLabLock(down)
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, newStatusCmd(newProvider), newCloudCmd())
+	withLabLock(extend)
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newStatusCmd(newProvider), newCloudCmd())
 	return root
 }

@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -33,6 +35,12 @@ func newStatusCmd(newProvider providerFactory) *cobra.Command {
 			if err := writeStatus(out, lipgloss.NewRenderer(out), cfg, st, g); err != nil {
 				return err
 			}
+			if cfg.Mode == "cloud" {
+				if exp, err := labaws.ReadExpiry(labaws.ExpiryFile(homeOf(store))); err == nil {
+					_, _ = fmt.Fprintf(out, "\nexpires-at %s (in %s); lab extend 1h pushes it forward\n",
+						exp.Local().Format("2006-01-02 15:04 MST"), time.Until(exp).Round(time.Minute))
+				}
+			}
 			if !st.IsApplied(gatewayStack) {
 				return nil
 			}
@@ -45,6 +53,7 @@ func newStatusCmd(newProvider providerFactory) *cobra.Command {
 		},
 	}
 	flags.register(cmd)
+	flags.registerMode(cmd)
 	return cmd
 }
 

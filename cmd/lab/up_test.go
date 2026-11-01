@@ -251,7 +251,7 @@ func TestDefaultProviderModes(t *testing.T) {
 		mode    string
 		wantErr string
 	}{
-		{"cloud", "cloud mode has no provider yet"},
+		{"cloud", "cloud mode needs the repo"},
 	}
 	for _, tt := range tests {
 		cfg := config.Default()

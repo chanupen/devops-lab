@@ -87,6 +87,30 @@ func TestPlanCmd(t *testing.T) {
 			wantErr: `profile "huge"`,
 		},
 		{
+			// Cloud mode plans the same stacks as local; until the cloud
+			// GitOps overlay exists, the GitOps stacks are skipped.
+			name:   "--mode cloud plans the profile with the cloud provider",
+			config: "cloud:\n  owner: someone\n",
+			args:   []string{"--mode", "cloud"},
+			want: []string{"cloud mode, minimal + obs profile, Kubernetes 1.37", "+ registry", "+ cluster",
+				"- gitops      skip: not supported by the cloud provider yet",
+				"- sample-app  skip: not supported by the cloud provider yet",
+				"2 to apply, 0 to destroy, 0 unchanged, 4 skipped",
+				"warning: 4 stacks skipped, not supported by the cloud provider yet: gitops, core, sample-app, obs"},
+		},
+		{
+			name:    "--mode cloud needs an owner",
+			config:  "mode: local\n",
+			args:    []string{"--mode", "cloud"},
+			wantErr: "cloud.owner is required",
+		},
+		{
+			name:    "--mode must be known",
+			config:  "mode: local\n",
+			args:    []string{"--mode", "moon"},
+			wantErr: `mode "moon"`,
+		},
+		{
 			name:    "mode mismatch",
 			config:  "mode: cloud\ncloud:\n  owner: someone\n",
 			state:   partial,
@@ -161,4 +185,28 @@ func runLab(args ...string) (string, error) {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), err
+}
+
+// Each mode keeps its own state, so a cloud lab can run beside a local one.
+func TestModeStatePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "lab.yaml")
+	if err := os.WriteFile(cfgPath, []byte("cloud:\n  owner: someone\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for mode, want := range map[string]string{
+		"local": filepath.Join(home, ".lab", "state.json"),
+		"cloud": filepath.Join(home, ".lab", "cloud", "state.json"),
+	} {
+		f := labFlags{cfgPath: cfgPath, mode: mode}
+		_, store, _, err := f.load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if store.Path() != want {
+			t.Errorf("%s state = %s, want %s", mode, store.Path(), want)
+		}
+	}
 }

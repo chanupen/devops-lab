@@ -26,9 +26,9 @@ const baselineVarFile = "aws/baseline.tfvars"
 func newCloudCmd() *cobra.Command {
 	cloud := &cobra.Command{
 		Use:   "cloud",
-		Short: "Cloud mode: AWS session and account baseline",
+		Short: "Cloud mode: AWS session and account baseline (lab up --mode cloud runs the lab itself)",
 	}
-	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd())
+	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd(), newCloudPlanCmd(defaultProvider))
 	return cloud
 }
 
@@ -67,11 +67,11 @@ func (f *labFlags) labHome() (string, error) {
 // session is the AWS session for the profile, asking for the MFA code on
 // the terminal when the profile needs one and no cached session is valid.
 func (f *cloudFlags) session(cmd *cobra.Command) (labaws.Session, error) {
-	home, err := f.labHome()
+	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
 		return labaws.Session{}, err
 	}
-	s := labaws.Session{Profile: f.profile, CacheDir: filepath.Join(home, "aws")}
+	s := labaws.Session{Profile: f.profile, CacheDir: cache}
 	if in, ok := cmd.InOrStdin().(*os.File); ok && isatty.IsTerminal(in.Fd()) {
 		s.Prompt = terminalMFA(in, cmd.ErrOrStderr())
 	}
@@ -95,14 +95,16 @@ func newCloudLoginCmd() *cobra.Command {
 	var flags cloudFlags
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Assume lab-admin with MFA and cache the session for up to 4 hours",
+		Short: "Assume lab-admin with MFA and cache the session for up to 4 hours (shared with the aws CLI)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := flags.session(cmd)
 			if err != nil {
 				return err
 			}
-			s.Forget() // a login always asks for a fresh session
+			if err := s.Forget(cmd.Context()); err != nil { // a login always asks for a fresh session
+				return err
+			}
 			cfg, err := s.Config(cmd.Context())
 			if err != nil {
 				return err
@@ -301,12 +303,12 @@ func orDefault(v, def string) string {
 // checks run, asking for the MFA code only when interactive.
 func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
 	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
-	home, err := (&labFlags{}).labHome()
+	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
 		p.SessionErr = err
 		return p
 	}
-	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: filepath.Join(home, "aws")}
+	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: cache}
 	if in, ok := cmd.InOrStdin().(*os.File); interactive && ok && isatty.IsTerminal(in.Fd()) {
 		s.Prompt = terminalMFA(in, cmd.ErrOrStderr())
 	}
