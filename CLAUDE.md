@@ -52,8 +52,9 @@ Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~1
 
 - Every environment has a TTL (default 4h). A Lambda reaper on an EventBridge schedule (every 15 min) destroys anything past `expires-at`.
 - AWS Budgets alerts at 50/80/100%. Spot nodes, no NAT gateway, one shared load balancer, short log retention.
-- `lab down` destroys in reverse order, then lists anything still billed (by tag).
-- AWS access: CLI profile `lab` assumes the `lab-admin` role with MFA (source profile `devops`, the IAM user). `lab cloud login` caches the session in `~/.lab/aws`; lab passes temporary keys to tofu. Bootstrap the baseline with `--profile devops`.
+- `lab down` destroys in reverse order, then lists anything still tagged `lab=true` outside the baseline.
+- AWS access: CLI profile `lab` assumes the `lab-admin` role with MFA (source profile `devops`, the IAM user). lab shares the AWS CLI's role cache (`~/.aws/cli/cache`, same file names as botocore), so one MFA code per 4-hour session serves lab, tofu, `aws eks get-token` and the aws CLI. `lab cloud login` forces a fresh session. lab passes temporary keys to tofu. Bootstrap the baseline with `--profile devops`.
+- Cloud lab (`lab up --mode cloud`, `lab cloud plan`): modules `infra/terraform/aws/cluster` (VPC, EKS, Karpenter IAM, Pod Identity) and `infra/terraform/aws/cluster/registry` (ECR), state under `cluster/` in the state bucket. lab installs Karpenter and the AWS Load Balancer Controller itself (Helm SDK), because they must exist before GitOps and carry expires-at. A cloud lab keeps its own state, kubeconfig and expiry under `~/.lab/cloud/`, beside a local lab; the lab lock is shared. `lab extend 1h` retags everything with expires-at.
 - Account baseline (`infra/terraform/aws/baseline`, `lab cloud baseline plan|apply`, OpenTofu via terraform-exec): state bucket `lab-tofu-state-<account>` with `use_lockfile`, `lab-admin`, budget `lab-monthly`, TTL reaper `lab-ttl-reaper`. Baseline resources are permanent: `lab=true` and `owner` but no `expires-at`, which the reaper relies on to keep them. Private inputs (alert email) live in `~/.lab/aws/baseline.tfvars`.
 
 ## Repository layout
