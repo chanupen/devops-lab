@@ -50,7 +50,9 @@ Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~1
 
 ## Cloud guardrails
 
-- Every environment has a TTL (default 4h). A Lambda reaper on an EventBridge schedule (every 15 min) destroys anything past `expires-at`.
+- Every environment has a TTL (default 2h, `lab up --mode cloud --ttl`, never more than 8h ahead, `lab extend` included). A Lambda reaper on an EventBridge schedule (every 15 min) is the dead man's switch: past `expires-at` it deletes controller-made resources (Karpenter nodes, load balancers, target groups, their security groups, volumes) and starts the CodeBuild project `lab-teardown` (arm1.small), which runs `tofu destroy` on the cluster and registry state from the bundles lab uploads before each apply, sweeps again and emails a summary (SNS `lab-teardown`).
+- `lab up --mode cloud` refuses unless the reaper is out of dry run and wrote a clean heartbeat (`reaper/heartbeat.json` in the state bucket) in the last 30 minutes, and unless `k8sVersion` is the newest EKS version in standard support (cluster `upgrade_policy` STANDARD). `lab doctor --mode cloud` checks both.
+- No load balancer by default: `lab tunnel` port-forwards 127.0.0.1:8080/8443 to the Envoy Gateway Service, so cloud apps keep the `https://<app>.localtest.me:8443` URLs. No NAT, no control-plane logging, no Container Insights, 20 GB gp3 root disks.
 - AWS Budgets alerts at 50/80/100%. Spot nodes, no NAT gateway, one shared load balancer, short log retention.
 - `lab down` destroys in reverse order, then lists anything still tagged `lab=true` outside the baseline.
 - AWS access: CLI profile `lab` assumes the `lab-admin` role with MFA (source profile `devops`, the IAM user). lab shares the AWS CLI's role cache (`~/.aws/cli/cache`, same file names as botocore), so one MFA code per 4-hour session serves lab, tofu, `aws eks get-token` and the aws CLI. `lab cloud login` forces a fresh session. lab passes temporary keys to tofu. Bootstrap the baseline with `--profile devops`.
