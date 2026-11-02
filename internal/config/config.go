@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -14,9 +15,13 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// K8sVersion is the Kubernetes minor version the lab is pinned to. kind node
-// images, EKS and kubectl skew checks all follow it.
+// K8sVersion is the Kubernetes minor version the local lab is pinned to:
+// the kind node image and kubectl skew checks follow it. The cloud lab picks
+// its own (cloud.k8sVersion, else the newest EKS version in standard
+// support that the pinned components support).
 const K8sVersion = "1.37"
+
+var minorVersion = regexp.MustCompile(`^1\.[0-9]{1,3}$`)
 
 // Allowed values, in documentation order.
 var (
@@ -27,6 +32,13 @@ var (
 
 // CloudRegion is the only AWS region the lab uses.
 const CloudRegion = "ap-south-1"
+
+// Cloud lab lifetimes: DefaultTTL unless lab.yaml or lab up --ttl says
+// otherwise, and never more than MaxTTL from now, not even with lab extend.
+const (
+	DefaultTTL = 2 * time.Hour
+	MaxTTL     = 8 * time.Hour
+)
 
 // Config is the parsed lab.yaml.
 type Config struct {
@@ -54,6 +66,9 @@ type Cloud struct {
 	Region string   `yaml:"region"`
 	TTL    Duration `yaml:"ttl"`
 	Owner  string   `yaml:"owner"`
+	// K8sVersion pins the EKS Kubernetes version. Empty (the default) lets
+	// lab choose; a pin must still be in EKS standard support.
+	K8sVersion string `yaml:"k8sVersion"`
 }
 
 // Duration is a time.Duration written as "4h" in YAML.
@@ -82,7 +97,7 @@ func Default() Config {
 		ExtraStacks: []string{"obs"},
 		GitOps:      "argocd",
 		K8sVersion:  K8sVersion,
-		Cloud:       Cloud{Region: CloudRegion, TTL: Duration(4 * time.Hour)},
+		Cloud:       Cloud{Region: CloudRegion, TTL: Duration(DefaultTTL)},
 	}
 }
 
@@ -133,11 +148,14 @@ func (c Config) Validate() error {
 	if c.K8sVersion != K8sVersion {
 		errs = append(errs, fmt.Errorf("k8sVersion %q: the lab is pinned to %s", c.K8sVersion, K8sVersion))
 	}
+	if v := c.Cloud.K8sVersion; v != "" && !minorVersion.MatchString(v) {
+		errs = append(errs, fmt.Errorf("cloud.k8sVersion %q: want a minor version such as \"1.36\", or leave it out", v))
+	}
 	if c.Cloud.Region != CloudRegion {
 		errs = append(errs, fmt.Errorf("cloud.region %q: the lab only uses %s", c.Cloud.Region, CloudRegion))
 	}
-	if c.Cloud.TTL <= 0 {
-		errs = append(errs, fmt.Errorf("cloud.ttl must be positive"))
+	if err := CheckTTL(time.Duration(c.Cloud.TTL)); err != nil {
+		errs = append(errs, fmt.Errorf("cloud.ttl: %w", err))
 	}
 	if c.Repo.SSHKeyFile != "" && !IsSSHURL(c.Repo.URL) {
 		errs = append(errs, fmt.Errorf("repo.url %q: a deploy key needs an SSH URL such as git@github.com:owner/repo.git", c.Repo.URL))
@@ -148,6 +166,19 @@ func (c Config) Validate() error {
 	return errors.Join(errs...)
 }
 
+// ClusterK8sVersion is the Kubernetes version the mode's cluster runs, for
+// plans and status: the local pin, or in cloud mode cloud.k8sVersion if set.
+// Without a cloud pin the cloud provider chooses at apply time.
+func (c Config) ClusterK8sVersion() string {
+	switch {
+	case c.Mode != "cloud":
+		return c.K8sVersion
+	case c.Cloud.K8sVersion != "":
+		return c.Cloud.K8sVersion
+	}
+	return "chosen by lab (EKS standard support)"
+}
+
 // IsSSHURL reports whether url is an scp-style (git@host:path) or ssh:// URL.
 func IsSSHURL(url string) bool {
 	if strings.HasPrefix(url, "ssh://") {
@@ -155,4 +186,12 @@ func IsSSHURL(url string) bool {
 	}
 	user, rest, ok := strings.Cut(url, "@")
 	return ok && user != "" && !strings.Contains(user, "/") && strings.Contains(rest, ":") && !strings.Contains(url, "://")
+}
+
+// CheckTTL accepts a cloud lab lifetime between one minute and MaxTTL.
+func CheckTTL(d time.Duration) error {
+	if d < time.Minute || d > MaxTTL {
+		return fmt.Errorf("%s: want between 1m and %s", d, MaxTTL)
+	}
+	return nil
 }

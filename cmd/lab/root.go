@@ -21,9 +21,11 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return runTUI(cmd, flags) },
 	}
 	flags.register(root)
-	up, down := newUpCmd(newProvider), newDownCmd(newProvider)
+	up, down, extend := newUpCmd(newProvider), newDownCmd(newProvider), newExtendCmd(newProvider)
 	withLabLock(up)
 	withLabLock(down)
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, newStatusCmd(newProvider), newCloudCmd())
+	withLabLock(extend)
+	// tunnel only reads the lab and forwards ports: it never takes the lock.
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd())
 	return root
 }

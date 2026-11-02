@@ -52,6 +52,7 @@ func newPlanCmd() *cobra.Command {
 		},
 	}
 	flags.register(cmd)
+	flags.registerMode(cmd)
 	cmd.Flags().BoolVar(&destroy, "destroy", false, "plan lab down instead of lab up")
 	cmd.Flags().BoolVar(&prune, "prune", false, "plan destroying deployed stacks that are not in the profile")
 	cmd.Flags().StringVar(&revision, "revision", "", "plan lab up --revision (default main)")

@@ -1,0 +1,104 @@
+package aws
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/chanupen/devops-lab/internal/reaper"
+)
+
+// ReaperFunction is the baseline's TTL reaper Lambda.
+const ReaperFunction = "lab-ttl-reaper"
+
+// ReaperMaxAge is how recent the reaper's last clean run must be before a
+// cloud lab may start: two missed 15-minute runs.
+const ReaperMaxAge = 30 * time.Minute
+
+// ReaperStatus is what lab needs to know before trusting the dead man's
+// switch.
+type ReaperStatus struct {
+	DryRun    bool              // the function's DRY_RUN setting
+	Heartbeat *reaper.Heartbeat // last clean run; nil when there is none
+}
+
+// Ready is nil when the reaper deletes for real and ran cleanly within
+// ReaperMaxAge of now.
+func (s ReaperStatus) Ready(now time.Time) error {
+	switch {
+	case s.DryRun:
+		return errors.New("the TTL reaper is in dry run, so an expired lab would keep billing: " +
+			"set reaper_dry_run = false in ~/.lab/aws/baseline.tfvars and run lab cloud baseline apply")
+	case s.Heartbeat == nil:
+		return errors.New("the TTL reaper has never finished a clean run: check its CloudWatch logs (/aws/lambda/" + ReaperFunction + ")")
+	case s.Heartbeat.DryRun:
+		return fmt.Errorf("the TTL reaper's last clean run (%s) was a dry run; wait for the next run (every 15 minutes)",
+			s.Heartbeat.Time.Local().Format("15:04"))
+	case now.Sub(s.Heartbeat.Time) > ReaperMaxAge:
+		return fmt.Errorf("the TTL reaper's last clean run was %s ago (at %s), more than %s: check its CloudWatch logs (/aws/lambda/%s)",
+			now.Sub(s.Heartbeat.Time).Round(time.Minute), s.Heartbeat.Time.Local().Format("15:04"), ReaperMaxAge, ReaperFunction)
+	case s.Heartbeat.ManualAction:
+		return fmt.Errorf("an earlier cloud lab was not torn down after %d attempts (%s); clean it up first: "+
+			"lab down --mode cloud, then lab cloud leftovers", reaper.MaxAttempts, s.Heartbeat.Teardown)
+	}
+	return nil
+}
+
+// GetReaperStatus reads the reaper's configuration and heartbeat.
+func GetReaperStatus(ctx context.Context, cfg aws.Config, account string) (ReaperStatus, error) {
+	fn, err := lambda.NewFromConfig(cfg).GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{
+		FunctionName: aws.String(ReaperFunction)})
+	if err != nil {
+		return ReaperStatus{}, fmt.Errorf("reaper %s: %w", ReaperFunction, err)
+	}
+	st := ReaperStatus{DryRun: true}
+	if fn.Environment != nil {
+		if v, err := strconv.ParseBool(fn.Environment.Variables["DRY_RUN"]); err == nil {
+			st.DryRun = v
+		}
+	}
+	out, err := s3.NewFromConfig(cfg).GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(StateBucket(account)), Key: aws.String(reaper.HeartbeatKey)})
+	var nsk *s3types.NoSuchKey
+	switch {
+	case errors.As(err, &nsk):
+		return st, nil
+	case err != nil:
+		return st, fmt.Errorf("reaper heartbeat: %w", err)
+	}
+	defer func() { _ = out.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(out.Body, 64<<10))
+	if err != nil {
+		return st, err
+	}
+	var hb reaper.Heartbeat
+	if err := json.Unmarshal(b, &hb); err != nil {
+		return st, fmt.Errorf("reaper heartbeat: %w", err)
+	}
+	st.Heartbeat = &hb
+	return st, nil
+}
+
+// PreflightCheck is everything lab up --mode cloud checks before it asks to
+// apply: the reaper is armed and recent, and EKS has a Kubernetes version
+// in standard support that the lab can use. It writes the version choice.
+func (p *Provider) PreflightCheck(ctx context.Context, w io.Writer) error {
+	st, err := GetReaperStatus(ctx, p.cfg, p.account)
+	if err != nil {
+		return err
+	}
+	if err := st.Ready(p.now()); err != nil {
+		return fmt.Errorf("refusing to start a cloud lab: %w", err)
+	}
+	_, err = p.ResolveVersion(ctx, w)
+	return err
+}

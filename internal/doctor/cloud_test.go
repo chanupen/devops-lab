@@ -57,7 +57,7 @@ func TestCloudChecksList(t *testing.T) {
 	for _, c := range CloudChecks(probe("", true, true)) {
 		names = append(names, c.Name)
 	}
-	if got := strings.Join(names, ","); got != "tofu,aws,lab profile,state bucket,budget" {
+	if got := strings.Join(names, ","); got != "tofu,aws,lab profile,state bucket,budget,eks version,ttl reaper" {
 		t.Errorf("checks = %s", got)
 	}
 }
@@ -69,5 +69,40 @@ func TestTofuNeedsNativeLocking(t *testing.T) {
 		}}
 	if r := runTool(context.Background(), sys, "tofu"); r.Status != Warn || !strings.Contains(r.Detail, "want ≥ 1.10.0") {
 		t.Errorf("tofu 1.9.1: %s %q, want a warning for < 1.10 (no use_lockfile)", r.Status, r.Detail)
+	}
+}
+
+func TestEKSVersionAndReaperChecks(t *testing.T) {
+	const admin = "arn:aws:sts::111122223333:assumed-role/lab-admin/lab"
+	ctx := context.Background()
+	p := probe(admin, true, true)
+	if r := checkEKSVersion(ctx, p); r.Status != Skip {
+		t.Errorf("no probe: %s", r.Status)
+	}
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "Kubernetes 1.36: the newest version in standard support that Karpenter, Argo CD all support", nil, nil
+	}
+	p.ReaperReady = func(context.Context, string) error { return nil }
+	if r := checkEKSVersion(ctx, p); r.Status != OK || !strings.Contains(r.Detail, "1.36: the newest") {
+		t.Errorf("eks ok: %s %q", r.Status, r.Detail)
+	}
+	if r := checkReaper(ctx, p); r.Status != OK {
+		t.Errorf("reaper ok: %s %q", r.Status, r.Detail)
+	}
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "Kubernetes 1.37: pinned by cloud.k8sVersion", []string{"Kubernetes 1.37 is outside the stated range of Argo CD"}, nil
+	}
+	if r := checkEKSVersion(ctx, p); r.Status != Warn || !strings.Contains(r.Detail, "Argo CD") {
+		t.Errorf("eks warning: %s %q", r.Status, r.Detail)
+	}
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "", nil, errors.New("cloud.k8sVersion 1.32 is not in EKS standard support (standard: 1.34, 1.35, 1.36, 1.37)")
+	}
+	p.ReaperReady = func(context.Context, string) error { return errors.New("the TTL reaper is in dry run") }
+	if r := checkEKSVersion(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "1.32 is not in EKS standard support") {
+		t.Errorf("eks old: %s %q", r.Status, r.Detail)
+	}
+	if r := checkReaper(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "dry run") || !strings.Contains(r.Fix, "refuses") {
+		t.Errorf("reaper dry: %s %q %q", r.Status, r.Detail, r.Fix)
 	}
 }

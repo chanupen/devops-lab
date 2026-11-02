@@ -18,6 +18,13 @@ type CloudProbe struct {
 	BudgetExists func(ctx context.Context, account string) (bool, error)
 	BucketName   func(account string) string
 	BudgetName   string
+	// EKSVersion picks the cloud cluster's Kubernetes version (standard
+	// support only, preferring the newest the pinned components support)
+	// and says which and why; warnings do not fail the check.
+	EKSVersion func(ctx context.Context) (choice string, warnings []string, err error)
+	// ReaperReady is nil when the reaper deletes for real and ran cleanly in
+	// the last 30 minutes: the dead man's switch lab up --mode cloud needs.
+	ReaperReady func(ctx context.Context, account string) error
 }
 
 // CloudChecks returns the checks for lab doctor --mode cloud.
@@ -28,7 +35,37 @@ func CloudChecks(p CloudProbe) []Check {
 		{"lab profile", func(ctx context.Context, _ System, _ Options) Result { return checkLabProfile(ctx, p) }},
 		{"state bucket", func(ctx context.Context, _ System, _ Options) Result { return checkStateBucket(ctx, p) }},
 		{"budget", func(ctx context.Context, _ System, _ Options) Result { return checkBudget(ctx, p) }},
+		{"eks version", func(ctx context.Context, _ System, _ Options) Result { return checkEKSVersion(ctx, p) }},
+		{"ttl reaper", func(ctx context.Context, _ System, _ Options) Result { return checkReaper(ctx, p) }},
 	}
+}
+
+func checkEKSVersion(ctx context.Context, p CloudProbe) Result {
+	if p.SessionErr != nil || p.EKSVersion == nil {
+		return Result{Status: Skip, Detail: "needs the " + p.Profile + " profile"}
+	}
+	choice, warnings, err := p.EKSVersion(ctx)
+	switch {
+	case err != nil:
+		return fail("the cloud lab runs only on EKS standard support: fix or remove cloud.k8sVersion in lab.yaml", "%v", err)
+	case len(warnings) > 0:
+		return warn("", "%s; %s", choice, strings.Join(warnings, "; "))
+	}
+	return ok("%s", choice)
+}
+
+func checkReaper(ctx context.Context, p CloudProbe) Result {
+	if p.SessionErr != nil || p.ReaperReady == nil {
+		return Result{Status: Skip, Detail: "needs the " + p.Profile + " profile"}
+	}
+	_, account, err := p.Identity(ctx)
+	if err != nil {
+		return Result{Status: Skip, Detail: "needs the " + p.Profile + " profile"}
+	}
+	if err := p.ReaperReady(ctx, account); err != nil {
+		return fail("lab up --mode cloud refuses until this passes", "%v", err)
+	}
+	return ok("reaper deletes for real and ran cleanly in the last 30 minutes")
 }
 
 func checkLabProfile(ctx context.Context, p CloudProbe) Result {

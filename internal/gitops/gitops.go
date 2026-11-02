@@ -64,6 +64,11 @@ const ObsNamespace = "monitoring"
 // GrafanaSecret holds Grafana's admin login, generated in the cluster.
 const GrafanaSecret = "grafana-admin"
 
+// NewHelm returns the Helm v4 SDK client the GitOps runner uses, for
+// providers that install a chart themselves before GitOps exists (the cloud
+// provider's Karpenter and Load Balancer Controller).
+func NewHelm(kubeconfig, home string) Helm { return newSDKHelm(kubeconfig, home) }
+
 // Helm installs and removes one release. The Helm v4 SDK implements it; tests
 // use a fake.
 type Helm interface {
@@ -74,7 +79,8 @@ type Helm interface {
 	Uninstall(ctx context.Context, name, namespace string, log io.Writer) error
 }
 
-// HelmRelease is a chart from a Helm repository.
+// HelmRelease is a chart from a Helm repository, or, with an empty
+// RepoURL, an oci:// chart reference.
 type HelmRelease struct {
 	Name, Namespace         string
 	RepoURL, Chart, Version string
@@ -134,6 +140,14 @@ func (r *Runner) Supports(stack string) bool {
 // Stacks lists the stacks the GitOps runner handles: gitops itself and the
 // stacks whose apps it switches on in the app-of-apps.
 func Stacks() []string { return append([]string{"gitops"}, appStacks...) }
+
+// overlayModes are the modes with overlays under gitops/overlays. Cloud
+// gets its overlay in the next phase-3 change; until then its GitOps
+// stacks are skipped at plan time.
+var overlayModes = []string{"local"}
+
+// HasOverlay reports whether the GitOps stacks can run in mode.
+func HasOverlay(mode string) bool { return slices.Contains(overlayModes, mode) }
 
 // Apply implements engine.Runner.
 func (r *Runner) Apply(ctx context.Context, stack string, log io.Writer) error {

@@ -24,7 +24,8 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 		Short: "Destroy every deployed stack, dependents first",
 		Long: "Destroys every stack recorded in ~/.lab/state.json in reverse dependency order. With\n" +
 			"--stacks, destroys only those stacks and the deployed stacks that need them. In local\n" +
-			"mode the registry's image cache volume is kept unless --purge is given.",
+			"mode the registry's image cache volume is kept unless --purge is given. In cloud mode,\n" +
+			"lab down then lists anything still tagged lab=true outside the baseline.",
 		Example: "  lab down\n  lab down --stacks sample-app",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -51,14 +52,18 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			if err := confirm(cmd, yes, q); err != nil {
 				return err
 			}
-			prov, err := newProvider(cfg, homeOf(store), runOptions{Purge: purge, Timeout: timeout})
+			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Purge: purge, Timeout: timeout}))
 			if err != nil {
 				return err
 			}
-			return run(cmd, prov, g, store, p, command)
+			if err := run(cmd, prov, g, store, p, command); err != nil {
+				return err
+			}
+			return reportCloudDown(cmd, prov, store)
 		},
 	}
 	flags.register(cmd)
+	flags.registerMode(cmd)
 	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the registry's image cache volume")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "destroy only these stacks and the deployed stacks that need them")

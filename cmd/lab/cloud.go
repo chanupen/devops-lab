@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -26,9 +27,9 @@ const baselineVarFile = "aws/baseline.tfvars"
 func newCloudCmd() *cobra.Command {
 	cloud := &cobra.Command{
 		Use:   "cloud",
-		Short: "Cloud mode: AWS session and account baseline",
+		Short: "Cloud mode: AWS session and account baseline (lab up --mode cloud runs the lab itself)",
 	}
-	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd())
+	cloud.AddCommand(newCloudLoginCmd(), newBaselineCmd(), newCloudPlanCmd(defaultProvider), newLeftoversCmd())
 	return cloud
 }
 
@@ -67,11 +68,11 @@ func (f *labFlags) labHome() (string, error) {
 // session is the AWS session for the profile, asking for the MFA code on
 // the terminal when the profile needs one and no cached session is valid.
 func (f *cloudFlags) session(cmd *cobra.Command) (labaws.Session, error) {
-	home, err := f.labHome()
+	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
 		return labaws.Session{}, err
 	}
-	s := labaws.Session{Profile: f.profile, CacheDir: filepath.Join(home, "aws")}
+	s := labaws.Session{Profile: f.profile, CacheDir: cache}
 	if in, ok := cmd.InOrStdin().(*os.File); ok && isatty.IsTerminal(in.Fd()) {
 		s.Prompt = terminalMFA(in, cmd.ErrOrStderr())
 	}
@@ -95,14 +96,16 @@ func newCloudLoginCmd() *cobra.Command {
 	var flags cloudFlags
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Assume lab-admin with MFA and cache the session for up to 4 hours",
+		Short: "Assume lab-admin with MFA and cache the session for up to 4 hours (shared with the aws CLI)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := flags.session(cmd)
 			if err != nil {
 				return err
 			}
-			s.Forget() // a login always asks for a fresh session
+			if err := s.Forget(cmd.Context()); err != nil { // a login always asks for a fresh session
+				return err
+			}
 			cfg, err := s.Config(cmd.Context())
 			if err != nil {
 				return err
@@ -301,12 +304,16 @@ func orDefault(v, def string) string {
 // checks run, asking for the MFA code only when interactive.
 func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
 	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
-	home, err := (&labFlags{}).labHome()
+	pin := ""
+	if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
+		pin = cfg.Cloud.K8sVersion
+	}
+	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
 		p.SessionErr = err
 		return p
 	}
-	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: filepath.Join(home, "aws")}
+	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: cache}
 	if in, ok := cmd.InOrStdin().(*os.File); interactive && ok && isatty.IsTerminal(in.Fd()) {
 		s.Prompt = terminalMFA(in, cmd.ErrOrStderr())
 	}
@@ -318,5 +325,61 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 	p.Identity = func(ctx context.Context) (string, string, error) { return labaws.Identity(ctx, cfg) }
 	p.BucketExists = func(ctx context.Context, account string) (bool, error) { return labaws.BucketExists(ctx, cfg, account) }
 	p.BudgetExists = func(ctx context.Context, account string) (bool, error) { return labaws.BudgetExists(ctx, cfg, account) }
+	p.EKSVersion = func(ctx context.Context) (string, []string, error) {
+		standard, err := labaws.StandardVersions(ctx, cfg)
+		if err != nil {
+			return "", nil, err
+		}
+		current, err := labaws.ClusterVersion(ctx, cfg, labaws.ClusterName)
+		if err != nil {
+			return "", nil, err
+		}
+		c, err := labaws.ChooseVersion(pin, current, standard, labaws.Compatibility)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("Kubernetes %s: %s", c.Version, c.Reason), c.Warnings, nil
+	}
+	p.ReaperReady = func(ctx context.Context, account string) error {
+		st, err := labaws.GetReaperStatus(ctx, cfg, account)
+		if err != nil {
+			return err
+		}
+		return st.Ready(time.Now())
+	}
 	return p
+}
+
+// newLeftoversCmd lists what a cloud lab left behind, for example to check
+// after the teardown build ran that nothing tagged lab=true is left.
+func newLeftoversCmd() *cobra.Command {
+	var flags cloudFlags
+	cmd := &cobra.Command{
+		Use:   "leftovers",
+		Short: "List everything still tagged lab=true outside the baseline; changes nothing",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, err := flags.session(cmd)
+			if err != nil {
+				return err
+			}
+			cfg, err := s.Config(cmd.Context())
+			if err != nil {
+				return err
+			}
+			left, err := labaws.Leftovers(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			if err := writeLeftovers(cmd.OutOrStdout(), left); err != nil {
+				return err
+			}
+			if len(left) > 0 {
+				return exitError{code: 1}
+			}
+			return nil
+		},
+	}
+	flags.register(cmd)
+	return cmd
 }

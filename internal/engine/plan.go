@@ -255,7 +255,7 @@ func PlanDown(g *Graph, cfg config.Config, st state.State, opts DownOptions) (Pl
 }
 
 func newPlan(cfg config.Config) Plan {
-	p := Plan{Mode: cfg.Mode, Profile: cfg.Profile, K8sVersion: cfg.K8sVersion}
+	p := Plan{Mode: cfg.Mode, Profile: cfg.Profile, K8sVersion: cfg.ClusterK8sVersion()}
 	inProfile, _ := ProfileStacks(cfg.Profile)
 	for _, s := range cfg.ExtraStacks {
 		if !slices.Contains(inProfile, s) && !slices.Contains(p.Extra, s) {
