@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
+───────────────────────────────────────────┬────────────────────────────────────────────────────────
+ Labs                                      │ Step 3 of 6: Deploy an app from Git                    
+ ◐ 01  Bootstrap Argo CD from scratch  2/6 │ ● ● ◐ ○ ○ ○                                            
+                                           │ ✕ not done yet: podinfo is OutOfSync, not Synced:      
+                                           │   argocd app sync podinfo                              
+                                           │                                                        
+                                           │ Create an Application named podinfo in the argocd      
+                                           │ namespace. Its source is the Helm chart at path        
+                                           │ charts/podinfo in                                      
+                                           │ https://github.com/stefanprodan/podinfo, at tag        
+                                           │ 6.17.0. Deploy it to the namespace podinfo in the same 
+                                           │ cluster. Then sync it.                                 
+                                           │                                                        
+                                           │ An Application is a Kubernetes object. Write it as     
+                                           │ YAML and apply it with kubectl, so it can live in Git  
+                                           │ too.                                                   
+                                           │                                                        
+                                           │ Hints                                                  
+                                           │ 1. The fields you need are spec.source.repoURL,        
+                                           │    targetRevision and path, and                        
+                                           │    spec.destination.server and namespace. The cluster  
+                                           │    Argo CD runs in is https://kubernetes.default.svc.  
+                                           │                                                        
+                                           │ h shows a hint (2 left)                                
+                                           │ ↓ more: j scrolls                                      
+───────────────────────────────────────────┴────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
+ j/k scroll  n/p next/previous step  v verify  h hint  esc back  ? help  q quit                     

@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Keys: Labs                                                                                         
+                                                                                                    
+  j k ↑ ↓     Move between labs; in a step, scroll its text                                         
+  enter       Open the current step: task, hints shown, expected result                             
+  n p         Next, previous step                                                                   
+  v           Verify the step shown (lab labs verify N); passing it moves you on                    
+  h           Show the step's next hint (lab labs hint N)                                           
+  esc         Back to the lab                                                                       
+                                                                                                    
+  1 2 3 5     Home, Stacks, Labs, Ops log                                                           
+  U           Bring the whole profile up (lab up)                                                   
+  :           Command palette: up, down, status, doctor, plan                                       
+  K           Open k9s on the lab cluster; quit it to come back                                     
+  ?           This help                                                                             
+  q  ctrl+c   Quit                                                                                  
+                                                                                                    
+  Only one operation runs at a time; other action keys say busy.                                    
+  A TUI opened while another lab changes things is read-only: views and                             
+  reports work, actions do not, until the other lab is done.                                        
+  Every action shows its CLI command in the ops strip.                                              
+                                                                                                    
+  State: ● healthy  ◐ progressing  ○ off  ✕ failed                                                  
+                                                                                                    
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
+ any key closes help  q quit                                                                        

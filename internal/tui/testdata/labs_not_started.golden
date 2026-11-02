@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
+───────────────────────────────────────────┬────────────────────────────────────────────────────────
+ Labs                                      │ Bootstrap Argo CD from scratch                         
+ ○ 01  Bootstrap Argo CD from scratch  0/6 │ 01-argocd-bootstrap · about 45m · beginner · runs on i…
+                                           │ ○ not started · $ lab labs start 01                    
+                                           │                                                        
+                                           │ ○ 1  Install Argo CD with Helm                         
+                                           │ ○ 2  Log in with the argocd CLI                        
+                                           │ ○ 3  Deploy an app from Git                            
+                                           │ ○ 4  Turn on auto-sync                                 
+                                           │ ○ 5  Watch Argo CD undo drift                          
+                                           │ ○ 6  Manage apps with an app of apps                   
+                                           │                                                        
+                                           │ Argo CD keeps a cluster in line with what Git says. In 
+                                           │ this lab you install it on an empty cluster, deploy an 
+                                           │ app from Git, watch it undo a change made by hand, and 
+                                           │ then let one Application manage others.                
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+───────────────────────────────────────────┴────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
+ j/k move  enter current step  v verify  h hint  n/p steps  ? help  q quit                          

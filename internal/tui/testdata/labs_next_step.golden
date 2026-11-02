@@ -1,0 +1,30 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
+───────────────────────────────────────────┬────────────────────────────────────────────────────────
+ Labs                                      │ Step 4 of 6: Turn on auto-sync                         
+ ◐ 01  Bootstrap Argo CD from scratch  2/6 │ ● ● ◐ ○ ○ ○                                            
+                                           │                                                        
+                                           │ Make Argo CD sync podinfo on its own. Turn on self-    
+                                           │ heal, so it undoes changes made in the cluster. Turn   
+                                           │ on prune, so it deletes what was removed from Git.     
+                                           │                                                        
+                                           │ h shows a hint (2 left)                                
+                                           │                                                        
+                                           │ Expected result                                        
+                                           │ The Application's sync policy is automated, with prune 
+                                           │ and self-heal on.                                      
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+                                           │                                                        
+───────────────────────────────────────────┴────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
+ j/k scroll  n/p next/previous step  v verify  h hint  esc back  ? help  q quit                     
