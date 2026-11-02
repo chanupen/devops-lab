@@ -87,9 +87,11 @@ func TestCompatibilityMatchesPins(t *testing.T) {
 
 func TestReaperReady(t *testing.T) {
 	now := t0
+	pass := &reaper.SelfTest{TeardownState: reaper.SelfTestOK, TeardownProject: reaper.SelfTestOK}
 	hb := func(age time.Duration, dry bool) *reaper.Heartbeat {
-		return &reaper.Heartbeat{Time: now.Add(-age), DryRun: dry}
+		return &reaper.Heartbeat{Time: now.Add(-age), DryRun: dry, Clean: true, SelfTest: pass}
 	}
+	incident := "teardown state: operation error S3: GetObject, https response error StatusCode: 403, api error AccessDenied"
 	tests := []struct {
 		name string
 		st   ReaperStatus
@@ -98,10 +100,18 @@ func TestReaperReady(t *testing.T) {
 		{"armed and recent", ReaperStatus{Heartbeat: hb(14*time.Minute, false)}, ""},
 		{"exactly 30 minutes is still recent", ReaperStatus{Heartbeat: hb(30*time.Minute, false)}, ""},
 		{"dry run", ReaperStatus{DryRun: true, Heartbeat: hb(time.Minute, true)}, "dry run"},
-		{"never ran cleanly", ReaperStatus{}, "never finished a clean run"},
+		{"never ran", ReaperStatus{}, "never written a heartbeat"},
 		{"switched on, last run still dry", ReaperStatus{Heartbeat: hb(5*time.Minute, true)}, "was a dry run"},
 		{"stale", ReaperStatus{Heartbeat: hb(31*time.Minute, false)}, "31m0s ago"},
-		{"an earlier lab needs manual action", ReaperStatus{Heartbeat: &reaper.Heartbeat{Time: now, ManualAction: true,
+		{"recent but not clean (2 Nov: 403 on the teardown state)", ReaperStatus{Heartbeat: &reaper.Heartbeat{Time: now,
+			SelfTest: &reaper.SelfTest{TeardownState: "api error AccessDenied", TeardownProject: reaper.SelfTestOK},
+			Errors:   []string{incident, "self-test: teardown state: api error AccessDenied"}}}, "was not clean"},
+		{"self-test failed, no other errors recorded", ReaperStatus{Heartbeat: &reaper.Heartbeat{Time: now, Clean: true,
+			SelfTest: &reaper.SelfTest{TeardownState: reaper.SelfTestOK, TeardownProject: "CodeBuild project lab-teardown not found"}}},
+			"teardown project: CodeBuild project lab-teardown not found"},
+		{"heartbeat from a reaper without the self-test", ReaperStatus{Heartbeat: &reaper.Heartbeat{Time: now, Clean: true}},
+			"predates its self-test"},
+		{"an earlier lab needs manual action", ReaperStatus{Heartbeat: &reaper.Heartbeat{Time: now, ManualAction: true, Clean: true, SelfTest: pass,
 			Teardown: "manual action needed: 6 teardown builds did not clear the lab"}}, "not torn down after 6 attempts"},
 	}
 	for _, tt := range tests {
@@ -216,6 +226,58 @@ func TestClusterModuleGuardrails(t *testing.T) {
 	bdm := field(t, nc, "spec", "blockDeviceMappings").([]any)[0].(map[string]any)["ebs"].(map[string]any)
 	if bdm["volumeSize"] != "20Gi" || bdm["volumeType"] != "gp3" {
 		t.Errorf("Karpenter root disk = %v", bdm)
+	}
+}
+
+// The dead man's switch must say when it fails: on 2 Nov 2026 the reaper
+// failed every run for five hours and nobody heard. Its async runs go to
+// the lab-teardown topic on failure, its role may publish there, it may
+// list only teardown/ (so a missing state reads as 404, not 403), may
+// write only its own state there, and may see the teardown project for
+// its self-test.
+func TestReaperFailureDestination(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "infra", "terraform", "aws", "baseline", "reaper.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	// upTo returns src from start to the first line that is exactly end.
+	upTo := func(start, end string) string {
+		i := strings.Index(src, start)
+		if i < 0 {
+			t.Fatalf("reaper.tf has no %s", start)
+		}
+		rest := src[i:]
+		j := strings.Index(rest, end)
+		if j < 0 {
+			t.Fatalf("%s has no end", start)
+		}
+		return rest[:j]
+	}
+	cfg := upTo(`resource "aws_lambda_function_event_invoke_config" "reaper"`, "\n}\n")
+	for _, want := range []string{"aws_lambda_function.reaper.function_name", "on_failure {", "destination = aws_sns_topic.teardown.arn"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("event invoke config lacks %s", want)
+		}
+	}
+	for sid, wants := range map[string][]string{
+		"EmailOwner":              {`"sns:Publish"`, "aws_sns_topic.teardown.arn"},
+		"ListTeardownPrefix":      {`"s3:ListBucket"`, `resources = [aws_s3_bucket.state.arn]`, `variable = "s3:prefix"`, `values   = ["teardown/", "teardown/*"]`},
+		"ReadTeardownPrefix":      {`"s3:GetObject"`, `/teardown/*"]`},
+		"TeardownAttempts":        {`"s3:PutObject", "s3:DeleteObject"`, `/` + reaper.TeardownStateKey + `"]`},
+		"SelfTestTeardownProject": {`"codebuild:BatchGetProjects"`, "project/${local.teardown_name}"},
+	} {
+		stmt := upTo(`sid       = "`+sid+`"`, "\n  }\n")
+		for _, want := range wants {
+			if !strings.Contains(stmt, want) {
+				t.Errorf("%s lacks %s", sid, want)
+			}
+		}
+	}
+	// teardown/ also holds teardown.sh and the module bundles, which the
+	// teardown build runs with destroy rights: the reaper must not write them.
+	if regexp.MustCompile(`"s3:(PutObject|DeleteObject)"[^}]*/teardown/\*`).MatchString(src) {
+		t.Error("the reaper may write anything under teardown/")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,24 +29,33 @@ const ReaperMaxAge = 30 * time.Minute
 // switch.
 type ReaperStatus struct {
 	DryRun    bool              // the function's DRY_RUN setting
-	Heartbeat *reaper.Heartbeat // last clean run; nil when there is none
+	Heartbeat *reaper.Heartbeat // last scheduled run, clean or not; nil when there is none
 }
 
-// Ready is nil when the reaper deletes for real and ran cleanly within
-// ReaperMaxAge of now.
+// Ready is nil when the reaper deletes for real and its latest run, within
+// ReaperMaxAge of now, was clean and passed its self-test.
 func (s ReaperStatus) Ready(now time.Time) error {
 	switch {
 	case s.DryRun:
 		return errors.New("the TTL reaper is in dry run, so an expired lab would keep billing: " +
 			"set reaper_dry_run = false in ~/.lab/aws/baseline.tfvars and run lab cloud baseline apply")
 	case s.Heartbeat == nil:
-		return errors.New("the TTL reaper has never finished a clean run: check its CloudWatch logs (/aws/lambda/" + ReaperFunction + ")")
+		return errors.New("the TTL reaper has never written a heartbeat: check its CloudWatch logs (/aws/lambda/" + ReaperFunction + ")")
 	case s.Heartbeat.DryRun:
 		return fmt.Errorf("the TTL reaper's last clean run (%s) was a dry run; wait for the next run (every 15 minutes)",
 			s.Heartbeat.Time.Local().Format("15:04"))
 	case now.Sub(s.Heartbeat.Time) > ReaperMaxAge:
-		return fmt.Errorf("the TTL reaper's last clean run was %s ago (at %s), more than %s: check its CloudWatch logs (/aws/lambda/%s)",
+		return fmt.Errorf("the TTL reaper's last run was %s ago (at %s), more than %s: check its CloudWatch logs (/aws/lambda/%s)",
 			now.Sub(s.Heartbeat.Time).Round(time.Minute), s.Heartbeat.Time.Local().Format("15:04"), ReaperMaxAge, ReaperFunction)
+	case s.Heartbeat.SelfTest == nil:
+		return errors.New("the TTL reaper predates its self-test: run lab cloud baseline apply, then wait for the next run (every 15 minutes)")
+	case !s.Heartbeat.SelfTest.OK() || !s.Heartbeat.Clean:
+		errs := s.Heartbeat.Errors
+		if len(errs) == 0 {
+			errs = s.Heartbeat.SelfTest.Failures()
+		}
+		return fmt.Errorf("the TTL reaper's last run (at %s) was not clean, so it may not tear down an expired lab: %s; check its CloudWatch logs (/aws/lambda/%s)",
+			s.Heartbeat.Time.Local().Format("15:04"), strings.Join(errs, "; "), ReaperFunction)
 	case s.Heartbeat.ManualAction:
 		return fmt.Errorf("an earlier cloud lab was not torn down after %d attempts (%s); clean it up first: "+
 			"lab down --mode cloud, then lab cloud leftovers", reaper.MaxAttempts, s.Heartbeat.Teardown)

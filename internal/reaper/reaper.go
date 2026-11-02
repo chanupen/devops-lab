@@ -15,6 +15,10 @@
 //     lab resources remain it starts the build again, at most MaxAttempts
 //     times, then emails "manual action needed".
 //
+// It fails toward teardown: when it cannot read how many builds it already
+// started, it starts one anyway and reports the error, so the Lambda run
+// fails and its on-failure destination emails the owner.
+//
 // Resources with no expires-at (the account baseline) are always kept.
 package reaper
 
@@ -136,8 +140,10 @@ type Teardown interface {
 	Running(ctx context.Context) (string, error)
 	// Get is one build's state.
 	Get(ctx context.Context, id string) (Build, error)
-	// Start starts a build, telling it which attempt it is.
+	// Start starts a build, telling it which attempt it is (0: unknown).
 	Start(ctx context.Context, attempt, maxAttempts int) (id string, err error)
+	// Check is nil when the teardown project exists and the reaper can see it.
+	Check(ctx context.Context) error
 }
 
 // TeardownState is what the reaper remembers between runs about the
@@ -152,8 +158,10 @@ type TeardownState struct {
 	Updated   time.Time `json:"updated"`
 }
 
-// TeardownStateKey is where TeardownState lives in the state bucket.
-const TeardownStateKey = "reaper/teardown.json"
+// TeardownStateKey is where TeardownState lives in the state bucket. It
+// sits under teardown/, the prefix the reaper may list: without
+// s3:ListBucket, S3 answers 403 instead of 404 for a missing key.
+const TeardownStateKey = "teardown/state.json"
 
 // StateStore keeps TeardownState.
 type StateStore interface {
@@ -321,12 +329,16 @@ func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) 
 		res.Errors = append(res.Errors, "teardown: no teardown build configured")
 		return
 	}
+	// Fail toward teardown: if the state cannot be read, the attempt count
+	// is unknown, but the build still starts. The state is then not saved
+	// either, so a count the reaper could not read is never overwritten.
 	var st TeardownState
+	unknown := false
 	if env.Store != nil {
 		var err error
 		if st, err = env.Store.Load(ctx); err != nil {
-			fail("teardown state", err)
-			return
+			fail("teardown state (starting the build anyway, attempt unknown)", err)
+			st, unknown = TeardownState{}, true
 		}
 	}
 	if id := lab.UTC().Format(time.RFC3339); st.Lab != id {
@@ -344,10 +356,9 @@ func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) 
 	if st.LastBuild != "" {
 		b, err := env.Teardown.Get(ctx, st.LastBuild)
 		if err != nil {
-			fail("teardown", err)
-			return
+			fail("teardown: last build "+st.LastBuild+" (starting another anyway)", err)
 		}
-		if b.State == BuildSucceeded && now.Sub(b.End) < SettleAfterSuccess {
+		if err == nil && b.State == BuildSucceeded && now.Sub(b.End) < SettleAfterSuccess {
 			res.Teardown = fmt.Sprintf("build %s succeeded %s ago; waiting up to %s for the tagging API before another attempt",
 				b.ID, now.Sub(b.End).Round(time.Minute), SettleAfterSuccess)
 			return
@@ -355,7 +366,7 @@ func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) 
 	}
 	save := func() {
 		st.Updated = now
-		if env.Store != nil {
+		if env.Store != nil && !unknown {
 			if err := env.Store.Save(ctx, st); err != nil {
 				fail("teardown state", err)
 			}
@@ -375,7 +386,11 @@ func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) 
 		save()
 		return
 	}
-	id, err := env.Teardown.Start(ctx, st.Attempts+1, MaxAttempts)
+	attempt := st.Attempts + 1
+	if unknown {
+		attempt = 0
+	}
+	id, err := env.Teardown.Start(ctx, attempt, MaxAttempts)
 	if err != nil {
 		fail("teardown", err)
 		return
@@ -383,6 +398,9 @@ func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) 
 	st.Attempts++
 	st.LastBuild = id
 	res.Teardown = fmt.Sprintf("started build %s (attempt %d of %d)", id, st.Attempts, MaxAttempts)
+	if unknown {
+		res.Teardown = fmt.Sprintf("started build %s (attempt unknown: teardown state unreadable)", id)
+	}
 	save()
 }
 
@@ -496,11 +514,57 @@ func parseARN(arn string) (Kind, string, error) {
 	return "", "", fmt.Errorf("type %s:%s is not handled yet", service, typ)
 }
 
-// HeartbeatKey is where the reaper records its last successful run in the
-// state bucket. lab up --mode cloud refuses to start without a recent one.
+// HeartbeatKey is where the reaper records its last scheduled run in the
+// state bucket. lab up --mode cloud refuses to start unless it is recent
+// and clean.
 const HeartbeatKey = "reaper/heartbeat.json"
 
-// Heartbeat is the body of HeartbeatKey.
+// SelfTestOK is a passed self-test check.
+const SelfTestOK = "ok"
+
+// SelfTest is what each scheduled run checks about itself: that it could
+// start and count a teardown if a lab expired now. Each field is
+// SelfTestOK or why the check failed.
+type SelfTest struct {
+	// TeardownState: the reaper can read its teardown state (a missing
+	// object is fine: no expired lab yet).
+	TeardownState string `json:"teardownState"`
+	// TeardownProject: the reaper can see the teardown CodeBuild project.
+	TeardownProject string `json:"teardownProject"`
+}
+
+// OK is true when every check passed.
+func (s SelfTest) OK() bool { return s.TeardownState == SelfTestOK && s.TeardownProject == SelfTestOK }
+
+// Failures lists the checks that failed.
+func (s SelfTest) Failures() []string {
+	var out []string
+	if s.TeardownState != SelfTestOK {
+		out = append(out, "self-test: teardown state: "+s.TeardownState)
+	}
+	if s.TeardownProject != SelfTestOK {
+		out = append(out, "self-test: teardown project: "+s.TeardownProject)
+	}
+	return out
+}
+
+// CheckSelf runs the self-test. It only reads.
+func CheckSelf(ctx context.Context, env Env) SelfTest {
+	st := SelfTest{TeardownState: SelfTestOK, TeardownProject: SelfTestOK}
+	if env.Store == nil {
+		st.TeardownState = "no state bucket configured"
+	} else if _, err := env.Store.Load(ctx); err != nil {
+		st.TeardownState = err.Error()
+	}
+	if env.Teardown == nil {
+		st.TeardownProject = "no teardown project configured"
+	} else if err := env.Teardown.Check(ctx); err != nil {
+		st.TeardownProject = err.Error()
+	}
+	return st
+}
+
+// Heartbeat is the body of HeartbeatKey, written after every scheduled run.
 type Heartbeat struct {
 	Time     time.Time `json:"time"`
 	DryRun   bool      `json:"dryRun"`
@@ -511,4 +575,11 @@ type Heartbeat struct {
 	// ManualAction: the teardown gave up on an expired lab. lab up --mode
 	// cloud refuses until it is cleared.
 	ManualAction bool `json:"manualAction,omitempty"`
+	// Clean: the run had no errors and its self-test passed. Only a
+	// clean heartbeat lets a cloud lab start.
+	Clean  bool     `json:"clean"`
+	Errors []string `json:"errors,omitempty"`
+	// SelfTest is nil in heartbeats from reapers older than the self-test;
+	// those never count as clean.
+	SelfTest *SelfTest `json:"selfTest,omitempty"`
 }
