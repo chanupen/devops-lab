@@ -102,6 +102,9 @@ func imageMinor(image string) (string, error) {
 type kindClusters struct {
 	p    *cluster.Provider
 	wait time.Duration
+	// kubeconfig is the file kind adds the cluster to and removes it from;
+	// "" is kind's default ($KUBECONFIG or ~/.kube/config).
+	kubeconfig string
 }
 
 func newKindClusters(logger log.Logger) *kindClusters {
@@ -125,10 +128,11 @@ func (k *kindClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 		cluster.CreateWithWaitForReady(k.wait),
 		cluster.CreateWithDisplayUsage(false),
 		cluster.CreateWithDisplaySalutation(false),
+		cluster.CreateWithKubeconfigPath(k.kubeconfig),
 	)
 }
 
 func (k *kindClusters) KubeConfig(name string) (string, error) { return k.p.KubeConfig(name, false) }
 
-// Delete removes the cluster and its kubeconfig context ("" = default kubeconfig).
-func (k *kindClusters) Delete(name string) error { return k.p.Delete(name, "") }
+// Delete removes the cluster and its context from k.kubeconfig.
+func (k *kindClusters) Delete(name string) error { return k.p.Delete(name, k.kubeconfig) }
