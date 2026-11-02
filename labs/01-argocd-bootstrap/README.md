@@ -17,12 +17,14 @@ Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time
 
 ## Step 1: Install Argo CD with Helm
 
-Install Argo CD into the `argocd` namespace with Helm. Use the `argo-cd` chart from `https://argoproj.github.io/argo-helm`, version `10.10.5`.
+Install Argo CD into the `argocd` namespace with Helm. Use the `argo-cd` chart, version `10.10.5`, from the OCI registry `oci://ghcr.io/argoproj/argo-helm`.
+
+Charts can come from an OCI registry, like images. The same chart is also in the classic Helm repository `https://argoproj.github.io/argo-helm`.
 
 Always pin the chart version. Without a pin, the same command installs something different next month.
 
 ### Hints
-- `helm install` takes `--repo` with the chart repository URL, so you do not need `helm repo add`.
+- `helm install` takes an OCI reference as the chart: `oci://<registry>/<path>/<chart>`. You do not need `helm repo add`.
 - Pin the version with `--version 10.10.5`. Create the namespace with `--create-namespace`.
 - `--wait` makes Helm wait until the pods are Ready. Give it a few minutes with `--timeout 10m`.
 
