@@ -46,7 +46,7 @@ type cloudLab interface {
 	Account() string
 	PreflightCheck(ctx context.Context, w io.Writer) error
 	Extend(ctx context.Context, d time.Duration, log io.Writer) (time.Time, []string, error)
-	Leftovers(ctx context.Context) ([]labaws.Tagged, error)
+	Leftovers(ctx context.Context) (labaws.LeftoverReport, error)
 	Finish() error
 }
 
@@ -141,16 +141,29 @@ func reportCloudDown(cmd *cobra.Command, prov provider, store *state.Store) erro
 	return writeLeftovers(cmd.OutOrStdout(), left)
 }
 
-func writeLeftovers(w io.Writer, left []labaws.Tagged) error {
+// writeLeftovers prints what is really left, then the stale tagging-index
+// entries it ignored, then lookups that failed.
+func writeLeftovers(w io.Writer, rep labaws.LeftoverReport) error {
 	var b strings.Builder
-	if len(left) == 0 {
+	if len(rep.Left) == 0 {
 		b.WriteString("\nnothing tagged lab=true is left outside the baseline\n")
 	} else {
-		fmt.Fprintf(&b, "\nstill tagged lab=true outside the baseline (%d); these may still bill:\n", len(left))
-		for _, t := range left {
+		fmt.Fprintf(&b, "\nstill tagged lab=true outside the baseline (%d); these may still bill:\n", len(rep.Left))
+		for _, t := range rep.Left {
 			fmt.Fprintf(&b, "  %s  expires-at=%s\n", labaws.ShortARN(t.ARN), orDash(t.Tags[labaws.ExpiresTag]))
 		}
-		b.WriteString("The tagging API can list a deleted resource for a few minutes; run lab down again to recheck.\n")
+	}
+	if len(rep.Stale) > 0 {
+		fmt.Fprintf(&b, "\nstale index entries (ignored) (%d): the tagging API still lists these, but they are terminated or not found:\n", len(rep.Stale))
+		for _, t := range rep.Stale {
+			fmt.Fprintf(&b, "  %s\n", labaws.ShortARN(t.ARN))
+		}
+	}
+	if len(rep.Errors) > 0 {
+		b.WriteString("\ncould not check (listed above as still there):\n")
+		for _, e := range rep.Errors {
+			fmt.Fprintf(&b, "  %s\n", e)
+		}
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

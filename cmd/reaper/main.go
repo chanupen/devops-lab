@@ -38,6 +38,10 @@ import (
 // Event is the Lambda input. The EventBridge schedule sends an empty one.
 type Event struct {
 	SweepOnly bool `json:"sweepOnly"`
+	// Leftovers only reports what is left outside the baseline, with stale
+	// tagging-index entries split off; it changes nothing. The teardown
+	// build asks for it for its final report.
+	Leftovers bool `json:"leftovers"`
 }
 
 // dryRun is true unless DRY_RUN is set to a false value.
@@ -46,12 +50,15 @@ func dryRun() bool {
 	return err != nil || v
 }
 
-func handle(ctx context.Context, ev Event) (reaper.Result, error) {
+func handle(ctx context.Context, ev Event) (any, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return reaper.Result{}, err
+		return nil, err
 	}
 	a := reaper.NewAWS(cfg)
+	if ev.Leftovers {
+		return reaper.FindLeftovers(ctx, a, a)
+	}
 	env := reaper.Env{Lister: a, Deleter: a, VPCs: a, Checker: a}
 	if p := os.Getenv("TEARDOWN_PROJECT"); p != "" {
 		env.Teardown = reaper.CodeBuild{Client: codebuild.NewFromConfig(cfg), Project: p}

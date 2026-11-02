@@ -435,7 +435,9 @@ func (p *Provider) Extend(ctx context.Context, d time.Duration, log io.Writer) (
 }
 
 // Leftovers lists lab=true resources outside the baseline.
-func (p *Provider) Leftovers(ctx context.Context) ([]Tagged, error) { return Leftovers(ctx, p.cfg) }
+func (p *Provider) Leftovers(ctx context.Context) (LeftoverReport, error) {
+	return Leftovers(ctx, p.cfg)
+}
 
 // Finish clears the expiry once lab down has destroyed every stack.
 func (p *Provider) Finish() error { return ClearExpiry(p.opts.Home) }

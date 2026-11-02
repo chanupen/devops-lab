@@ -29,8 +29,18 @@ case "$1 $2" in
   key=$(arg --key "$@")
   [ -f "$FAKE_S3/$key" ] || exit 254
   cat "$FAKE_S3/$key.modified" ;;
-"resourcegroupstaggingapi get-resources") echo '{"ResourceTagMappingList":[]}' ;;
-"lambda invoke") for last; do :; done; echo '{}' >"$last"; echo '{}' ;;
+"resourcegroupstaggingapi get-resources")
+  if [ -n "${FAKE_TAGGED:-}" ]; then echo "$FAKE_TAGGED"; else echo '{"ResourceTagMappingList":[]}'; fi ;;
+"lambda invoke")
+  for last; do :; done
+  case "$*" in
+  *leftovers*)
+    [ -n "${FAKE_LEFTOVERS:-}" ] || exit 255
+    echo "$FAKE_LEFTOVERS" >"$last"
+    if [ "${FAKE_LEFTOVERS_FAIL:-}" = 1 ]; then echo '{"FunctionError":"Unhandled"}'; exit 0; fi ;;
+  *) echo '{}' >"$last" ;;
+  esac
+  echo '{}' ;;
 esac
 exit 0
 `
@@ -74,11 +84,17 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 	}
 }
 
-// The teardown build must not destroy a newer lab: on 2 Nov 2026 build
-// cd95d461 checked for bundles at 16:34:10Z, 16 and 27 seconds before a
-// new lab uploaded them. These run the real teardown.sh with a fake aws,
-// curl and tofu.
-func TestTeardownScriptLeavesANewerLabAlone(t *testing.T) {
+// scriptRun is one run of the real teardown.sh with a fake aws, curl and
+// tofu, and a cluster bundle in the fake bucket.
+type scriptRun struct {
+	expires time.Time
+	lockAge time.Duration // 0: no lock
+	env     []string      // FAKE_LEFTOVERS, FAKE_TAGGED, ...
+}
+
+// run returns the commands the script called and its output.
+func (r scriptRun) run(t *testing.T) (calls, out string) {
+	t.Helper()
 	for _, tool := range []string{"bash", "jq", "unzip", "sha256sum", "date"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("needs %s", tool)
@@ -88,75 +104,145 @@ func TestTeardownScriptLeavesANewerLabAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
+	bin, tofuBin, s3, work, tmp := filepath.Join(dir, "bin"), filepath.Join(dir, "tofu"), filepath.Join(dir, "s3"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp")
+	for _, d := range []string{tofuBin, work, tmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(bin, "aws"), fakeAWS, 0o755)
+	write(t, filepath.Join(bin, "curl"), fakeCurl, 0o755)
+	write(t, filepath.Join(bin, "sleep"), "#!/bin/sh\n", 0o755)
+	tofuZip := zipFiles(t, map[string]string{"tofu": fakeTofu}, 0o755)
+	write(t, filepath.Join(dir, "tofu.zip"), string(tofuZip), 0o644)
+	sum := sha256.Sum256(tofuZip)
+
+	b := zipFiles(t, map[string]string{
+		"main.tf":             `resource "aws_vpc" "lab" {}`,
+		"backend.tf":          "terraform {\n  backend \"s3\" {\n    key = \"" + reaper.ClusterStateKey + "\"\n  }\n}\n",
+		reaper.BundleVarsFile: `{"owner":"lab","expires_at":"` + r.expires.Format(time.RFC3339) + `"}`,
+	}, 0o644)
+	write(t, filepath.Join(s3, reaper.BundleKey("cluster")), string(b), 0o644)
+	if r.lockAge > 0 {
+		lock := filepath.Join(s3, reaper.ClusterStateKey+".tflock")
+		write(t, lock, `{"ID":"x","Operation":"OperationTypeApply","Who":"lab@host","Version":"1.13.2"}`, 0o644)
+		write(t, lock+".modified", time.Now().UTC().Add(-r.lockAge).Format(time.RFC3339), 0o644)
+	}
+
+	callsFile := filepath.Join(dir, "calls")
+	cmd := exec.Command("bash", script)
+	cmd.Dir = work
+	cmd.Env = append([]string{
+		"PATH=" + bin + ":" + tofuBin + ":/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + tmp, "TOFU_BIN_DIR=" + tofuBin,
+		"CALLS=" + callsFile, "FAKE_S3=" + s3, "FAKE_TOFU_ZIP=" + filepath.Join(dir, "tofu.zip"),
+		"BUCKET=lab-tofu-state-111122223333", "REAPER=lab-ttl-reaper", "TOPIC=arn:aws:sns:ap-south-1:111122223333:lab-teardown",
+		"TOFU_VERSION=1.13.2", "TOFU_SHA256=" + hex.EncodeToString(sum[:]), "ATTEMPT=1", "MAX_ATTEMPTS=6",
+	}, r.env...)
+	o, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("teardown.sh: %v\n%s", err, o)
+	}
+	c, _ := os.ReadFile(callsFile)
+	return string(c), string(o)
+}
+
+// The teardown build must not destroy a newer lab: on 2 Nov 2026 build
+// cd95d461 checked for bundles at 16:34:10Z, 16 and 27 seconds before a
+// new lab uploaded them.
+func TestTeardownScriptLeavesANewerLabAlone(t *testing.T) {
 	now := time.Now().UTC()
 	tests := []struct {
 		name    string
-		expires time.Time
-		lockAge time.Duration // 0: no lock
+		run     scriptRun
 		destroy bool
 		output  string
 	}{
 		{name: "bundle expires-at in the future: exits without destroying or sweeping",
-			expires: now.Add(2 * time.Hour), output: "is in the future"},
+			run: scriptRun{expires: now.Add(2 * time.Hour)}, output: "is in the future"},
 		{name: "lab apply holds the state lock: exits without destroying",
-			expires: now.Add(-time.Hour), lockAge: 5 * time.Minute, output: "OperationTypeApply by lab@host): a lab apply is running"},
+			run:    scriptRun{expires: now.Add(-time.Hour), lockAge: 5 * time.Minute},
+			output: "OperationTypeApply by lab@host): a lab apply is running"},
 		{name: "a lock from a lab that died mid-apply does not block",
-			expires: now.Add(-3 * time.Hour), lockAge: 2 * time.Hour, destroy: true, output: "cluster: destroyed"},
+			run: scriptRun{expires: now.Add(-3 * time.Hour), lockAge: 2 * time.Hour}, destroy: true, output: "cluster: destroyed"},
 		{name: "expired, no lock: destroys",
-			expires: now.Add(-time.Hour), destroy: true, output: "cluster: destroyed"},
+			run: scriptRun{expires: now.Add(-time.Hour)}, destroy: true, output: "cluster: destroyed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			bin, tofuBin, s3, work, tmp := filepath.Join(dir, "bin"), filepath.Join(dir, "tofu"), filepath.Join(dir, "s3"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp")
-			for _, d := range []string{tofuBin, work, tmp} {
-				if err := os.MkdirAll(d, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			}
-			write(t, filepath.Join(bin, "aws"), fakeAWS, 0o755)
-			write(t, filepath.Join(bin, "curl"), fakeCurl, 0o755)
-			write(t, filepath.Join(bin, "sleep"), "#!/bin/sh\n", 0o755)
-			tofuZip := zipFiles(t, map[string]string{"tofu": fakeTofu}, 0o755)
-			write(t, filepath.Join(dir, "tofu.zip"), string(tofuZip), 0o644)
-			sum := sha256.Sum256(tofuZip)
-
-			b := zipFiles(t, map[string]string{
-				"main.tf":             `resource "aws_vpc" "lab" {}`,
-				"backend.tf":          "terraform {\n  backend \"s3\" {\n    key = \"" + reaper.ClusterStateKey + "\"\n  }\n}\n",
-				reaper.BundleVarsFile: `{"owner":"lab","expires_at":"` + tt.expires.Format(time.RFC3339) + `"}`,
-			}, 0o644)
-			write(t, filepath.Join(s3, reaper.BundleKey("cluster")), string(b), 0o644)
-			if tt.lockAge > 0 {
-				lock := filepath.Join(s3, reaper.ClusterStateKey+".tflock")
-				write(t, lock, `{"ID":"x","Operation":"OperationTypeApply","Who":"lab@host","Version":"1.13.2"}`, 0o644)
-				write(t, lock+".modified", now.Add(-tt.lockAge).Format(time.RFC3339), 0o644)
-			}
-
-			calls := filepath.Join(dir, "calls")
-			cmd := exec.Command("bash", script)
-			cmd.Dir = work
-			cmd.Env = []string{
-				"PATH=" + bin + ":" + tofuBin + ":/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + tmp, "TOFU_BIN_DIR=" + tofuBin,
-				"CALLS=" + calls, "FAKE_S3=" + s3, "FAKE_TOFU_ZIP=" + filepath.Join(dir, "tofu.zip"),
-				"BUCKET=lab-tofu-state-111122223333", "REAPER=lab-ttl-reaper", "TOPIC=arn:aws:sns:ap-south-1:111122223333:lab-teardown",
-				"TOFU_VERSION=1.13.2", "TOFU_SHA256=" + hex.EncodeToString(sum[:]), "ATTEMPT=1", "MAX_ATTEMPTS=6",
-			}
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("teardown.sh: %v\n%s", err, out)
-			}
-			got, _ := os.ReadFile(calls)
-			destroyed := strings.Contains(string(got), "tofu destroy")
-			swept := strings.Contains(string(got), "aws lambda invoke")
+			calls, out := tt.run.run(t)
+			destroyed := strings.Contains(calls, "tofu destroy")
+			swept := strings.Contains(calls, "sweepOnly")
 			if destroyed != tt.destroy || swept != tt.destroy {
-				t.Errorf("destroyed %v, swept %v, want %v\ncalls:\n%s\noutput:\n%s", destroyed, swept, tt.destroy, got, out)
+				t.Errorf("destroyed %v, swept %v, want %v\ncalls:\n%s\noutput:\n%s", destroyed, swept, tt.destroy, calls, out)
 			}
-			if !strings.Contains(string(out), tt.output) {
+			if !strings.Contains(out, tt.output) {
 				t.Errorf("output lacks %q:\n%s", tt.output, out)
 			}
-			if !tt.destroy && !strings.Contains(string(got), `--subject lab teardown skipped (a newer lab owns the state)`) {
-				t.Errorf("summary email not marked skipped:\n%s", got)
+			if !tt.destroy && !strings.Contains(calls, `--subject lab teardown skipped (a newer lab owns the state)`) {
+				t.Errorf("summary email not marked skipped:\n%s", calls)
+			}
+		})
+	}
+}
+
+// The final report goes through the reaper's direct lookups: stale index
+// entries (on 2 Nov 2026, a terminated instance and a deleted security
+// group and volume) are listed apart and do not count as leftovers.
+func TestTeardownScriptReport(t *testing.T) {
+	const (
+		staleInstance = "arn:aws:ec2:ap-south-1:111122223333:instance/i-05f7266bbe4e3b48e"
+		staleSG       = "arn:aws:ec2:ap-south-1:111122223333:security-group/sg-004c8fc8f7ceab096"
+		vpc           = "arn:aws:ec2:ap-south-1:111122223333:vpc/vpc-0b010f23565bfeee6"
+	)
+	expired := time.Now().UTC().Add(-time.Hour)
+	tagged := `{"ResourceTagMappingList":[{"ResourceARN":"` + staleInstance + `","Tags":[{"Key":"component","Value":"cluster"}]},` +
+		`{"ResourceARN":"arn:aws:s3:::lab-tofu-state-111122223333","Tags":[{"Key":"component","Value":"baseline"}]}]}`
+	tests := []struct {
+		name    string
+		env     []string
+		subject string
+		has     []string
+		hasNot  []string
+	}{
+		{name: "only stale entries: done, with them listed as ignored",
+			env:     []string{`FAKE_LEFTOVERS={"left":[],"stale":["` + staleInstance + `","` + staleSG + `"]}`},
+			subject: "lab teardown done",
+			has:     []string{"Nothing tagged lab=true is left outside the baseline.", "Stale index entries (ignored)", "  " + staleInstance, "  " + staleSG},
+			hasNot:  []string{"Still there"}},
+		{name: "a real leftover and a stale entry",
+			env:     []string{`FAKE_LEFTOVERS={"left":["` + vpc + `"],"stale":["` + staleInstance + `"]}`},
+			subject: "lab teardown finished with leftovers",
+			has:     []string{"Still there outside the baseline (each one looked up directly", "  " + vpc, "Stale index entries (ignored)", "  " + staleInstance}},
+		{name: "nothing at all: done",
+			env:     []string{`FAKE_LEFTOVERS={"left":[],"stale":[]}`},
+			subject: "lab teardown done",
+			hasNot:  []string{"Stale index entries", "Still there"}},
+		{name: "the reaper fails: the tagging API's list stands in, unchecked, and it is not done",
+			env:     []string{`FAKE_LEFTOVERS={"errorMessage":"boom"}`, "FAKE_LEFTOVERS_FAIL=1", "FAKE_TAGGED=" + tagged},
+			subject: "lab teardown finished with leftovers",
+			has:     []string{"the reaper could not check them", "  " + staleInstance},
+			hasNot:  []string{"lab-tofu-state"}},
+		{name: "the reaper and the tagging API both fail: not done",
+			env:     []string{"FAKE_TAGGED=not json"},
+			subject: "lab teardown finished (leftovers not checked)",
+			has:     []string{"Could not check:", "run lab cloud leftovers"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls, out := scriptRun{expires: expired, env: tt.env}.run(t)
+			if !strings.Contains(calls, "--subject "+tt.subject+" --message") {
+				t.Errorf("subject is not %q:\n%s", tt.subject, calls)
+			}
+			for _, h := range tt.has {
+				if !strings.Contains(out, h) {
+					t.Errorf("report lacks %q:\n%s", h, out)
+				}
+			}
+			for _, h := range tt.hasNot {
+				if strings.Contains(out, h) {
+					t.Errorf("report has %q:\n%s", h, out)
+				}
 			}
 		})
 	}
@@ -191,5 +277,20 @@ func TestPreflightRefusesWhileTeardownRuns(t *testing.T) {
 	err := p.PreflightCheck(context.Background(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "teardown build lab-teardown:cd95d461-ac12-49b6-875c-140e383b16ee is running") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+type goneChecker map[string]bool
+
+func (g goneChecker) Check(_ context.Context, arn string) (reaper.Live, error) {
+	return reaper.Live{Known: true, Gone: g[arn]}, nil
+}
+
+// lab cloud leftovers and lab down use the reaper's Gone logic too.
+func TestSplitLeftovers(t *testing.T) {
+	ts := []Tagged{{ARN: "arn:aws:ec2:ap-south-1:1:instance/i-gone", Tags: map[string]string{"expires-at": "x"}}, {ARN: "arn:aws:ec2:ap-south-1:1:vpc/vpc-1"}}
+	rep := SplitLeftovers(context.Background(), goneChecker{ts[0].ARN: true}, ts)
+	if len(rep.Left) != 1 || rep.Left[0].ARN != ts[1].ARN || len(rep.Stale) != 1 || rep.Stale[0].Tags["expires-at"] != "x" {
+		t.Errorf("report = %+v", rep)
 	}
 }

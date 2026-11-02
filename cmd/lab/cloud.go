@@ -357,7 +357,7 @@ func newLeftoversCmd() *cobra.Command {
 	var flags cloudFlags
 	cmd := &cobra.Command{
 		Use:   "leftovers",
-		Short: "List everything still tagged lab=true outside the baseline; changes nothing",
+		Short: "List everything still tagged lab=true outside the baseline, stale tagging-index entries apart; changes nothing",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := flags.session(cmd)
@@ -375,7 +375,7 @@ func newLeftoversCmd() *cobra.Command {
 			if err := writeLeftovers(cmd.OutOrStdout(), left); err != nil {
 				return err
 			}
-			if len(left) > 0 {
+			if len(left.Left) > 0 {
 				return exitError{code: 1}
 			}
 			return nil
