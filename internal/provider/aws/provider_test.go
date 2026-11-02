@@ -250,7 +250,7 @@ func TestModulesMatchTheProvider(t *testing.T) {
 		return b.String()
 	}
 	cluster, registry := read(ClusterModuleDir(repo)), read(RegistryModuleDir(repo))
-	p := &Provider{opts: Options{Owner: "me", K8sVersion: "1.37"}}
+	p := &Provider{opts: Options{Owner: "me"}, version: "1.36"}
 	check := func(name, src string, vars map[string]any, outputs ...string) {
 		for v := range vars {
 			if !regexp.MustCompile(`variable "` + v + `"`).MatchString(src) {

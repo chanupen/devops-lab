@@ -46,6 +46,9 @@ func (s ReaperStatus) Ready(now time.Time) error {
 	case now.Sub(s.Heartbeat.Time) > ReaperMaxAge:
 		return fmt.Errorf("the TTL reaper's last clean run was %s ago (at %s), more than %s: check its CloudWatch logs (/aws/lambda/%s)",
 			now.Sub(s.Heartbeat.Time).Round(time.Minute), s.Heartbeat.Time.Local().Format("15:04"), ReaperMaxAge, ReaperFunction)
+	case s.Heartbeat.ManualAction:
+		return fmt.Errorf("an earlier cloud lab was not torn down after %d attempts (%s); clean it up first: "+
+			"lab down --mode cloud, then lab cloud leftovers", reaper.MaxAttempts, s.Heartbeat.Teardown)
 	}
 	return nil
 }
@@ -86,9 +89,9 @@ func GetReaperStatus(ctx context.Context, cfg aws.Config, account string) (Reape
 }
 
 // PreflightCheck is everything lab up --mode cloud checks before it asks to
-// apply: the reaper is armed and recent, and the Kubernetes version is the
-// newest in standard support.
-func (p *Provider) PreflightCheck(ctx context.Context) error {
+// apply: the reaper is armed and recent, and EKS has a Kubernetes version
+// in standard support that the lab can use. It writes the version choice.
+func (p *Provider) PreflightCheck(ctx context.Context, w io.Writer) error {
 	st, err := GetReaperStatus(ctx, p.cfg, p.account)
 	if err != nil {
 		return err
@@ -96,9 +99,6 @@ func (p *Provider) PreflightCheck(ctx context.Context) error {
 	if err := st.Ready(p.now()); err != nil {
 		return fmt.Errorf("refusing to start a cloud lab: %w", err)
 	}
-	standard, err := StandardVersions(ctx, p.cfg)
-	if err != nil {
-		return err
-	}
-	return CheckVersion(p.opts.K8sVersion, standard)
+	_, err = p.ResolveVersion(ctx, w)
+	return err
 }

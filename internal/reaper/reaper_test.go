@@ -53,14 +53,71 @@ func (f *fakeDeleter) Delete(_ context.Context, t Target) error {
 }
 
 type fakeTeardown struct {
-	starts int
-	status string
-	err    error
+	starts  int
+	running string
+	builds  map[string]Build
+	err     error
+	last    [2]int // attempt, max of the last Start
 }
 
-func (f *fakeTeardown) Start(context.Context) (string, error) {
+func (f *fakeTeardown) Running(context.Context) (string, error) { return f.running, nil }
+
+func (f *fakeTeardown) Get(_ context.Context, id string) (Build, error) {
+	b, ok := f.builds[id]
+	if !ok {
+		return Build{ID: id, State: "FAILED", End: now.Add(-20 * time.Minute)}, nil
+	}
+	return b, nil
+}
+
+func (f *fakeTeardown) Start(_ context.Context, attempt, maxAttempts int) (string, error) {
 	f.starts++
-	return f.status, f.err
+	f.last = [2]int{attempt, maxAttempts}
+	if f.err != nil {
+		return "", f.err
+	}
+	return fmt.Sprintf("lab-teardown:%d", f.starts), nil
+}
+
+type fakeStore struct {
+	st      TeardownState
+	cleared bool
+}
+
+func (f *fakeStore) Load(context.Context) (TeardownState, error) { return f.st, nil }
+func (f *fakeStore) Save(_ context.Context, st TeardownState) error {
+	f.st = st
+	return nil
+}
+func (f *fakeStore) Clear(context.Context) error {
+	f.st, f.cleared = TeardownState{}, true
+	return nil
+}
+
+type fakeNotify struct{ subjects, bodies []string }
+
+func (f *fakeNotify) Notify(_ context.Context, subject, body string) error {
+	f.subjects, f.bodies = append(f.subjects, subject), append(f.bodies, body)
+	return nil
+}
+
+type fakeVPCs map[string][]Target
+
+func (f fakeVPCs) InVPC(_ context.Context, id string) ([]Target, error) { return f[id], nil }
+
+func run(t *testing.T, env Env, opts Options) Result {
+	t.Helper()
+	if env.Lister == nil {
+		env.Lister = fakeLister{}
+	}
+	if env.Deleter == nil {
+		env.Deleter = &fakeDeleter{}
+	}
+	r, err := Run(context.Background(), env, now, opts, func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 func expiredAs(a, component string, extra ...string) Resource {
@@ -107,19 +164,19 @@ func TestRun(t *testing.T) {
 				expiredAs(arn("ecr", "repository/lab"), "registry"),                                   // the registry module
 				res(arn("s3", "lab-tofu-state-111122223333"), "lab", "true", "component", "baseline"), // permanent
 			},
-			teardown: &fakeTeardown{status: "started build lab-teardown:1"},
+			teardown: &fakeTeardown{},
 			deletes: []string{
 				"ec2-instance i-karpenter-1", "ec2-instance i-karpenter-2",
 				"load-balancer " + nlb, "target-group " + tg, "security-group sg-lbc",
 				"ebs-volume vol-pvc",
 			},
-			managed: 5, starts: 1, kept: 1, teardownS: "started build lab-teardown:1",
+			managed: 5, starts: 1, kept: 1, teardownS: "started build lab-teardown:1 (attempt 1 of 6)",
 		},
 		{
 			name:     "a running build is not started twice",
 			rs:       []Resource{expiredAs(arn("eks", "cluster/lab"), "cluster")},
-			teardown: &fakeTeardown{status: "build lab-teardown:1 already running"},
-			managed:  1, starts: 1, teardownS: "build lab-teardown:1 already running",
+			teardown: &fakeTeardown{running: "lab-teardown:1"},
+			managed:  1, teardownS: "build lab-teardown:1 already running (attempt 1 of 6)",
 		},
 		{
 			name:     "sweep only (the build asking) never starts a build",
@@ -160,8 +217,8 @@ func TestRun(t *testing.T) {
 			name: "bad expires-at and unknown unmanaged types are skipped, never deleted",
 			rs: []Resource{
 				res(arn("ec2", "instance/i-1"), "lab", "true", "expires-at", "tomorrow"),
-				expired(arn("elasticloadbalancing", "loadbalancer/classic-lb")),
 				expired(arn("rds", "db:lab")),
+				expired(arn("ec2", "vpc/vpc-stray")), // no tofu component: swept, never deleted
 			},
 			skipped: 3,
 		},
@@ -190,7 +247,7 @@ func TestRun(t *testing.T) {
 			if tt.teardown != nil {
 				td = tt.teardown
 			}
-			r, err := Run(context.Background(), fakeLister{rs: tt.rs}, d, td, now, tt.opts, func(f string, a ...any) {
+			r, err := Run(context.Background(), Env{Lister: fakeLister{rs: tt.rs}, Deleter: d, Teardown: td}, now, tt.opts, func(f string, a ...any) {
 				logs = append(logs, fmt.Sprintf(f, a...))
 			})
 			if err != nil {
@@ -229,7 +286,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunListError(t *testing.T) {
-	_, err := Run(context.Background(), fakeLister{err: errors.New("AccessDenied")}, &fakeDeleter{}, nil, now, Options{}, func(string, ...any) {})
+	_, err := Run(context.Background(), Env{Lister: fakeLister{err: errors.New("AccessDenied")}, Deleter: &fakeDeleter{}}, now, Options{}, func(string, ...any) {})
 	if err == nil || !strings.Contains(err.Error(), "AccessDenied") {
 		t.Errorf("err = %v", err)
 	}
@@ -250,10 +307,12 @@ func TestParseARN(t *testing.T) {
 		{arn("eks", "cluster/lab"), Cluster, "lab", false},
 		{arn("eks", "nodegroup/lab"), "", "", true},
 		{arn("eks", "cluster/"), "", "", true},
-		{arn("elasticloadbalancing", "loadbalancer/old"), "", "", true},
+		{arn("elasticloadbalancing", "loadbalancer/old"), ClassicLB, "old", false},
+		{arn("elasticloadbalancing", "loadbalancer/"), "", "", true},
+		{arn("ec2", "network-interface/eni-1"), NetworkInterface, "eni-1", false},
 		{arn("ec2", "security-group/sg-1"), SecurityGroup, "sg-1", false},
 		{arn("elasticloadbalancing", "targetgroup/k8s-a/1"), TargetGroup, arn("elasticloadbalancing", "targetgroup/k8s-a/1"), false},
-		{arn("ec2", "vpc/vpc-1"), "", "", true},
+		{arn("ec2", "vpc/vpc-1"), VPC, "vpc-1", false},
 		{"not-an-arn", "", "", true},
 	}
 	for _, tt := range tests {
@@ -261,5 +320,116 @@ func TestParseARN(t *testing.T) {
 		if (err != nil) != tt.err || kind != tt.kind || id != tt.id {
 			t.Errorf("parseARN(%q) = %q %q %v; want %q %q err %v", tt.arn, kind, id, err, tt.kind, tt.id, tt.err)
 		}
+	}
+}
+
+// An untagged Classic Load Balancer (a plain type: LoadBalancer Service)
+// and its network interface and security group sit in the lab VPC; the
+// tagging API does not list them, but the VPC sweep finds and deletes
+// them, in order, once with a tagged one already in the list.
+func TestRunSweepsTheLabVPC(t *testing.T) {
+	nlb := arn("elasticloadbalancing", "loadbalancer/net/k8s-a/1")
+	d := &fakeDeleter{wait: map[string]bool{"sg-elb": true}}
+	vpcs := fakeVPCs{"vpc-1": {
+		{Kind: SecurityGroup, ID: "sg-elb"},
+		{Kind: NetworkInterface, ID: "eni-free"},
+		{Kind: ClassicLB, ID: "a1b2c3"},
+		{Kind: LoadBalancer, ARN: nlb, ID: nlb}, // also tagged: deleted once
+		{Kind: TargetGroup, ID: "tg-untagged"},
+	}}
+	rs := []Resource{expiredAs(arn("ec2", "vpc/vpc-1"), "cluster"), expiredAs(nlb, "load-balancer-controller")}
+	r := run(t, Env{Lister: fakeLister{rs: rs}, Deleter: d, VPCs: vpcs, Teardown: &fakeTeardown{}}, Options{SweepOnly: true})
+	want := []string{"load-balancer " + nlb, "classic-load-balancer a1b2c3", "target-group tg-untagged",
+		"network-interface eni-free", "security-group sg-elb"}
+	if !slices.Equal(d.got, want) {
+		t.Errorf("deletes = %q\nwant      %q", d.got, want)
+	}
+	if len(r.Waiting) != 1 || len(r.Managed) != 1 || r.Managed[0] != "vpc vpc-1" {
+		t.Errorf("waiting %q managed %q", r.Waiting, r.Managed)
+	}
+	for _, x := range r.Deleted {
+		if !x.Expires.Equal(now.Add(-time.Hour)) {
+			t.Errorf("%s %s: expires %s, want the VPC's", x.Kind, x.ID, x.Expires)
+		}
+	}
+	// A VPC that has not expired is not swept.
+	d = &fakeDeleter{}
+	live := res(arn("ec2", "vpc/vpc-1"), "lab", "true", "component", "cluster", "expires-at", now.Add(time.Hour).Format(time.RFC3339))
+	run(t, Env{Lister: fakeLister{rs: []Resource{live}}, Deleter: d, VPCs: vpcs}, Options{})
+	if len(d.got) != 0 {
+		t.Errorf("live VPC swept: %q", d.got)
+	}
+}
+
+func TestTeardownRetriesThenAsksForHelp(t *testing.T) {
+	lab := []Resource{expiredAs(arn("eks", "cluster/lab"), "cluster")}
+	td := &fakeTeardown{builds: map[string]Build{}}
+	store := &fakeStore{}
+	notify := &fakeNotify{}
+	env := Env{Lister: fakeLister{rs: lab}, Teardown: td, Store: store, Notify: notify}
+
+	for i := 1; i <= MaxAttempts; i++ {
+		r := run(t, env, Options{})
+		if want := fmt.Sprintf("started build lab-teardown:%d (attempt %d of 6)", i, i); r.Teardown != want {
+			t.Fatalf("run %d: %q, want %q", i, r.Teardown, want)
+		}
+		if td.last != [2]int{i, MaxAttempts} {
+			t.Errorf("run %d: build told attempt %v", i, td.last)
+		}
+		// While it runs, nothing new starts.
+		td.running = store.st.LastBuild
+		if r := run(t, env, Options{}); !strings.Contains(r.Teardown, "already running") || td.starts != i {
+			t.Errorf("run %d while running: %q, %d starts", i, r.Teardown, td.starts)
+		}
+		td.running = "" // it failed (the fake's default)
+	}
+	r := run(t, env, Options{})
+	if !r.ManualAction || td.starts != MaxAttempts || len(notify.subjects) != 1 || notify.subjects[0] != "lab teardown: manual action needed" {
+		t.Fatalf("after %d attempts: manual %v, %d starts, mails %q", MaxAttempts, r.ManualAction, td.starts, notify.subjects)
+	}
+	if b := notify.bodies[0]; !strings.Contains(b, "eks-cluster lab") || !strings.Contains(b, "lab down --mode cloud") {
+		t.Errorf("manual-action mail:\n%s", b)
+	}
+	if r := run(t, env, Options{}); !r.ManualAction || len(notify.subjects) != 1 {
+		t.Errorf("mailed again: %q", notify.subjects)
+	}
+	// Once nothing expired is left, the state goes; the next lab starts at 1.
+	run(t, Env{Lister: fakeLister{}, Teardown: td, Store: store}, Options{})
+	if !store.cleared || store.st.Attempts != 0 {
+		t.Errorf("state not cleared: %+v", store.st)
+	}
+}
+
+func TestTeardownNewLabStartsAtOne(t *testing.T) {
+	td := &fakeTeardown{}
+	store := &fakeStore{st: TeardownState{Lab: "2026-10-01T00:00:00Z", Attempts: MaxAttempts, Notified: true, LastBuild: "old"}}
+	r := run(t, Env{Lister: fakeLister{rs: []Resource{expiredAs(arn("eks", "cluster/lab"), "cluster")}}, Teardown: td, Store: store}, Options{})
+	if r.ManualAction || td.last != [2]int{1, MaxAttempts} || store.st.Lab != now.Add(-time.Hour).Format(time.RFC3339) {
+		t.Errorf("new lab: %q, attempt %v, state %+v", r.Teardown, td.last, store.st)
+	}
+}
+
+func TestTeardownWaitsAfterASuccess(t *testing.T) {
+	lab := []Resource{expiredAs(arn("eks", "cluster/lab"), "cluster")}
+	exp := now.Add(-time.Hour).Format(time.RFC3339)
+	for _, tt := range []struct {
+		ago    time.Duration
+		starts int
+	}{{10 * time.Minute, 0}, {SettleAfterSuccess + time.Minute, 1}} {
+		td := &fakeTeardown{builds: map[string]Build{"b1": {ID: "b1", State: BuildSucceeded, End: now.Add(-tt.ago)}}}
+		store := &fakeStore{st: TeardownState{Lab: exp, Attempts: 1, LastBuild: "b1"}}
+		r := run(t, Env{Lister: fakeLister{rs: lab}, Teardown: td, Store: store}, Options{})
+		if td.starts != tt.starts {
+			t.Errorf("succeeded %s ago: %d starts (%q), want %d", tt.ago, td.starts, r.Teardown, tt.starts)
+		}
+	}
+}
+
+func TestDryRunLeavesTeardownStateAlone(t *testing.T) {
+	store := &fakeStore{st: TeardownState{Lab: "x", Attempts: 2}}
+	run(t, Env{Lister: fakeLister{}, Store: store}, Options{DryRun: true})
+	run(t, Env{Lister: fakeLister{}, Store: store}, Options{SweepOnly: true})
+	if store.cleared || store.st.Attempts != 2 {
+		t.Errorf("state changed: %+v", store.st)
 	}
 }

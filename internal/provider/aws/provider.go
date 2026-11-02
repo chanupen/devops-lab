@@ -41,6 +41,8 @@ type Options struct {
 	Profile    string        // AWS CLI profile; the kubeconfig's aws eks get-token uses it too
 	Owner      string        // owner tag
 	TTL        time.Duration // lab.yaml cloud.ttl
+	// K8sVersion is lab.yaml cloud.k8sVersion: empty lets ChooseVersion
+	// pick. The local pin (k8sVersion) does not apply to EKS.
 	K8sVersion string
 	Timeout    time.Duration // per wait (nodes ready, Helm releases)
 }
@@ -55,6 +57,9 @@ type Provider struct {
 	helm    gitops.Helm
 	myIP    func(ctx context.Context) (string, error)
 	now     func() time.Time
+	// version is the cluster's Kubernetes version once ResolveVersion ran;
+	// destroys and outputs do not need it.
+	version string
 	// inCluster is the in-cluster part of the cluster stack (Karpenter, the
 	// NodePool, the Load Balancer Controller).
 	inCluster inCluster
@@ -174,14 +179,9 @@ func (p *Provider) removeBundle(ctx context.Context, stack string) error {
 }
 
 func (p *Provider) applyCluster(ctx context.Context, exp time.Time, log io.Writer) error {
-	standard, err := StandardVersions(ctx, p.cfg)
-	if err != nil {
+	if _, err := p.ResolveVersion(ctx, log); err != nil {
 		return err
 	}
-	if err := CheckVersion(p.opts.K8sVersion, standard); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(log, "Kubernetes %s: the newest EKS version in standard support\n", p.opts.K8sVersion)
 	ip, err := p.myIP(ctx)
 	if err != nil {
 		return fmt.Errorf("find this host's public IP for the EKS API allow list: %w", err)
@@ -264,10 +264,39 @@ func (p *Provider) registryModule(exp time.Time, log io.Writer) *Module {
 }
 
 func (p *Provider) clusterModule(exp time.Time, cidrs []string, log io.Writer) *Module {
-	return p.module("cloud-cluster", ClusterModuleDir(p.opts.RepoRoot), ClusterStateKey, map[string]any{
+	vars := map[string]any{
 		"owner": p.opts.Owner, "expires_at": exp.UTC().Format(time.RFC3339),
-		"cluster_name": ClusterName, "k8s_version": p.opts.K8sVersion, "api_allowed_cidrs": cidrs,
-	}, log)
+		"cluster_name": ClusterName, "api_allowed_cidrs": cidrs,
+	}
+	if p.version != "" {
+		vars["k8s_version"] = p.version
+	}
+	return p.module("cloud-cluster", ClusterModuleDir(p.opts.RepoRoot), ClusterStateKey, vars, log)
+}
+
+// ResolveVersion picks the cluster's Kubernetes version (ChooseVersion:
+// standard support only, the running cluster's version, else the newest
+// every pinned component supports), logs why and remembers it for the
+// cluster module.
+func (p *Provider) ResolveVersion(ctx context.Context, log io.Writer) (VersionChoice, error) {
+	standard, err := StandardVersions(ctx, p.cfg)
+	if err != nil {
+		return VersionChoice{}, err
+	}
+	current, err := ClusterVersion(ctx, p.cfg, ClusterName)
+	if err != nil {
+		return VersionChoice{}, err
+	}
+	c, err := ChooseVersion(p.opts.K8sVersion, current, standard, Compatibility)
+	if err != nil {
+		return c, err
+	}
+	p.version = c.Version
+	_, _ = fmt.Fprintf(log, "Kubernetes %s on EKS: %s\n", c.Version, c.Reason)
+	for _, w := range c.Warnings {
+		_, _ = fmt.Fprintf(log, "warning: %s\n", w)
+	}
+	return c, nil
 }
 
 // ClusterModuleDir and RegistryModuleDir locate the modules in the repo.
@@ -398,6 +427,9 @@ func (p *Provider) Plan(ctx context.Context, log io.Writer) ([]ModulePlan, error
 	ip, err := p.myIP(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("find this host's public IP for the EKS API allow list: %w", err)
+	}
+	if _, err := p.ResolveVersion(ctx, log); err != nil {
+		return nil, err
 	}
 	var plans []ModulePlan
 	for _, s := range Stacks() {

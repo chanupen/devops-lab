@@ -31,9 +31,9 @@ variable "cluster_name" {
 }
 
 variable "k8s_version" {
-  description = "Kubernetes minor version; the lab is pinned to one (lab.yaml k8sVersion)."
+  description = "Kubernetes minor version. lab picks it: standard support only, then the newest the pinned components support (internal/provider/aws/compat.go)."
   type        = string
-  default     = "1.37"
+  default     = "1.36"
 }
 
 variable "api_allowed_cidrs" {

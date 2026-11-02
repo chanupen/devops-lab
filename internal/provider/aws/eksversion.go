@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,6 +11,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
+
+// ClusterVersion is the running cluster's Kubernetes version, or "" when
+// there is no cluster.
+func ClusterVersion(ctx context.Context, cfg aws.Config, name string) (string, error) {
+	out, err := eks.NewFromConfig(cfg).DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(name)})
+	var nf *ekstypes.ResourceNotFoundException
+	switch {
+	case errors.As(err, &nf):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("describe EKS cluster %s: %w", name, err)
+	}
+	return aws.ToString(out.Cluster.Version), nil
+}
 
 // StandardVersions lists the EKS Kubernetes versions in standard support,
 // as EKS reports them now. Extended support costs five times as much for
@@ -53,17 +68,4 @@ func versionLess(a, b string) bool {
 		}
 	}
 	return len(pa) < len(pb)
-}
-
-// CheckVersion refuses any version but the newest one in standard support.
-func CheckVersion(want string, standard []string) error {
-	newest := NewestVersion(standard)
-	switch {
-	case newest == "":
-		return fmt.Errorf("EKS reports no version in standard support")
-	case want != newest:
-		return fmt.Errorf("lab.yaml pins Kubernetes %s, but the newest EKS version in standard support is %s (standard: %s); "+
-			"the cloud lab runs only on the newest: change k8sVersion in lab.yaml", want, newest, strings.Join(standard, ", "))
-	}
-	return nil
 }

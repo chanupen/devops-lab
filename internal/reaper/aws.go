@@ -1,10 +1,14 @@
 package reaper
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,23 +17,100 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	tagging "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	taggingtypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/smithy-go"
 )
 
 // AWS lists and deletes through the AWS SDK.
 type AWS struct {
-	Tagging *tagging.Client
-	EC2     *ec2.Client
-	EKS     *eks.Client
-	ELB     *elbv2.Client
+	Tagging   *tagging.Client
+	EC2       *ec2.Client
+	EKS       *eks.Client
+	ELB       *elbv2.Client
+	ClassicLB *elb.Client
 }
 
 // NewAWS builds the clients from one config.
 func NewAWS(cfg aws.Config) *AWS {
-	return &AWS{Tagging: tagging.NewFromConfig(cfg), EC2: ec2.NewFromConfig(cfg), EKS: eks.NewFromConfig(cfg), ELB: elbv2.NewFromConfig(cfg)}
+	return &AWS{Tagging: tagging.NewFromConfig(cfg), EC2: ec2.NewFromConfig(cfg), EKS: eks.NewFromConfig(cfg),
+		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg)}
+}
+
+// InVPC implements VPCScanner. Tags do not matter here: a plain
+// type: LoadBalancer Service makes an untagged Classic Load Balancer, and
+// its network interfaces and security group would block the VPC destroy.
+// Network interfaces still attached are left to whatever holds them (an
+// instance or a load balancer deleted in the same run).
+func (a *AWS) InVPC(ctx context.Context, vpcID string) ([]Target, error) {
+	var out []Target
+	byVPC := []ec2types.Filter{{Name: aws.String("vpc-id"), Values: []string{vpcID}}}
+
+	lbs := elbv2.NewDescribeLoadBalancersPaginator(a.ELB, &elbv2.DescribeLoadBalancersInput{})
+	for lbs.HasMorePages() {
+		page, err := lbs.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("describe load balancers: %w", err)
+		}
+		for _, lb := range page.LoadBalancers {
+			if aws.ToString(lb.VpcId) == vpcID {
+				out = append(out, Target{Kind: LoadBalancer, ARN: aws.ToString(lb.LoadBalancerArn), ID: aws.ToString(lb.LoadBalancerArn)})
+			}
+		}
+	}
+	classic := elb.NewDescribeLoadBalancersPaginator(a.ClassicLB, &elb.DescribeLoadBalancersInput{})
+	for classic.HasMorePages() {
+		page, err := classic.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("describe classic load balancers: %w", err)
+		}
+		for _, lb := range page.LoadBalancerDescriptions {
+			if aws.ToString(lb.VPCId) == vpcID {
+				out = append(out, Target{Kind: ClassicLB, ID: aws.ToString(lb.LoadBalancerName)})
+			}
+		}
+	}
+	tgs := elbv2.NewDescribeTargetGroupsPaginator(a.ELB, &elbv2.DescribeTargetGroupsInput{})
+	for tgs.HasMorePages() {
+		page, err := tgs.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("describe target groups: %w", err)
+		}
+		for _, tg := range page.TargetGroups {
+			if aws.ToString(tg.VpcId) == vpcID {
+				out = append(out, Target{Kind: TargetGroup, ARN: aws.ToString(tg.TargetGroupArn), ID: aws.ToString(tg.TargetGroupArn)})
+			}
+		}
+	}
+	enis := ec2.NewDescribeNetworkInterfacesPaginator(a.EC2, &ec2.DescribeNetworkInterfacesInput{
+		Filters: append(byVPC, ec2types.Filter{Name: aws.String("status"), Values: []string{"available"}})})
+	for enis.HasMorePages() {
+		page, err := enis.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("describe network interfaces: %w", err)
+		}
+		for _, n := range page.NetworkInterfaces {
+			out = append(out, Target{Kind: NetworkInterface, ID: aws.ToString(n.NetworkInterfaceId)})
+		}
+	}
+	sgs := ec2.NewDescribeSecurityGroupsPaginator(a.EC2, &ec2.DescribeSecurityGroupsInput{Filters: byVPC})
+	for sgs.HasMorePages() {
+		page, err := sgs.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("describe security groups: %w", err)
+		}
+		for _, g := range page.SecurityGroups {
+			if aws.ToString(g.GroupName) != "default" { // every VPC has one; it goes with the VPC
+				out = append(out, Target{Kind: SecurityGroup, ID: aws.ToString(g.GroupId)})
+			}
+		}
+	}
+	return out, nil
 }
 
 // List implements Lister with the Resource Groups Tagging API: every
@@ -75,9 +156,13 @@ func (a *AWS) Delete(ctx context.Context, t Target) error {
 	case Cluster:
 		err = a.deleteCluster(ctx, t.ID)
 	case LoadBalancer:
-		_, err = a.ELB.DeleteLoadBalancer(ctx, &elbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(t.ARN)})
+		_, err = a.ELB.DeleteLoadBalancer(ctx, &elbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(t.ID)})
+	case ClassicLB:
+		_, err = a.ClassicLB.DeleteLoadBalancer(ctx, &elb.DeleteLoadBalancerInput{LoadBalancerName: aws.String(t.ID)})
+	case NetworkInterface:
+		_, err = a.EC2.DeleteNetworkInterface(ctx, &ec2.DeleteNetworkInterfaceInput{NetworkInterfaceId: aws.String(t.ID)})
 	case TargetGroup:
-		_, err = a.ELB.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{TargetGroupArn: aws.String(t.ARN)})
+		_, err = a.ELB.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{TargetGroupArn: aws.String(t.ID)})
 	default:
 		err = fmt.Errorf("no delete for kind %q", t.Kind)
 	}
@@ -85,7 +170,8 @@ func (a *AWS) Delete(ctx context.Context, t Target) error {
 }
 
 // inUseCodes are API errors that clear up once a dependency is gone.
-var inUseCodes = []string{"DependencyViolation", "ResourceInUse", "ResourceInUseException", "InvalidVolume.InUse", "IncorrectState"}
+var inUseCodes = []string{"DependencyViolation", "ResourceInUse", "ResourceInUseException", "InvalidVolume.InUse", "IncorrectState",
+	"InvalidNetworkInterface.InUse"}
 
 func inUse(err error) error {
 	var api smithy.APIError
@@ -101,8 +187,18 @@ func inUse(err error) error {
 
 // deleteSecurityGroup removes the rules other groups hold that point at
 // this one (the Load Balancer Controller adds one to the node security
-// group), then deletes it.
+// group), then deletes it. A group that a network interface still uses
+// waits, and its references stay: revoking them would cut traffic to
+// something still running.
 func (a *AWS) deleteSecurityGroup(ctx context.Context, id string) error {
+	used, err := a.EC2.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		Filters: []ec2types.Filter{{Name: aws.String("group-id"), Values: []string{id}}}, MaxResults: aws.Int32(5)})
+	if err != nil {
+		return err
+	}
+	if n := len(used.NetworkInterfaces); n > 0 {
+		return fmt.Errorf("%w: used by network interface %s", ErrNotYet, aws.ToString(used.NetworkInterfaces[0].NetworkInterfaceId))
+	}
 	refs, err := a.EC2.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
 		Filters: []ec2types.Filter{{Name: aws.String("referenced-security-group-id"), Values: []string{id}}},
 	})
@@ -145,36 +241,115 @@ func (a *AWS) deleteCluster(ctx context.Context, name string) error {
 	return err
 }
 
-// CodeBuild starts the teardown project.
+// CodeBuild runs the teardown project.
 type CodeBuild struct {
 	Client  *codebuild.Client
 	Project string
 }
 
-// Start implements Teardown: one build at a time.
-func (c CodeBuild) Start(ctx context.Context) (string, error) {
+// Running implements Teardown: the newest builds are enough, there is
+// only ever one at a time.
+func (c CodeBuild) Running(ctx context.Context) (string, error) {
 	list, err := c.Client.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
 		ProjectName: aws.String(c.Project), SortOrder: cbtypes.SortOrderTypeDescending})
+	if err != nil || len(list.Ids) == 0 {
+		return "", err
+	}
+	ids := list.Ids
+	if len(ids) > 5 {
+		ids = ids[:5]
+	}
+	got, err := c.Client.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: ids})
 	if err != nil {
 		return "", err
 	}
-	if ids := list.Ids; len(ids) > 0 {
-		if len(ids) > 5 {
-			ids = ids[:5]
-		}
-		got, err := c.Client.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: ids})
-		if err != nil {
-			return "", err
-		}
-		for _, b := range got.Builds {
-			if b.BuildStatus == cbtypes.StatusTypeInProgress {
-				return "build " + aws.ToString(b.Id) + " already running", nil
-			}
+	for _, b := range got.Builds {
+		if b.BuildStatus == cbtypes.StatusTypeInProgress {
+			return aws.ToString(b.Id), nil
 		}
 	}
-	out, err := c.Client.StartBuild(ctx, &codebuild.StartBuildInput{ProjectName: aws.String(c.Project)})
+	return "", nil
+}
+
+// Get implements Teardown.
+func (c CodeBuild) Get(ctx context.Context, id string) (Build, error) {
+	got, err := c.Client.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: []string{id}})
+	if err != nil {
+		return Build{}, err
+	}
+	if len(got.Builds) == 0 {
+		return Build{ID: id, State: "UNKNOWN"}, nil // expired from CodeBuild's history
+	}
+	b := got.Builds[0]
+	return Build{ID: id, State: string(b.BuildStatus), End: aws.ToTime(b.EndTime)}, nil
+}
+
+// Start implements Teardown. The build reads ATTEMPT and MAX_ATTEMPTS for
+// its summary email.
+func (c CodeBuild) Start(ctx context.Context, attempt, maxAttempts int) (string, error) {
+	out, err := c.Client.StartBuild(ctx, &codebuild.StartBuildInput{
+		ProjectName: aws.String(c.Project),
+		EnvironmentVariablesOverride: []cbtypes.EnvironmentVariable{
+			{Name: aws.String("ATTEMPT"), Value: aws.String(strconv.Itoa(attempt)), Type: cbtypes.EnvironmentVariableTypePlaintext},
+			{Name: aws.String("MAX_ATTEMPTS"), Value: aws.String(strconv.Itoa(maxAttempts)), Type: cbtypes.EnvironmentVariableTypePlaintext},
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-	return "started build " + aws.ToString(out.Build.Id), nil
+	return aws.ToString(out.Build.Id), nil
+}
+
+// S3Store keeps TeardownState at TeardownStateKey in the state bucket.
+type S3Store struct {
+	Client *s3.Client
+	Bucket string
+}
+
+// Load implements StateStore.
+func (s S3Store) Load(ctx context.Context) (TeardownState, error) {
+	var st TeardownState
+	out, err := s.Client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(TeardownStateKey)})
+	var nsk *s3types.NoSuchKey
+	switch {
+	case errors.As(err, &nsk):
+		return st, nil
+	case err != nil:
+		return st, err
+	}
+	defer func() { _ = out.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(out.Body, 64<<10))
+	if err != nil {
+		return st, err
+	}
+	return st, json.Unmarshal(b, &st)
+}
+
+// Save implements StateStore.
+func (s S3Store) Save(ctx context.Context, st TeardownState) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	_, err = s.Client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(TeardownStateKey),
+		Body: bytes.NewReader(b), ContentType: aws.String("application/json")})
+	return err
+}
+
+// Clear implements StateStore; clearing nothing is not an error.
+func (s S3Store) Clear(ctx context.Context) error {
+	_, err := s.Client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(TeardownStateKey)})
+	return err
+}
+
+// SNS emails through the lab-teardown topic.
+type SNS struct {
+	Client *sns.Client
+	Topic  string
+}
+
+// Notify implements Notifier.
+func (n SNS) Notify(ctx context.Context, subject, body string) error {
+	_, err := n.Client.Publish(ctx, &sns.PublishInput{TopicArn: aws.String(n.Topic), Subject: aws.String(subject), Message: aws.String(body)})
+	return err
 }

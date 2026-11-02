@@ -79,19 +79,27 @@ func TestEKSVersionAndReaperChecks(t *testing.T) {
 	if r := checkEKSVersion(ctx, p); r.Status != Skip {
 		t.Errorf("no probe: %s", r.Status)
 	}
-	p.EKSVersion = func(context.Context) (string, error) { return "1.37", nil }
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "Kubernetes 1.36: the newest version in standard support that Karpenter, Argo CD all support", nil, nil
+	}
 	p.ReaperReady = func(context.Context, string) error { return nil }
-	if r := checkEKSVersion(ctx, p); r.Status != OK || !strings.Contains(r.Detail, "1.37 is the newest") {
+	if r := checkEKSVersion(ctx, p); r.Status != OK || !strings.Contains(r.Detail, "1.36: the newest") {
 		t.Errorf("eks ok: %s %q", r.Status, r.Detail)
 	}
 	if r := checkReaper(ctx, p); r.Status != OK {
 		t.Errorf("reaper ok: %s %q", r.Status, r.Detail)
 	}
-	p.EKSVersion = func(context.Context) (string, error) {
-		return "1.38", errors.New("lab.yaml pins Kubernetes 1.37, but the newest is 1.38")
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "Kubernetes 1.37: pinned by cloud.k8sVersion", []string{"Kubernetes 1.37 is outside the stated range of Argo CD"}, nil
+	}
+	if r := checkEKSVersion(ctx, p); r.Status != Warn || !strings.Contains(r.Detail, "Argo CD") {
+		t.Errorf("eks warning: %s %q", r.Status, r.Detail)
+	}
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "", nil, errors.New("cloud.k8sVersion 1.32 is not in EKS standard support (standard: 1.34, 1.35, 1.36, 1.37)")
 	}
 	p.ReaperReady = func(context.Context, string) error { return errors.New("the TTL reaper is in dry run") }
-	if r := checkEKSVersion(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "1.38") {
+	if r := checkEKSVersion(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "1.32 is not in EKS standard support") {
 		t.Errorf("eks old: %s %q", r.Status, r.Detail)
 	}
 	if r := checkReaper(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "dry run") || !strings.Contains(r.Fix, "refuses") {

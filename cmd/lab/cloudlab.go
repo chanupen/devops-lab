@@ -44,7 +44,7 @@ func (c cloudRunner) Destroy(ctx context.Context, stack string, log io.Writer) e
 // cloudLab is what lab up, lab down and lab extend need beyond a provider.
 type cloudLab interface {
 	Account() string
-	PreflightCheck(ctx context.Context) error
+	PreflightCheck(ctx context.Context, w io.Writer) error
 	Extend(ctx context.Context, d time.Duration, log io.Writer) (time.Time, []string, error)
 	Leftovers(ctx context.Context) ([]labaws.Tagged, error)
 	Finish() error
@@ -76,7 +76,7 @@ func newCloudProvider(cfg config.Config, home string, opts runOptions) (*labaws.
 		Profile:    labaws.DefaultProfile,
 		Owner:      cfg.Cloud.Owner,
 		TTL:        time.Duration(cfg.Cloud.TTL),
-		K8sVersion: cfg.K8sVersion,
+		K8sVersion: cfg.Cloud.K8sVersion,
 		Timeout:    opts.Timeout,
 	})
 }
@@ -97,7 +97,8 @@ func (f *labFlags) cloudRunOptions(cmd *cobra.Command, o runOptions) runOptions 
 
 // confirmCloudApply checks that the dead man's switch is armed (the reaper
 // deletes for real and ran cleanly in the last 30 minutes) and the
-// Kubernetes version is the newest in standard support, then asks before
+// Kubernetes version is in standard support and fits the pinned
+// components (labaws.ChooseVersion), then asks before
 // lab up creates or changes AWS resources.
 func confirmCloudApply(cmd *cobra.Command, prov provider, p engine.Plan, ttl time.Duration, yes bool) error {
 	c, ok := prov.(cloudLab)
@@ -106,7 +107,7 @@ func confirmCloudApply(cmd *cobra.Command, prov provider, p engine.Plan, ttl tim
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 	defer cancel()
-	if err := c.PreflightCheck(ctx); err != nil {
+	if err := c.PreflightCheck(ctx, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	return confirm(cmd, yes, fmt.Sprintf("Apply %d stacks to AWS account %s in %s? They bill until lab down or expires-at (TTL %s).",

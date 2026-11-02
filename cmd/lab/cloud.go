@@ -15,7 +15,6 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
 	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -304,10 +303,10 @@ func orDefault(v, def string) string {
 // cloudProbe resolves the lab profile's session once, before doctor's
 // checks run, asking for the MFA code only when interactive.
 func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
-	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName,
-		K8sVersion: config.K8sVersion}
+	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
+	pin := ""
 	if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
-		p.K8sVersion = cfg.K8sVersion
+		pin = cfg.Cloud.K8sVersion
 	}
 	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
@@ -326,12 +325,20 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 	p.Identity = func(ctx context.Context) (string, string, error) { return labaws.Identity(ctx, cfg) }
 	p.BucketExists = func(ctx context.Context, account string) (bool, error) { return labaws.BucketExists(ctx, cfg, account) }
 	p.BudgetExists = func(ctx context.Context, account string) (bool, error) { return labaws.BudgetExists(ctx, cfg, account) }
-	p.EKSVersion = func(ctx context.Context) (string, error) {
+	p.EKSVersion = func(ctx context.Context) (string, []string, error) {
 		standard, err := labaws.StandardVersions(ctx, cfg)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return labaws.NewestVersion(standard), labaws.CheckVersion(p.K8sVersion, standard)
+		current, err := labaws.ClusterVersion(ctx, cfg, labaws.ClusterName)
+		if err != nil {
+			return "", nil, err
+		}
+		c, err := labaws.ChooseVersion(pin, current, standard, labaws.Compatibility)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("Kubernetes %s: %s", c.Version, c.Reason), c.Warnings, nil
 	}
 	p.ReaperReady = func(ctx context.Context, account string) error {
 		st, err := labaws.GetReaperStatus(ctx, cfg, account)

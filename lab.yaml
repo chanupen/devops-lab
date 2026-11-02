@@ -3,7 +3,7 @@ mode: local          # local | cloud
 profile: minimal     # minimal | standard | full
 extraStacks: [obs]   # on top of the profile; minimal + obs is what the local provider runs today
 gitops: argocd       # argocd | flux
-k8sVersion: "1.37"   # pinned; kind node image, EKS and kubectl follow it
+k8sVersion: "1.37"   # pinned for the local lab; kind node image and kubectl follow it
 
 repo:                # what Argo CD syncs from
   url: git@github.com:chanupen/devops-lab.git
@@ -13,3 +13,5 @@ cloud:
   region: ap-south-1
   ttl: 2h             # lab up --mode cloud --ttl overrides; at most 8h, lab extend included
   owner: chanupen
+  # k8sVersion: "1.36" # optional EKS pin; must be in standard support. Unset: the newest
+  #                    # standard-support version Karpenter, the LBC and Argo CD all support

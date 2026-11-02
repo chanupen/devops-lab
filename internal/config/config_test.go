@@ -69,6 +69,7 @@ cloud:
 		{name: "all errors at once", yaml: "mode: x\nprofile: y\ngitops: z\n", wantErr: []string{`mode "x"`, `profile "y"`, `gitops "z"`}},
 		{name: "unknown key", yaml: "profle: full", wantErr: []string{"profle"}},
 		{name: "unknown nested key", yaml: "cloud:\n  regoin: us-east-1\n", wantErr: []string{"regoin"}},
+		{name: "cloud k8sVersion not a minor", yaml: "cloud:\n  k8sVersion: latest\n", wantErr: []string{`cloud.k8sVersion "latest"`}},
 		{name: "wrong region", yaml: "cloud:\n  region: us-east-1\n", wantErr: []string{`cloud.region "us-east-1"`}},
 		{name: "bad ttl", yaml: "cloud:\n  ttl: soon\n", wantErr: []string{`ttl "soon"`}},
 		{name: "zero ttl", yaml: "cloud:\n  ttl: 0s\n", wantErr: []string{"cloud.ttl: 0s: want between 1m and 8h0m0s"}},

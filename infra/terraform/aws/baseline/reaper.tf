@@ -1,8 +1,10 @@
 # TTL reaper: every 15 minutes, delete controller-created lab=true resources
-# whose expires-at has passed and start the teardown build (teardown.tf) for
-# the tofu-managed rest. After a clean run it writes a heartbeat to the
-# state bucket; lab up --mode cloud refuses without a recent one. In
-# dry-run mode it only logs, and its role cannot delete or start builds.
+# whose expires-at has passed, and everything inside an expired lab VPC,
+# and start the teardown build (teardown.tf) for the tofu-managed rest:
+# again while they remain, at most 6 builds, then it emails "manual action
+# needed". After a clean run it writes a heartbeat to the state bucket;
+# lab up --mode cloud refuses without a recent one. In dry-run mode it only
+# logs, and its role cannot delete or start builds.
 locals {
   reaper_name = "lab-ttl-reaper"
 }
@@ -38,7 +40,9 @@ data "aws_iam_policy_document" "reaper" {
     sid = "FindTaggedResources"
     actions = [
       "tag:GetResources", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses",
-      "ec2:DescribeSecurityGroupRules", "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups",
+      "ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:DescribeNetworkInterfaces",
+      "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTargetGroups",
+      "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups",
       "codebuild:ListBuildsForProject", "codebuild:BatchGetBuilds",
     ]
     resources = ["*"]
@@ -50,7 +54,22 @@ data "aws_iam_policy_document" "reaper" {
     resources = ["${aws_s3_bucket.state.arn}/reaper/heartbeat.json"]
   }
 
-  # Deletes exist only when dry-run is off, and only for lab=true resources.
+  # How many teardown builds this lab has had (reaper/teardown.json).
+  statement {
+    sid       = "TeardownAttempts"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.state.arn}/reaper/teardown.json"]
+  }
+
+  # The "manual action needed" email after the last attempt.
+  statement {
+    sid       = "ManualActionEmail"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.teardown.arn]
+  }
+
+  # Deletes exist only when dry-run is off, only in the lab region, and only
+  # for lab=true resources.
   dynamic "statement" {
     for_each = var.reaper_dry_run ? [] : [1]
     content {
@@ -60,6 +79,7 @@ data "aws_iam_policy_document" "reaper" {
         "ec2:DeleteVolume",
         "ec2:ReleaseAddress",
         "ec2:DeleteSecurityGroup",
+        "ec2:DeleteNetworkInterface",
         "eks:DeleteNodegroup",
         "eks:DeleteCluster",
         "elasticloadbalancing:DeleteLoadBalancer",
@@ -70,6 +90,38 @@ data "aws_iam_policy_document" "reaper" {
         test     = "StringEquals"
         variable = "aws:ResourceTag/lab"
         values   = ["true"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestedRegion"
+        values   = [var.region]
+      }
+    }
+  }
+
+  # The VPC sweep: what sits inside an expired lab VPC is deleted tagged or
+  # not (an untagged Classic Load Balancer from a plain type: LoadBalancer
+  # Service, its ENIs and security group would block the VPC destroy).
+  # IAM cannot name "the lab VPC" in advance: ELB has no VPC condition key,
+  # and the VPC ID exists only once the cluster module ran. So this is held
+  # to the lab region and to the reaper's code, which only sweeps VPCs that
+  # are tagged lab=true and past expires-at (internal/reaper InVPC).
+  dynamic "statement" {
+    for_each = var.reaper_dry_run ? [] : [1]
+    content {
+      sid = "SweepExpiredLabVPC"
+      actions = [
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteNetworkInterface",
+        "ec2:RevokeSecurityGroupIngress",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteTargetGroup",
+      ]
+      resources = ["*"]
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestedRegion"
+        values   = [var.region]
       }
     }
   }
@@ -123,6 +175,7 @@ resource "aws_lambda_function" "reaper" {
     variables = {
       DRY_RUN          = tostring(var.reaper_dry_run)
       TEARDOWN_PROJECT = local.teardown_name
+      TEARDOWN_TOPIC   = aws_sns_topic.teardown.arn
       HEARTBEAT_BUCKET = aws_s3_bucket.state.id
     }
   }

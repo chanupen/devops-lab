@@ -180,7 +180,7 @@ func TestPlanUp(t *testing.T) {
 					t.Errorf("kept extra %s has reason %q, want %q", s.Stack, s.Reason, keepReason)
 				}
 			}
-			if p.K8sVersion != config.K8sVersion || p.Mode != tt.cfg.Mode || p.Profile != tt.cfg.Profile {
+			if p.K8sVersion != tt.cfg.ClusterK8sVersion() || p.Mode != tt.cfg.Mode || p.Profile != tt.cfg.Profile {
 				t.Errorf("plan header = %s/%s/%s", p.Mode, p.Profile, p.K8sVersion)
 			}
 		})

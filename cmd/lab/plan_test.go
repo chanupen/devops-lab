@@ -92,7 +92,7 @@ func TestPlanCmd(t *testing.T) {
 			name:   "--mode cloud plans the profile with the cloud provider",
 			config: "cloud:\n  owner: someone\n",
 			args:   []string{"--mode", "cloud"},
-			want: []string{"cloud mode, minimal + obs profile, Kubernetes 1.37", "+ registry", "+ cluster",
+			want: []string{"cloud mode, minimal + obs profile, Kubernetes chosen by lab (EKS standard support)", "+ registry", "+ cluster",
 				"- gitops      skip: not supported by the cloud provider yet",
 				"- sample-app  skip: not supported by the cloud provider yet",
 				"2 to apply, 0 to destroy, 0 unchanged, 4 skipped",

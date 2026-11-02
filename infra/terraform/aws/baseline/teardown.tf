@@ -51,19 +51,79 @@ resource "aws_iam_role" "teardown" {
   assume_role_policy = data.aws_iam_policy_document.codebuild_trust.json
 }
 
-# tofu destroy of the cluster and registry modules touches EC2/VPC, EKS,
-# ELB, SQS, EventBridge and ECR, so those services are open. IAM is not:
-# the build may only change roles, policies and instance profiles that
-# carry a lab component tag from those modules or from Karpenter, never the
-# baseline's (lab-admin, the reaper, this role).
+# The build reads broadly, but changes only what the lab made:
+#   - Describe/List/Get stay open, on every resource, so tofu can refresh
+#     the state before it destroys;
+#   - every destructive action is held to ap-south-1 (aws:RequestedRegion)
+#     and to resources tagged lab=true (aws:ResourceTag/lab), which the
+#     cluster and registry modules put on everything (default_tags);
+#   - the few deletes whose resource carries no lab tag are named one by
+#     one below, each with the narrowest condition IAM offers;
+#   - IAM changes only roles, policies and instance profiles that carry a
+#     lab component tag, never the baseline's (lab-admin, the reaper, this
+#     role). IAM is global, so it has no region condition.
+# Load balancers, target groups and the rest of the VPC sweep are left to
+# the reaper, which the build invokes.
 data "aws_iam_policy_document" "teardown" {
   statement {
-    sid = "DestroyLabInfrastructure"
+    sid = "ReadForRefresh"
     actions = [
-      "ec2:*", "eks:*", "elasticloadbalancing:*", "sqs:*", "events:*", "ecr:*",
+      "ec2:Describe*", "ec2:GetLaunchTemplateData",
+      "eks:Describe*", "eks:List*",
+      "elasticloadbalancing:Describe*",
+      "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ListQueues", "sqs:ListQueueTags",
+      "events:Describe*", "events:List*",
+      "ecr:Describe*", "ecr:List*", "ecr:GetLifecyclePolicy", "ecr:GetRepositoryPolicy",
       "tag:GetResources", "sts:GetCallerIdentity",
     ]
     resources = ["*"]
+  }
+
+  statement {
+    sid = "DestroyLabTaggedInRegion"
+    actions = [
+      # VPC, subnets, routes, gateway, security groups, launch templates
+      "ec2:DeleteVpc", "ec2:DeleteSubnet", "ec2:DeleteRouteTable", "ec2:DeleteRoute", "ec2:DisassociateRouteTable",
+      "ec2:DeleteInternetGateway", "ec2:DetachInternetGateway",
+      "ec2:DeleteSecurityGroup", "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
+      "ec2:DeleteLaunchTemplate", "ec2:DeleteLaunchTemplateVersions",
+      "ec2:TerminateInstances", "ec2:DeleteVolume", "ec2:DeleteNetworkInterface", "ec2:DeleteTags",
+      # EKS
+      "eks:DeleteCluster", "eks:DeleteNodegroup", "eks:DeleteAddon", "eks:DeleteAccessEntry",
+      "eks:DisassociateAccessPolicy", "eks:DeletePodIdentityAssociation", "eks:UntagResource",
+      # Karpenter's interruption queue and rules
+      "sqs:DeleteQueue", "sqs:SetQueueAttributes", "sqs:UntagQueue",
+      "events:DeleteRule", "events:RemoveTargets", "events:UntagResource",
+      # ECR
+      "ecr:DeleteRepository", "ecr:DeleteLifecyclePolicy", "ecr:DeleteRepositoryPolicy", "ecr:BatchDeleteImage",
+      "ecr:UntagResource",
+    ]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.region]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/lab"
+      values   = ["true"]
+    }
+  }
+
+  # The cluster module tags the security group EKS creates for the cluster
+  # (karpenter.sh/discovery, aws_ec2_tag); destroying that removes the tag.
+  # EKS owns the group, so it has no lab tag: it is matched by the
+  # cluster-name tag EKS puts on it, as in the reaper's policy.
+  statement {
+    sid       = "UntagClusterSecurityGroup"
+    actions   = ["ec2:DeleteTags"]
+    resources = ["${local.arn}:ec2:${var.region}:${local.account}:security-group/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/aws:eks:cluster-name"
+      values   = ["lab"]
+    }
   }
 
   statement {
@@ -154,6 +214,15 @@ resource "aws_codebuild_project" "teardown" {
       name  = "TOFU_SHA256"
       value = local.tofu_sha256
     }
+    # The reaper overrides these on each start.
+    environment_variable {
+      name  = "ATTEMPT"
+      value = "1"
+    }
+    environment_variable {
+      name  = "MAX_ATTEMPTS"
+      value = "6"
+    }
   }
 
   source {
@@ -163,7 +232,10 @@ resource "aws_codebuild_project" "teardown" {
       phases:
         build:
           commands:
-            - aws s3 cp s3://${aws_s3_bucket.state.id}/${aws_s3_object.teardown_script.key} teardown.sh --only-show-errors
+            - >-
+              aws s3 cp s3://${aws_s3_bucket.state.id}/${aws_s3_object.teardown_script.key} teardown.sh --only-show-errors ||
+              { aws sns publish --topic-arn "$TOPIC" --subject "lab teardown FAILED (attempt $${ATTEMPT:-1} of $${MAX_ATTEMPTS:-6})"
+              --message "Could not fetch teardown.sh, so nothing was destroyed. Build: $CODEBUILD_BUILD_ID"; exit 1; }
             - bash teardown.sh
     YAML
   }
@@ -175,4 +247,67 @@ resource "aws_codebuild_project" "teardown" {
   }
 
   depends_on = [aws_iam_role_policy.teardown]
+}
+
+# A build that times out, faults or is stopped never reaches teardown.sh's
+# summary, so EventBridge emails those endings. Failures inside the script
+# are emailed by the script itself, with what failed. Either way the reaper
+# starts the build again within 15 minutes while lab resources remain.
+resource "aws_cloudwatch_event_rule" "teardown_ended_badly" {
+  name        = "${local.teardown_name}-ended-badly"
+  description = "Email when the lab teardown build times out, faults or is stopped"
+  event_pattern = jsonencode({
+    source      = ["aws.codebuild"]
+    detail-type = ["CodeBuild Build State Change"]
+    detail = {
+      project-name = [local.teardown_name]
+      build-status = ["TIMED_OUT", "FAULT", "STOPPED"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "teardown_ended_badly" {
+  rule = aws_cloudwatch_event_rule.teardown_ended_badly.name
+  arn  = aws_sns_topic.teardown.arn
+
+  input_transformer {
+    input_paths = {
+      build  = "$.detail.build-id"
+      status = "$.detail.build-status"
+    }
+    input_template = "\"lab teardown FAILED: build <build> ended <status> before it could send its summary. Lab resources may still bill. The reaper starts the build again within 15 minutes while they remain (at most 6 attempts), then emails 'manual action needed'. Log group: /aws/codebuild/${local.teardown_name}.\""
+  }
+}
+
+data "aws_iam_policy_document" "teardown_topic" {
+  # What the default topic policy allows: this account's own principals.
+  statement {
+    sid       = "Owner"
+    actions   = ["sns:Publish", "sns:Subscribe", "sns:GetTopicAttributes", "sns:SetTopicAttributes", "sns:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.teardown.arn]
+    principals {
+      type        = "AWS"
+      identifiers = ["${local.arn}:iam::${local.account}:root"]
+    }
+  }
+
+  statement {
+    sid       = "TeardownEndedBadly"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.teardown.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.teardown_ended_badly.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "teardown" {
+  arn    = aws_sns_topic.teardown.arn
+  policy = data.aws_iam_policy_document.teardown_topic.json
 }

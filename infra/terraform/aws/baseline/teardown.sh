@@ -9,23 +9,47 @@
 #   3. sweeps again and destroys the rest of the cluster module, then the
 #      registry module (one retry after a sweep if a destroy fails);
 #   4. sweeps a last time and emails what is still tagged lab=true.
+# A failed run emails a failure summary (what failed, attempt N of M). The
+# reaper starts the build again within 15 minutes while lab resources
+# remain, at most MAX_ATTEMPTS times, then emails "manual action needed".
 # Modules come from s3://$BUCKET/teardown/<stack>.zip, which lab uploads
 # before every apply: the exact files and variables it applied.
-# Environment: BUCKET, REAPER, TOPIC, AWS_REGION, TOFU_VERSION, TOFU_SHA256.
+# Environment: BUCKET, REAPER, TOPIC, AWS_REGION, TOFU_VERSION, TOFU_SHA256,
+# ATTEMPT and MAX_ATTEMPTS (set by the reaper on each start).
 set -uo pipefail
 export TF_IN_AUTOMATION=1 TF_INPUT=0
 
+attempt=${ATTEMPT:-1} max_attempts=${MAX_ATTEMPTS:-6}
 summary="$PWD/summary.txt"
 : >"$summary"
 result=succeeded
+failures=()
 note() { echo "$*" | tee -a "$summary"; }
+failed() {
+  failures+=("$*")
+  note "FAILED: $*"
+  result=failed
+}
 
+# shellcheck disable=SC2329 # run by the EXIT trap
 publish() {
-  local left
+  local left subject
   left=$(aws resourcegroupstaggingapi get-resources --tag-filters Key=lab,Values=true --output json |
     jq -r '.ResourceTagMappingList[] | select(([.Tags[] | select(.Key=="component") | .Value] | first) != "baseline") | .ResourceARN' 2>&1)
+  [ -n "$left" ] && [ "$result" = succeeded ] && result="finished with leftovers"
   {
     echo
+    if [ "$result" = failed ]; then
+      echo "FAILURE SUMMARY (attempt $attempt of $max_attempts)"
+      for f in "${failures[@]}"; do echo "  - $f"; done
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        echo "The reaper starts this build again within 15 minutes while lab resources remain."
+      else
+        echo "That was the last attempt: the reaper starts no more builds and emails \"manual action needed\"."
+      fi
+      echo "Log group: /aws/codebuild/lab-teardown"
+      echo
+    fi
     if [ -z "$left" ]; then
       echo "Nothing tagged lab=true is left outside the baseline."
     else
@@ -35,8 +59,9 @@ publish() {
     echo
     echo "Build: ${CODEBUILD_BUILD_ID:-local}"
   } >>"$summary"
-  [ -n "$left" ] && [ "$result" = succeeded ] && result="finished with leftovers"
-  aws sns publish --topic-arn "$TOPIC" --subject "lab teardown $result" --message "file://$summary" >/dev/null ||
+  subject="lab teardown $result"
+  [ "$result" = failed ] && subject="lab teardown FAILED (attempt $attempt of $max_attempts)"
+  aws sns publish --topic-arn "$TOPIC" --subject "$subject" --message "file://$summary" >/dev/null ||
     echo "could not publish the summary"
   cat "$summary"
 }
@@ -53,7 +78,7 @@ sweep() {
     --payload '{"sweepOnly":true}' /tmp/sweep.json >/tmp/invoke.json; then
     note "sweep ($1): $(jq -c '{deleted: (.Deleted // [] | length), waiting: (.Waiting // []), errors: (.Errors // []), errorMessage}' /tmp/sweep.json)"
   else
-    note "sweep ($1): invoke failed"
+    failed "sweep ($1): could not invoke the reaper"
   fi
 }
 
@@ -112,13 +137,12 @@ destroy_stack() {
   if destroy "$stack" || { sweep "before the retry"; destroy "$stack"; }; then
     note "$stack: destroyed"
   else
-    note "$stack: tofu destroy FAILED (see the build log)"
-    result=failed
+    failed "$stack: tofu destroy failed twice (see the build log)"
   fi
 }
 
-note "lab teardown started $(date -u +%FT%TZ)"
-install_tofu || { note "could not install OpenTofu ${TOFU_VERSION}"; result=failed; exit 1; }
+note "lab teardown started $(date -u +%FT%TZ), attempt $attempt of $max_attempts"
+install_tofu || { failed "could not install OpenTofu ${TOFU_VERSION}"; exit 1; }
 sweep "start"
 destroy_stack cluster
 destroy_stack registry

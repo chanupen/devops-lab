@@ -18,10 +18,10 @@ type CloudProbe struct {
 	BudgetExists func(ctx context.Context, account string) (bool, error)
 	BucketName   func(account string) string
 	BudgetName   string
-	// K8sVersion is lab.yaml's pin; EKSVersion checks it is the newest EKS
-	// version in standard support and returns that version.
-	K8sVersion string
-	EKSVersion func(ctx context.Context) (newest string, err error)
+	// EKSVersion picks the cloud cluster's Kubernetes version (standard
+	// support only, preferring the newest the pinned components support)
+	// and says which and why; warnings do not fail the check.
+	EKSVersion func(ctx context.Context) (choice string, warnings []string, err error)
 	// ReaperReady is nil when the reaper deletes for real and ran cleanly in
 	// the last 30 minutes: the dead man's switch lab up --mode cloud needs.
 	ReaperReady func(ctx context.Context, account string) error
@@ -44,11 +44,14 @@ func checkEKSVersion(ctx context.Context, p CloudProbe) Result {
 	if p.SessionErr != nil || p.EKSVersion == nil {
 		return Result{Status: Skip, Detail: "needs the " + p.Profile + " profile"}
 	}
-	newest, err := p.EKSVersion(ctx)
-	if err != nil {
-		return fail("set k8sVersion in lab.yaml to the newest EKS version in standard support", "%v", err)
+	choice, warnings, err := p.EKSVersion(ctx)
+	switch {
+	case err != nil:
+		return fail("the cloud lab runs only on EKS standard support: fix or remove cloud.k8sVersion in lab.yaml", "%v", err)
+	case len(warnings) > 0:
+		return warn("", "%s; %s", choice, strings.Join(warnings, "; "))
 	}
-	return ok("Kubernetes %s is the newest EKS version in standard support", newest)
+	return ok("%s", choice)
 }
 
 func checkReaper(ctx context.Context, p CloudProbe) Result {
