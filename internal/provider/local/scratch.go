@@ -124,7 +124,7 @@ func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Wr
 	}
 	logf(log, "removing the failed cluster %q", name)
 	if derr := first.Delete(name); derr != nil {
-		return fmt.Errorf("%w; removing the failed cluster: %v", err, derr)
+		return fmt.Errorf("%w; removing the failed cluster: %w", err, derr)
 	}
 	logf(log, "trying once more")
 	return s.clusters(log, kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
