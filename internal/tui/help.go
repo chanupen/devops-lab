@@ -5,7 +5,7 @@ import "strings"
 // Key help, by screen. Every key the screen handles is listed.
 var (
 	helpGlobal = [][2]string{
-		{"1 2 5", "Home, Stacks, Ops log"},
+		{"1 2 3 5", "Home, Stacks, Labs, Ops log"},
 		{"U", "Bring the whole profile up (lab up)"},
 		{":", "Command palette: up, down, status, doctor, plan"},
 		{"K", "Open k9s on the lab cluster; quit it to come back"},
@@ -21,6 +21,14 @@ var (
 			{"u", "Bring the selected stack up (lab up --stacks <stack>)"},
 			{"d", "Tear the selected stack down, after a prompt (lab down --stacks <stack>)"},
 			{"r", "Retry the selected stack if it failed"},
+		},
+		screenLabs: {
+			{"j k ↑ ↓", "Move between labs; in a step, scroll its text"},
+			{"enter", "Open the current step: task, hints shown, expected result"},
+			{"n p", "Next, previous step"},
+			{"v", "Verify the step shown (lab labs verify N); passing it moves you on"},
+			{"h", "Show the step's next hint (lab labs hint N)"},
+			{"esc", "Back to the lab"},
 		},
 		screenOps: {
 			{"j k ↑ ↓", "Move"},

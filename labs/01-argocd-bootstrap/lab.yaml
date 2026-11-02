@@ -1,0 +1,9 @@
+# Lab 1. The format is described in labs/README.md.
+id: 01-argocd-bootstrap
+title: Bootstrap Argo CD from scratch
+time: 45m
+level: beginner
+modes: [local]
+needs: scratch      # its own single-node cluster, lab-scratch-01-argocd-bootstrap
+stacks: []
+tools: [kubectl, helm, argocd, jq]

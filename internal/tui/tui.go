@@ -22,6 +22,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/kube"
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -62,20 +63,27 @@ type Options struct {
 	ReadOnly string
 	Release  func()
 	Claim    func() (release func(), err error)
+	// Labs are the labs in labs/, loaded before New. LabVerify and LabHint
+	// verify a step of the started lab and show its next hint; nil turns
+	// v and h into hints for the CLI.
+	Labs      []labs.Lab
+	LabVerify func(ctx context.Context, step int) (labs.Result, error)
+	LabHint   func(step int) (int, string, error)
 }
 
 // Screens, in tab order. The key is the screen's number in the design;
-// 3, 4 and 6 come in later releases.
+// 4 and 6 come in later releases.
 const (
 	screenHome = iota
 	screenStacks
+	screenLabs
 	screenOps
 )
 
 var screens = []struct {
 	key  string
 	name string
-}{{"1", "Home"}, {"2", "Stacks"}, {"5", "Ops"}}
+}{{"1", "Home"}, {"2", "Stacks"}, {"3", "Labs"}, {"5", "Ops"}}
 
 // data is what every screen renders from.
 type data struct {
@@ -90,6 +98,7 @@ type data struct {
 	cfgPath string
 	// readOnly names the lab holding the lock while this TUI cannot act.
 	readOnly string
+	labs     []labs.Lab
 	// branchChecked and branchGone record the deleted-branch check by
 	// revision. Maps, so copies of the model share them.
 	branchChecked map[string]bool
@@ -117,6 +126,7 @@ type Model struct {
 	screen int
 	home   homeModel
 	stacks stacksModel
+	labs   labsModel
 	ops    opsModel
 	help   bool
 	flash  string // shown in the ops strip until the next key
@@ -159,7 +169,7 @@ func New(opts Options) Model {
 		opts.Now = time.Now
 	}
 	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, cfgPath: opts.ConfigPath, deps: map[string][]string{},
-		branchChecked: map[string]bool{}, branchGone: map[string]bool{}, readOnly: opts.ReadOnly}
+		branchChecked: map[string]bool{}, branchGone: map[string]bool{}, readOnly: opts.ReadOnly, labs: opts.Labs}
 	for _, s := range opts.Catalog {
 		d.order = append(d.order, s.Name)
 		d.deps[s.Name] = s.DependsOn
@@ -169,7 +179,7 @@ func New(opts Options) Model {
 			d.order = order
 		}
 	}
-	return Model{opts: opts, d: d, stacks: newStacksModel(), width: 100, height: 30,
+	return Model{opts: opts, d: d, stacks: newStacksModel(), labs: newLabsModel(), width: 100, height: 30,
 		events: make(chan tea.Msg, 1), opEvents: make(chan tea.Msg, 1), gen: 1, lease: &lease{release: opts.Release}}
 }
 
@@ -356,6 +366,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.finishOp(msg)
 	case planMsg:
 		return m.confirmFor(msg), nil
+	case labVerifyMsg, labHintMsg:
+		return m.labDone(msg)
 	case reportMsg:
 		m.flash = ""
 		lines := newRing(logLines)
@@ -480,7 +492,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	case "?":
 		m.help = true
-	case "3", "4", "6":
+	case "4", "6":
 		m.flash = "screen " + k + " comes in a later release"
 	case ":":
 		m.palette = newPalette(m.d.order)
@@ -497,6 +509,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.stacks, cmd = m.stacks.update(msg, &m.d)
 			return m, cmd
+		case screenLabs:
+			return m.labsKey(k)
 		case screenOps:
 			if k == "enter" {
 				return m.openOp()
@@ -594,6 +608,13 @@ func (m Model) View() string {
 		}
 		leftW := leftWidth(left, w)
 		rightW := w - leftW - 1
+		if m.screen == screenLabs {
+			l, r := m.labs.view(&m.d, m.now(), bodyH)
+			left = l(0)
+			leftW = leftWidth(left, w)
+			rightW = w - leftW - 1
+			right = r(rightW)
+		}
 		b.WriteString(strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", rightW) + "\n")
 		l, r := fit(left, leftW, bodyH), fit(right, rightW, bodyH)
 		for i := range bodyH {
@@ -749,10 +770,14 @@ func (m Model) hints() string {
 		return "j/k move  u up  d down  r retry  / filter  : palette  K k9s  ? help  q quit"
 	case m.screen == screenOps:
 		return "j/k move  enter output  U up  : palette  K k9s  ? help  q quit"
+	case m.screen == screenLabs && m.labs.open:
+		return "j/k scroll  n/p next/previous step  v verify  h hint  esc back  ? help  q quit"
+	case m.screen == screenLabs:
+		return "j/k move  enter current step  v verify  h hint  n/p steps  ? help  q quit"
 	case m.d.readOnly != "":
-		return "read-only: views and reports only  1 home  2 stacks  5 ops  : palette  K k9s  ? help  q quit"
+		return "read-only: views and reports only  1 home  2 stacks  3 labs  5 ops  : palette  K k9s  ? help  q quit"
 	default:
-		return "1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit"
+		return "1 home  2 stacks  3 labs  5 ops  U up  : palette  K k9s  ? help  q quit"
 	}
 }
 

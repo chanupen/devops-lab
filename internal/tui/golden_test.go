@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chanupen/devops-lab/internal/kube"
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -45,6 +46,21 @@ func TestGolden(t *testing.T) {
 		return m
 	}
 
+	// The Labs screen renders the repo's lab 1, started 20 minutes ago and
+	// on step 3, with a failed verify of that step on record.
+	lab1, err := labs.LoadAll(filepath.Join("..", "..", "labs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	onLab := labState(2)
+	onLab.ActiveLab = "01-argocd-bootstrap"
+	onLab.Labs = map[string]state.LabProgress{"01-argocd-bootstrap": {Step: 3, Attempts: map[int]int{1: 2, 2: 1, 3: 1}, Hints: map[int]int{3: 1},
+		Started: t0.Add(-20 * time.Minute), Session: t0.Add(-12 * time.Minute), Spent: 8 * time.Minute}}
+	failedVerify := func(m Model) Model {
+		m.labs.results["01-argocd-bootstrap/3"] = labs.Result{Step: 3, Reason: "podinfo is OutOfSync, not Synced: argocd app sync podinfo"}
+		return m
+	}
+
 	tests := []struct {
 		name  string
 		st    state.State
@@ -52,6 +68,12 @@ func TestGolden(t *testing.T) {
 		keys  []string
 		setup func(Model) Model
 	}{
+		// Cases named *labs*: lab 1 is loaded and the clock pinned before the keys.
+		{"labs_not_started", labState(2), upCluster, []string{"3"}, nil},
+		{"labs_started", onLab, upCluster, []string{"3"}, nil},
+		{"labs_step", onLab, upCluster, []string{"3", "enter"}, failedVerify},
+		{"labs_next_step", onLab, upCluster, []string{"3", "enter", "n"}, nil},
+		{"help_labs", onLab, upCluster, []string{"3", "?"}, nil},
 		{"home_empty", state.New(), cluster{known: true, reason: "no cluster"}, nil, nil},
 		{"home_down", labState(2), cluster{known: true, reason: "not reachable: connection refused"}, nil, nil},
 		{"home_up", onMain, upCluster, nil, nil},
@@ -78,6 +100,10 @@ func TestGolden(t *testing.T) {
 			m := newModel(tt.st)
 			m.d.live, m.d.ctx = tt.c, "kind-lab"
 			m.d.cfgPath = "/home/user/devops-lab/lab.yaml"
+			if strings.Contains(tt.name, "labs") {
+				m.d.labs = lab1
+				m.opts.Now = func() time.Time { return t0 }
+			}
 			var next tea.Model = m
 			next, _ = next.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 			for _, k := range tt.keys {

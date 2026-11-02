@@ -1,5 +1,5 @@
  lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
- 1 Home   2 Stacks   5 Ops                                                                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Keys: Ops                                                                                          
                                                                                                     
@@ -7,7 +7,7 @@
   g G         Newest, oldest                                                                        
   enter       Open the output, with the CLI command at the top                                      
                                                                                                     
-  1 2 5       Home, Stacks, Ops log                                                                 
+  1 2 3 5     Home, Stacks, Labs, Ops log                                                           
   U           Bring the whole profile up (lab up)                                                   
   :           Command palette: up, down, status, doctor, plan                                       
   K           Open k9s on the lab cluster; quit it to come back                                     

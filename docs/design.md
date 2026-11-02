@@ -134,7 +134,7 @@ One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a
 
 1. **Home**: mode, cluster health, running stacks, TTL countdown, last five operations. Empty state says which key to press next.
 2. **Stacks**: the module catalog with install state, dependencies, endpoints and versions.
-3. **Labs**: guided exercises, each with steps and a `verify` check that turns a step green.
+3. **Labs**: the labs with progress (● done, ◐ current, ○ not started). `enter` opens the current step's text, `v` verifies it, `h` shows its next hint, `n`/`p` move between steps.
 4. **Drills**: break/fix scenarios. Start a fault, a timer runs, `verify` stops it and records your time.
 5. **Ops log**: every operation with its full streamed output and the equivalent CLI command.
 6. **Cost** (cloud mode): running resources, hourly rate, spend this session, budget left, TTL.
@@ -200,9 +200,23 @@ Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/o
 
 ### Labs
 
-Labs are Markdown files with steps and a `verify` script per step, so they can also live in the devops-roadmap repo. The first set:
+Each lab is a directory, `labs/NN-name/`, in a generic format that can be copied into the devops-roadmap repo as is (`labs/README.md` describes it):
 
-1. Bootstrap a cluster and install Argo CD from scratch.
+- `lab.yaml`: id, title, time, level, modes, `needs` and the tools the steps use.
+- `README.md`: an intro, then `## Step N: title` sections, each with the task, `### Hints` and `### Expected result`.
+- `steps/NN-verify.sh`: one per step. Read-only and idempotent; exit 0 means done, otherwise the last line says why not.
+- `reset.sh`: returns the cluster to the lab's start.
+- `solution/NN-solve.sh`: a reference answer per step, plus the files it applies. Shown only on request.
+
+A lab says where it runs. `needs: scratch` gives it its own single-node kind cluster, `lab-scratch-<id>`, on rootless Podman. It sits on the kind network and pulls through the Zot cache when that runs, but has no host ports and its own kubeconfig, so it never touches the main lab or `~/.kube/config`. `lab labs stop` deletes it. `needs: lab` runs on the main lab's cluster and lists the stacks it needs.
+
+`lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent across sessions. Only one lab is started at a time.
+
+`go test -tags e2e ./internal/labs/` runs a lab for real: each step's verify fails before its solution and passes after it, then reset and stop.
+
+The first set:
+
+1. Bootstrap Argo CD from scratch (scratch cluster, about 45 minutes): install with Helm, log in through a port-forward, deploy podinfo from Git, turn on auto-sync, watch self-heal undo drift, then an app of apps.
 2. Build, scan and promote an image from dev to prod by retagging.
 3. Add an SLO and a burn-rate alert for the sample app.
 4. Rotate a database secret without restarting the app.
@@ -287,7 +301,7 @@ devops-lab/
 │   ├── bootstrap/          # Argo CD app-of-apps
 │   ├── stacks/             # one folder per stack (Helm values, Kustomize)
 │   └── overlays/           # local | cloud differences only
-├── labs/                   # lab-01-bootstrap.md + verify scripts
+├── labs/                   # NN-name/: lab.yaml, README.md, steps/, reset.sh, solution/
 ├── drills/                 # drill definitions (YAML)
 ├── lab.yaml
 └── Makefile                # build for linux/amd64 and darwin/amd64

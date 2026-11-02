@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 	"github.com/chanupen/devops-lab/internal/tui"
@@ -84,6 +86,22 @@ func tuiOptions(flags labFlags, newProvider providerFactory) (*tui.Options, erro
 	}
 	if mode == "local" {
 		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
+	}
+	// The Labs screen: the labs next to lab.yaml, verified and hinted through
+	// the same manager as lab labs. Without a labs/ directory it is empty.
+	if cfgPath != "" {
+		lf := labsFlags{labFlags: flags}
+		if m, err := lf.manager(false); err == nil {
+			opts.Labs = m.Labs
+			opts.LabVerify = func(ctx context.Context, step int) (labs.Result, error) {
+				_, res, err := m.Verify(ctx, step)
+				return res, err
+			}
+			opts.LabHint = func(step int) (int, string, error) {
+				_, n, h, err := m.Hint(step)
+				return n, h, err
+			}
+		}
 	}
 	return opts, nil
 }

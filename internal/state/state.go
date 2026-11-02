@@ -36,6 +36,34 @@ type State struct {
 	Revision string                `json:"revision,omitempty"`
 	Stacks   map[string]StackState `json:"stacks"`
 	Ops      []Op                  `json:"ops"`
+	// ActiveLab is the lab started with lab labs start, if any; Labs is the
+	// progress of every lab ever started, by lab ID.
+	ActiveLab string                 `json:"activeLab,omitempty"`
+	Labs      map[string]LabProgress `json:"labs,omitempty"`
+}
+
+// LabProgress is how far one lab got.
+type LabProgress struct {
+	// Step is the step to do next, from 1; one past the last step once the
+	// lab is done.
+	Step      int         `json:"step"`
+	Attempts  map[int]int `json:"attempts,omitempty"`  // verify runs, by step
+	Hints     map[int]int `json:"hints,omitempty"`     // hints shown, by step
+	Solutions []int       `json:"solutions,omitempty"` // steps whose solution was shown
+	Started   time.Time   `json:"started"`
+	// Session is when the current session began (zero while stopped);
+	// Spent is the time of the sessions before it.
+	Session   time.Time     `json:"session,omitzero"`
+	Spent     time.Duration `json:"spent"`
+	Completed time.Time     `json:"completed,omitzero"`
+}
+
+// TimeSpent is the time of every session, the open one up to now.
+func (p LabProgress) TimeSpent(now time.Time) time.Duration {
+	if p.Session.IsZero() {
+		return p.Spent
+	}
+	return p.Spent + now.Sub(p.Session)
 }
 
 // StackState is the last known result for one stack.

@@ -1,5 +1,5 @@
  lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —                            
- 1 Home   2 Stacks   5 Ops                                                                          
+ 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
 ──────────────────────────────────────────────────────┬─────────────────────────────────────────────
  Lab                                                  │ Last operations                             
                                                       │  ● Oct 31 02:31  lab up  core apply  41s    
@@ -27,4 +27,4 @@
                                                       │                                             
 ──────────────────────────────────────────────────────┴─────────────────────────────────────────────
  ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
- 1 home  2 stacks  5 ops  U up  : palette  K k9s  ? help  q quit                                    
+ 1 home  2 stacks  3 labs  5 ops  U up  : palette  K k9s  ? help  q quit                            
