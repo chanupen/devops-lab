@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	tagging "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	taggingtypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
+
+	"github.com/chanupen/devops-lab/internal/reaper"
 )
 
 // Tagged is one resource the tagging API reports.
@@ -52,15 +54,40 @@ func Expiring(ctx context.Context, cfg aws.Config) ([]Tagged, error) {
 	return listTagged(ctx, tagging.NewFromConfig(cfg), []taggingtypes.TagFilter{labFilter, {Key: aws.String(ExpiresTag)}}, nil)
 }
 
-// Leftovers lists every lab=true resource that is not part of the baseline.
-// lab down prints them after a cloud destroy: anything here may still bill.
-// The tagging API can list a deleted resource for a few minutes.
-func Leftovers(ctx context.Context, cfg aws.Config) ([]Tagged, error) {
+// LeftoverReport is what a cloud lab left behind.
+type LeftoverReport struct {
+	Left   []Tagged // still there (or could not be checked): these may bill
+	Stale  []Tagged // the tagging API lists them, but they are terminated or not found
+	Errors []string // failed lookups; those resources are in Left
+}
+
+// Leftovers lists every lab=true resource that is not part of the baseline,
+// with a direct lookup of each: the tagging API lists deleted resources
+// for up to an hour, and those go to Stale (the reaper's Gone logic).
+// lab down prints them after a cloud destroy.
+func Leftovers(ctx context.Context, cfg aws.Config) (LeftoverReport, error) {
 	all, err := listTagged(ctx, tagging.NewFromConfig(cfg), []taggingtypes.TagFilter{labFilter}, nil)
 	if err != nil {
-		return nil, err
+		return LeftoverReport{}, err
 	}
-	return withoutBaseline(all), nil
+	return SplitLeftovers(ctx, reaper.NewAWS(cfg), withoutBaseline(all)), nil
+}
+
+// SplitLeftovers checks each resource with c and splits off the stale ones.
+func SplitLeftovers(ctx context.Context, c reaper.Checker, ts []Tagged) LeftoverReport {
+	rs := make([]reaper.Resource, len(ts))
+	for i, t := range ts {
+		rs[i] = reaper.Resource(t)
+	}
+	left, stale, errs := reaper.SplitStale(ctx, c, rs)
+	back := func(rs []reaper.Resource) []Tagged {
+		out := make([]Tagged, len(rs))
+		for i, r := range rs {
+			out[i] = Tagged(r)
+		}
+		return out
+	}
+	return LeftoverReport{Left: back(left), Stale: back(stale), Errors: errs}
 }
 
 func withoutBaseline(ts []Tagged) []Tagged {

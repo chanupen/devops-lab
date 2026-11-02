@@ -8,7 +8,10 @@
 #      Load Balancer Controller, so nothing new appears behind it;
 #   3. sweeps again and destroys the rest of the cluster module, then the
 #      registry module (one retry after a sweep if a destroy fails);
-#   4. sweeps a last time and emails what is still tagged lab=true.
+#   4. sweeps a last time and emails what is still there: the reaper looks
+#      each tagged resource up, and stale tagging-index entries (terminated
+#      or not found) are listed apart as ignored. The subject says "done"
+#      when nothing real remains.
 # A failed run emails a failure summary (what failed, attempt N of M). The
 # reaper starts the build again within 15 minutes while lab resources
 # remain, at most MAX_ATTEMPTS times, then emails "manual action needed".
@@ -38,12 +41,41 @@ failed() {
   result=failed
 }
 
+# leftovers: asks the reaper what is left outside the baseline, with stale
+# tagging-index entries (terminated or not found: the index lags up to an
+# hour) split off, into $tmp/leftovers.json. If the reaper cannot answer,
+# the tagging API's list stands in, unchecked, and it returns false.
+# shellcheck disable=SC2329 # run by publish, from the EXIT trap
+leftovers() {
+  if aws lambda invoke --function-name "$REAPER" --cli-binary-format raw-in-base64-out --cli-read-timeout 320 \
+    --payload '{"leftovers":true}' "$tmp/leftovers.json" >"$tmp/invoke-leftovers.json" 2>/dev/null &&
+    ! jq -e '.FunctionError' "$tmp/invoke-leftovers.json" >/dev/null 2>&1 &&
+    jq -e '.left | type == "array"' "$tmp/leftovers.json" >/dev/null 2>&1; then
+    return 0
+  fi
+  aws resourcegroupstaggingapi get-resources --tag-filters Key=lab,Values=true --output json 2>/dev/null |
+    jq '{left: [.ResourceTagMappingList[] | select(([.Tags[] | select(.Key=="component") | .Value] | first) != "baseline") | .ResourceARN],
+      stale: [], errors: []}' >"$tmp/leftovers.json" 2>/dev/null ||
+    echo '{"left":[],"stale":[],"errors":["could not list what is left: run lab cloud leftovers"]}' >"$tmp/leftovers.json"
+  return 1
+}
+
 # shellcheck disable=SC2329 # run by the EXIT trap
 publish() {
-  local left subject
-  left=$(aws resourcegroupstaggingapi get-resources --tag-filters Key=lab,Values=true --output json |
-    jq -r '.ResourceTagMappingList[] | select(([.Tags[] | select(.Key=="component") | .Value] | first) != "baseline") | .ResourceARN' 2>&1)
-  [ -n "$left" ] && [ "$result" = succeeded ] && result="finished with leftovers"
+  local left stale errs checked=true subject
+  leftovers || checked=false
+  left=$(jq -r '.left[]?' "$tmp/leftovers.json")
+  stale=$(jq -r '.stale[]?' "$tmp/leftovers.json")
+  errs=$(jq -r '.errors[]?' "$tmp/leftovers.json")
+  if [ "$result" = succeeded ]; then
+    if [ -n "$left" ]; then
+      result="finished with leftovers"
+    elif [ -n "$errs" ]; then
+      result="finished (leftovers not checked)"
+    else
+      result="done"
+    fi
+  fi
   {
     echo
     if [ "$result" = failed ]; then
@@ -61,9 +93,22 @@ publish() {
     fi
     if [ -z "$left" ]; then
       echo "Nothing tagged lab=true is left outside the baseline."
-    else
-      echo "Still tagged lab=true outside the baseline (the tagging API can lag a few minutes):"
+    elif $checked; then
+      echo "Still there outside the baseline (each one looked up directly; these may still bill):"
       while IFS= read -r arn; do echo "  $arn"; done <<<"$left"
+    else
+      echo "Still tagged lab=true outside the baseline (the reaper could not check them; the tagging API can lag up to an hour):"
+      while IFS= read -r arn; do echo "  $arn"; done <<<"$left"
+    fi
+    if [ -n "$stale" ]; then
+      echo
+      echo "Stale index entries (ignored): the tagging API still lists these, but they are terminated or not found:"
+      while IFS= read -r arn; do echo "  $arn"; done <<<"$stale"
+    fi
+    if [ -n "$errs" ]; then
+      echo
+      echo "Could not check:"
+      while IFS= read -r e; do echo "  $e"; done <<<"$errs"
     fi
     echo
     echo "Build: ${CODEBUILD_BUILD_ID:-local}"

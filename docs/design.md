@@ -313,7 +313,7 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 - The `devops` IAM user keeps its access keys only as the source profile; day-to-day work uses the `lab` profile, which assumes `lab-admin` with MFA for short-lived credentials (see Account baseline).
 - Pods reach AWS through EKS Pod Identity; no static keys in the cluster.
 - Terraform state in S3 with native lock, versioned and encrypted.
-- `lab down` destroys in reverse dependency order, then checks for leftovers by tag (load balancers, ENIs, EBS volumes, Elastic IPs) and lists anything still billed.
+- `lab down` destroys in reverse dependency order, then checks for leftovers by tag (load balancers, ENIs, EBS volumes, Elastic IPs) and lists anything still billed. Each tagged resource is looked up directly, because the tagging API lists deleted resources for up to an hour; terminated or missing ones are listed apart as stale index entries and ignored. The teardown build's final email does the same.
 
 EKS clusters bill for the control plane by the hour, so a 4-hour session costs a few US dollars; check current rates on the AWS pricing pages before setting the budget.
 
