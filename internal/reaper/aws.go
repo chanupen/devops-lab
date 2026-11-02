@@ -1,6 +1,7 @@
 package reaper
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,12 +11,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
@@ -34,12 +37,149 @@ type AWS struct {
 	EKS       *eks.Client
 	ELB       *elbv2.Client
 	ClassicLB *elb.Client
+	ECR       *ecr.Client
 }
 
 // NewAWS builds the clients from one config.
 func NewAWS(cfg aws.Config) *AWS {
 	return &AWS{Tagging: tagging.NewFromConfig(cfg), EC2: ec2.NewFromConfig(cfg), EKS: eks.NewFromConfig(cfg),
-		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg)}
+		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg), ECR: ecr.NewFromConfig(cfg)}
+}
+
+// Check implements Checker with one Describe call per resource. EC2 and
+// EKS lookups return the live tags too; for the other types only
+// existence is checked. Types it does not know count as existing.
+func (a *AWS) Check(ctx context.Context, arn string) (Live, error) {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) != 6 {
+		return Live{}, nil
+	}
+	service, resource := parts[2], parts[5]
+	typ, id, _ := strings.Cut(resource, "/")
+	ids := []string{id}
+	var err error
+	live := Live{Known: true}
+	switch {
+	case service == "ec2" && typ == "instance":
+		var out *ec2.DescribeInstancesOutput
+		if out, err = a.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids}); err == nil {
+			live = instanceLive(out)
+		}
+	case service == "ec2" && typ == "volume":
+		var out *ec2.DescribeVolumesOutput
+		if out, err = a.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: ids}); err == nil {
+			live = ec2Live(len(out.Volumes), func() []ec2types.Tag { return out.Volumes[0].Tags })
+		}
+	case service == "ec2" && typ == "security-group":
+		var out *ec2.DescribeSecurityGroupsOutput
+		if out, err = a.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: ids}); err == nil {
+			live = ec2Live(len(out.SecurityGroups), func() []ec2types.Tag { return out.SecurityGroups[0].Tags })
+		}
+	case service == "ec2" && typ == "network-interface":
+		var out *ec2.DescribeNetworkInterfacesOutput
+		if out, err = a.EC2.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{NetworkInterfaceIds: ids}); err == nil {
+			live = ec2Live(len(out.NetworkInterfaces), func() []ec2types.Tag { return out.NetworkInterfaces[0].TagSet })
+		}
+	case service == "ec2" && typ == "elastic-ip":
+		var out *ec2.DescribeAddressesOutput
+		if out, err = a.EC2.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{AllocationIds: ids}); err == nil {
+			live = ec2Live(len(out.Addresses), func() []ec2types.Tag { return out.Addresses[0].Tags })
+		}
+	case service == "ec2" && typ == "vpc":
+		var out *ec2.DescribeVpcsOutput
+		if out, err = a.EC2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: ids}); err == nil {
+			live = ec2Live(len(out.Vpcs), func() []ec2types.Tag { return out.Vpcs[0].Tags })
+		}
+	case service == "ec2" && typ == "subnet":
+		var out *ec2.DescribeSubnetsOutput
+		if out, err = a.EC2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: ids}); err == nil {
+			live = ec2Live(len(out.Subnets), func() []ec2types.Tag { return out.Subnets[0].Tags })
+		}
+	case service == "ec2" && typ == "route-table":
+		var out *ec2.DescribeRouteTablesOutput
+		if out, err = a.EC2.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{RouteTableIds: ids}); err == nil {
+			live = ec2Live(len(out.RouteTables), func() []ec2types.Tag { return out.RouteTables[0].Tags })
+		}
+	case service == "ec2" && typ == "internet-gateway":
+		var out *ec2.DescribeInternetGatewaysOutput
+		if out, err = a.EC2.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{InternetGatewayIds: ids}); err == nil {
+			live = ec2Live(len(out.InternetGateways), func() []ec2types.Tag { return out.InternetGateways[0].Tags })
+		}
+	case service == "ec2" && typ == "launch-template":
+		var out *ec2.DescribeLaunchTemplatesOutput
+		if out, err = a.EC2.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{LaunchTemplateIds: ids}); err == nil {
+			live = ec2Live(len(out.LaunchTemplates), func() []ec2types.Tag { return out.LaunchTemplates[0].Tags })
+		}
+	case service == "eks" && typ == "cluster":
+		var out *eks.DescribeClusterOutput
+		if out, err = a.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(id)}); err == nil {
+			live.Tags = out.Cluster.Tags
+		}
+	case service == "eks" && typ == "nodegroup":
+		p := strings.Split(id, "/")
+		if len(p) < 2 {
+			return Live{}, nil
+		}
+		var out *eks.DescribeNodegroupOutput
+		if out, err = a.EKS.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(p[0]), NodegroupName: aws.String(p[1])}); err == nil {
+			live.Tags = out.Nodegroup.Tags
+		}
+	case service == "elasticloadbalancing" && typ == "loadbalancer" && strings.Contains(id, "/"):
+		_, err = a.ELB.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{LoadBalancerArns: []string{arn}})
+	case service == "elasticloadbalancing" && typ == "loadbalancer":
+		_, err = a.ClassicLB.DescribeLoadBalancers(ctx, &elb.DescribeLoadBalancersInput{LoadBalancerNames: ids})
+	case service == "elasticloadbalancing" && typ == "targetgroup":
+		_, err = a.ELB.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{arn}})
+	case service == "ecr" && typ == "repository":
+		_, err = a.ECR.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{RepositoryNames: ids})
+	default:
+		return Live{}, nil
+	}
+	if notFound(err) {
+		return Live{Known: true, Gone: true}, nil
+	}
+	return live, err
+}
+
+// notFound is true for the "no such resource" errors of the APIs Check
+// calls: InvalidInstanceID.NotFound, InvalidGroup.NotFound,
+// ResourceNotFoundException, LoadBalancerNotFound, TargetGroupNotFound,
+// RepositoryNotFoundException and the like.
+func notFound(err error) bool {
+	var api smithy.APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	c := api.ErrorCode()
+	return strings.HasSuffix(c, "NotFound") || strings.HasSuffix(c, "NotFoundException")
+}
+
+// instanceLive: a terminated instance is gone; the API lists it for about
+// an hour after.
+func instanceLive(out *ec2.DescribeInstancesOutput) Live {
+	if len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	i := out.Reservations[0].Instances[0]
+	if i.State != nil && i.State.Name == ec2types.InstanceStateNameTerminated {
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(i.Tags)}
+}
+
+func ec2Live(n int, tags func() []ec2types.Tag) Live {
+	if n == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(tags())}
+}
+
+func ec2Tags(in []ec2types.Tag) map[string]string {
+	out := make(map[string]string, len(in))
+	for _, t := range in {
+		out[aws.ToString(t.Key)] = aws.ToString(t.Value)
+	}
+	return out
 }
 
 // InVPC implements VPCScanner. Tags do not matter here: a plain
@@ -333,45 +473,134 @@ type S3Store struct {
 	Bucket string
 }
 
-// Load implements StateStore. A missing object is the zero state. S3
-// reports a missing key as 403 AccessDenied, not 404, to callers that may
-// not list the bucket; then a listing of the key's prefix decides.
+// Load implements StateStore. A missing object is the zero state.
 func (s S3Store) Load(ctx context.Context) (TeardownState, error) {
 	var st TeardownState
-	out, err := s.Client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(TeardownStateKey)})
-	var nsk *s3types.NoSuchKey
-	switch {
-	case errors.As(err, &nsk):
-		return st, nil
-	case accessDenied(err):
-		if missing, lerr := s.missing(ctx); lerr == nil && missing {
-			return st, nil
-		}
-		return st, err
-	case err != nil:
-		return st, err
-	}
-	defer func() { _ = out.Body.Close() }()
-	b, err := io.ReadAll(io.LimitReader(out.Body, 64<<10))
-	if err != nil {
+	b, found, err := getObject(ctx, s.Client, s.Bucket, TeardownStateKey, 64<<10)
+	if err != nil || !found {
 		return st, err
 	}
 	return st, json.Unmarshal(b, &st)
 }
 
-// missing lists TeardownStateKey's prefix: true when the key is not there.
-func (s S3Store) missing(ctx context.Context) (bool, error) {
-	out, err := s.Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.Bucket),
-		Prefix: aws.String(TeardownStateKey), MaxKeys: aws.Int32(1)})
+// getObject reads one object; found is false when there is none. S3
+// reports a missing key as 403 AccessDenied, not 404, to callers that may
+// not list the bucket; then a listing of the key itself decides.
+func getObject(ctx context.Context, c S3API, bucket, key string, limit int64) (body []byte, found bool, err error) {
+	out, err := c.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	var nsk *s3types.NoSuchKey
+	switch {
+	case errors.As(err, &nsk):
+		return nil, false, nil
+	case accessDenied(err):
+		if missing, lerr := missingKey(ctx, c, bucket, key); lerr == nil && missing {
+			return nil, false, nil
+		}
+		return nil, false, err
+	case err != nil:
+		return nil, false, err
+	}
+	defer func() { _ = out.Body.Close() }()
+	body, err = io.ReadAll(io.LimitReader(out.Body, limit))
+	return body, err == nil, err
+}
+
+// missingKey lists the key as a prefix: true when the key is not there.
+func missingKey(ctx context.Context, c S3API, bucket, key string) (bool, error) {
+	out, err := c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(key), MaxKeys: aws.Int32(1)})
 	if err != nil {
 		return false, err
 	}
 	for _, o := range out.Contents {
-		if aws.ToString(o.Key) == TeardownStateKey {
+		if aws.ToString(o.Key) == key {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// S3Stacks implements StackReader from the state bucket.
+type S3Stacks struct {
+	Client S3API
+	Bucket string
+}
+
+// Stack implements StackReader.
+func (s S3Stacks) Stack(ctx context.Context, name string) (StackInfo, error) {
+	info := StackInfo{Name: name}
+	key, ok := TofuStacks[name]
+	if !ok {
+		return info, fmt.Errorf("unknown stack %q", name)
+	}
+	state, found, err := getObject(ctx, s.Client, s.Bucket, key, 64<<20)
+	if err != nil {
+		return info, fmt.Errorf("state %s: %w", key, err)
+	}
+	if found {
+		if info.Resources, err = ManagedResources(state); err != nil {
+			return info, fmt.Errorf("state %s: %w", key, err)
+		}
+	}
+	bundle, found, err := getObject(ctx, s.Client, s.Bucket, BundleKey(name), 16<<20)
+	if err != nil {
+		return info, fmt.Errorf("bundle %s: %w", BundleKey(name), err)
+	}
+	if found {
+		info.Bundle = true
+		if info.Expires, err = BundleExpiry(bundle); err != nil {
+			return info, fmt.Errorf("bundle %s: %w", BundleKey(name), err)
+		}
+	}
+	return info, nil
+}
+
+// ManagedResources counts the managed resources (not data sources) in an
+// OpenTofu state file.
+func ManagedResources(state []byte) (int, error) {
+	var st struct {
+		Resources []struct {
+			Mode string `json:"mode"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(state, &st); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range st.Resources {
+		if r.Mode == "managed" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// BundleVarsFile is the variables file lab writes into each module, and
+// so into its teardown bundle.
+const BundleVarsFile = "lab.auto.tfvars.json"
+
+// BundleExpiry is the expires_at a teardown bundle was applied (or last
+// extended) with.
+func BundleExpiry(bundle []byte) (time.Time, error) {
+	zr, err := zip.NewReader(bytes.NewReader(bundle), int64(len(bundle)))
+	if err != nil {
+		return time.Time{}, err
+	}
+	f, err := zr.Open(BundleVarsFile)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = f.Close() }()
+	var vars struct {
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.NewDecoder(f).Decode(&vars); err != nil {
+		return time.Time{}, fmt.Errorf("%s: %w", BundleVarsFile, err)
+	}
+	t, err := time.Parse(time.RFC3339, vars.ExpiresAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: expires_at %q: %w", BundleVarsFile, vars.ExpiresAt, err)
+	}
+	return t, nil
 }
 
 func accessDenied(err error) bool {

@@ -18,9 +18,9 @@ import (
 // fakeS3 answers like S3 does for a role with or without s3:ListBucket.
 type fakeS3 struct {
 	objects map[string][]byte
-	// listPrefix: ListObjectsV2 is allowed for prefixes under it; "" means
-	// the role has no s3:ListBucket at all.
-	listPrefix string
+	// listPrefixes: ListObjectsV2 is allowed for prefixes under these;
+	// none means the role has no s3:ListBucket at all.
+	listPrefixes []string
 	// get404: GetObject on a missing key says NoSuchKey. Without it S3
 	// says 403 AccessDenied, as it does when the caller may not list.
 	get404 bool
@@ -60,7 +60,7 @@ func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 
 func (f *fakeS3) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 	prefix := aws.ToString(in.Prefix)
-	if f.listPrefix == "" || !strings.HasPrefix(prefix, f.listPrefix) {
+	if !slices.ContainsFunc(f.listPrefixes, func(p string) bool { return strings.HasPrefix(prefix, p) }) {
 		return nil, denied("s3:ListBucket")
 	}
 	var out s3.ListObjectsV2Output
@@ -93,13 +93,13 @@ func TestTeardownStartsWhateverS3Answers(t *testing.T) {
 		},
 		{
 			name:    "ListBucket on teardown/ turns the missing state into 404",
-			s3:      &fakeS3{listPrefix: "teardown/", get404: true},
+			s3:      &fakeS3{listPrefixes: []string{"teardown/"}, get404: true},
 			attempt: 1, saved: true,
 			teardown: "started build lab-teardown:1 (attempt 1 of 6)",
 		},
 		{
 			name:    "S3 still says 403 on GetObject, but the prefix listing shows it is missing",
-			s3:      &fakeS3{listPrefix: "teardown/"},
+			s3:      &fakeS3{listPrefixes: []string{"teardown/"}},
 			attempt: 1, saved: true,
 			teardown: "started build lab-teardown:1 (attempt 1 of 6)",
 		},
@@ -151,7 +151,7 @@ func (e *erringStore) Save(context.Context, TeardownState) error {
 func (e *erringStore) Clear(context.Context) error { return nil }
 
 func TestLoadReadsSavedState(t *testing.T) {
-	f := &fakeS3{listPrefix: "teardown/"}
+	f := &fakeS3{listPrefixes: []string{"teardown/"}}
 	s := S3Store{Client: f, Bucket: "state"}
 	want := TeardownState{Lab: "2026-11-02T11:00:00Z", Attempts: 3, LastBuild: "lab-teardown:3"}
 	if err := s.Save(context.Background(), want); err != nil {
@@ -171,7 +171,7 @@ func TestCheckSelf(t *testing.T) {
 		fail string
 	}{
 		{"both pass (no state yet counts as fine)",
-			Env{Store: S3Store{Client: &fakeS3{listPrefix: "teardown/", get404: true}}, Teardown: &fakeTeardown{}}, true, ""},
+			Env{Store: S3Store{Client: &fakeS3{listPrefixes: []string{"teardown/"}, get404: true}}, Teardown: &fakeTeardown{}}, true, ""},
 		{"state unreadable: the incident",
 			Env{Store: S3Store{Client: &fakeS3{}}, Teardown: &fakeTeardown{}}, false, "teardown state: api error AccessDenied"},
 		{"project not visible",

@@ -25,6 +25,9 @@ type CloudProbe struct {
 	// ReaperReady is nil when the reaper deletes for real and ran cleanly in
 	// the last 30 minutes: the dead man's switch lab up --mode cloud needs.
 	ReaperReady func(ctx context.Context, account string) error
+	// TeardownBuild is the ID of a lab-teardown build in progress, or "".
+	// lab up --mode cloud refuses while one runs.
+	TeardownBuild func(ctx context.Context) (string, error)
 }
 
 // CloudChecks returns the checks for lab doctor --mode cloud.
@@ -37,7 +40,23 @@ func CloudChecks(p CloudProbe) []Check {
 		{"budget", func(ctx context.Context, _ System, _ Options) Result { return checkBudget(ctx, p) }},
 		{"eks version", func(ctx context.Context, _ System, _ Options) Result { return checkEKSVersion(ctx, p) }},
 		{"ttl reaper", func(ctx context.Context, _ System, _ Options) Result { return checkReaper(ctx, p) }},
+		{"teardown build", func(ctx context.Context, _ System, _ Options) Result { return checkTeardownBuild(ctx, p) }},
 	}
+}
+
+func checkTeardownBuild(ctx context.Context, p CloudProbe) Result {
+	if p.SessionErr != nil || p.TeardownBuild == nil {
+		return Result{Status: Skip, Detail: "needs the " + p.Profile + " profile"}
+	}
+	id, err := p.TeardownBuild(ctx)
+	switch {
+	case err != nil:
+		return fail("", "%v", err)
+	case id != "":
+		return fail("lab up --mode cloud refuses until it finishes; follow it in /aws/codebuild/lab-teardown",
+			"teardown build %s is running", id)
+	}
+	return ok("no teardown build running")
 }
 
 func checkEKSVersion(ctx context.Context, p CloudProbe) Result {
