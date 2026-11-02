@@ -93,6 +93,7 @@ Now adding an app means adding an entry in Git. Nobody runs `kubectl apply` for 
 ### Hints
 - Set values inline with `spec.source.helm.valuesObject`. A list in your values replaces the chart's list.
 - The chart reads the children's revision from `config.spec.source.targetRevision`.
+- Give each entry a `destination: {namespace: <name>}`. The chart reads it, and fails on an entry without one ("nil pointer evaluating … .namespace").
 - `helm-guestbook` is a Helm app: its entry needs `tool: {helm: {releaseName: helm-guestbook}}`.
 - The children are named `example.guestbook` and `example.helm-guestbook`. Watch them with `argocd app list`.
 
