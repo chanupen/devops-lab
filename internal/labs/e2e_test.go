@@ -57,7 +57,9 @@ func TestE2ELab1(t *testing.T) {
 	}
 	m := &labs.Manager{Labs: all, Store: state.NewStore(filepath.Join(labHome, "state.json")), Mode: "local", Clusters: scratch,
 		Runner: labs.ExecRunner{}, Home: labHome, MainKubeconfig: filepath.Join(labHome, "kubeconfig"), LookPath: exec.LookPath,
-		Env: scriptEnv}
+		Env: scriptEnv,
+		// Its own cluster name, so it never meets a learner's lab-scratch-<id>.
+		ScratchName: func(l labs.Lab) string { return fmt.Sprintf("lab-scratch-e2e-%s-%d", l.Number(), os.Getpid()) }}
 	ctx := context.Background()
 	log := logWriter{t}
 
@@ -94,8 +96,8 @@ func TestE2ELab1(t *testing.T) {
 			}
 		}
 		t.Logf("%-38s %8s", "stop (delete the scratch cluster)", time.Since(start).Round(100*time.Millisecond))
-		if ok, _ := scratch.Exists(labs.ClusterName(l)); ok {
-			t.Errorf("cluster %s still exists after stop", labs.ClusterName(l))
+		if ok, _ := scratch.Exists(m.Scratch(l)); ok {
+			t.Errorf("cluster %s still exists after stop", m.Scratch(l))
 		}
 		t.Logf("timings:\n%s", strings.Join(timings, "\n"))
 	})

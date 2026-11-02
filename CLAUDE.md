@@ -103,7 +103,8 @@ If a phase slips, cut TUI screens before labs.
 ## Labs
 
 - Format (`labs/README.md`): `lab.yaml` (id, title, time, level, modes, `needs: scratch | lab`, stacks, tools), README with `## Step N: title` sections (task, `### Hints`, `### Expected result`), `steps/NN-verify.sh` (read-only, idempotent, exit 0 = done, last line says why not), `reset.sh`, `solution/NN-solve.sh`. Generic, so labs can move to the public devops-roadmap repo.
-- A scratch lab gets its own single-node kind cluster `lab-scratch-<id>` on the kind network, pulling through Zot, with no host ports and its own kubeconfig (`~/.lab/labs/<id>/kubeconfig`, never `~/.kube/config`). `lab labs stop` deletes it.
+- A scratch lab gets its own single-node kind cluster `lab-scratch-<id>` on the kind network, pulling through Zot, with no host ports and its own kubeconfig (`~/.lab/labs/<id>/kubeconfig`, never `~/.kube/config`). `lab labs stop` deletes it. `lab labs start` refuses a cluster with that name that its state did not start (another lab home, a test run); the e2e test names its own `lab-scratch-e2e-<NN>-<pid>`.
+- A missing tool on start prints the pinned install command from `lab.yaml`'s `install` map for this platform.
 - CLI: `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. Verify runs with KUBECONFIG set and a 60 s timeout. Progress lives in `~/.lab/state.json`.
 - Every solution must pass its verify script on a fresh cluster: `go test -tags e2e -run E2E -timeout 40m ./internal/labs/` (needs Podman, kubectl, helm, jq, argocd).
 

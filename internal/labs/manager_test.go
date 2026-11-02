@@ -221,9 +221,24 @@ func TestStartChecks(t *testing.T) {
 		}
 		return "/bin/" + f, nil
 	}
-	m.Labs[0].Tools = []string{"kubectl", "argocd"}
-	if _, err := m.Start(ctx, "1", io.Discard); err == nil || !strings.Contains(err.Error(), "needs argocd on PATH") || len(c.created) != 0 {
-		t.Errorf("missing tool: %v, created %v", err, c.created)
+	m.Labs[0].Tools = []string{"kubectl", "argocd", "jq"}
+	m.Labs[0].Install = map[string]map[string]string{"argocd": {"linux/amd64": "curl -fsSLo /tmp/argocd https://example.invalid/v3.5.5/argocd-linux-amd64"}}
+	m.Platform = "linux/amd64"
+	m.LookPath = func(f string) (string, error) {
+		if f == "argocd" || f == "jq" {
+			return "", errors.New("not found")
+		}
+		return "/bin/" + f, nil
+	}
+	_, err := m.Start(ctx, "1", io.Discard)
+	if err == nil || len(c.created) != 0 {
+		t.Fatalf("missing tools: %v, created %v", err, c.created)
+	}
+	// The exact pinned command for this platform, not a pointer to the README.
+	want := "lab 01-scratch needs argocd, jq on PATH\n  install argocd:\n    curl -fsSLo /tmp/argocd https://example.invalid/v3.5.5/argocd-linux-amd64\n" +
+		"  jq: install it with your package manager"
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("missing tools:\n%s\nwant prefix:\n%s", err, want)
 	}
 	m.Mode = "cloud"
 	if _, err := m.Start(ctx, "1", io.Discard); err == nil || !strings.Contains(err.Error(), "runs in local mode") {
@@ -276,5 +291,35 @@ func TestMarks(t *testing.T) {
 	}
 	if StepMark(state.LabProgress{}, 1) != NotStarted {
 		t.Error("an unstarted lab has a current step")
+	}
+}
+
+// A scratch cluster with the lab's name that this state did not start is
+// someone else's (another lab home, a test run): start refuses it, and
+// creates and changes nothing. The lab's own cluster is reused on restart.
+func TestStartRefusesAForeignCluster(t *testing.T) {
+	ctx := context.Background()
+	m, _, c, _ := testManager(t)
+	c.have["lab-scratch-01-scratch"] = true
+	_, err := m.Start(ctx, "1", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "a kind cluster named lab-scratch-01-scratch already exists, but "+m.Store.Path()+" did not start it") ||
+		!strings.Contains(err.Error(), "kind delete cluster --name lab-scratch-01-scratch") {
+		t.Fatalf("foreign cluster: %v", err)
+	}
+	if st, _ := m.Store.Load(); st.ActiveLab != "" || len(c.created) != 0 {
+		t.Errorf("state %q, created %v", st.ActiveLab, c.created)
+	}
+	// Our own: started here, so starting again picks it up.
+	delete(c.have, "lab-scratch-01-scratch")
+	if _, err := m.Start(ctx, "1", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(ctx, "1", io.Discard); err != nil {
+		t.Errorf("restarting our own lab: %v", err)
+	}
+	// A test run names its clusters apart, so it never meets this one.
+	m.ScratchName = func(l Lab) string { return "lab-scratch-e2e-" + l.Number() + "-42" }
+	if l, _ := m.Find("1"); m.Scratch(l) != "lab-scratch-e2e-01-42" {
+		t.Errorf("scratch name = %s", m.Scratch(l))
 	}
 }

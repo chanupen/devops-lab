@@ -4,14 +4,13 @@ Argo CD keeps a cluster in line with what Git says. In this lab you install it o
 
 You work on a cluster of your own. `lab labs start 01` creates it, and `lab labs stop` deletes it. Your main lab is not touched.
 
-Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. To install the `argocd` CLI that matches this lab:
+Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. `lab labs start` checks, and prints the install command for anything missing. To install the `argocd` CLI that matches this lab (v3.5.5, checksum verified):
 
 ```bash
-curl -fsSLo ~/.local/bin/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64
-chmod +x ~/.local/bin/argocd
+mkdir -p ~/.local/bin && curl -fsSLo /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 && echo "c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba  /tmp/argocd" | sha256sum -c - && install -m 0755 /tmp/argocd ~/.local/bin/argocd
 ```
 
-On a Mac, use `argocd-darwin-amd64` instead.
+On a Mac, `lab.yaml` has the `darwin/amd64` command.
 
 Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
 

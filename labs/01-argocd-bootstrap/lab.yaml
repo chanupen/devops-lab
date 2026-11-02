@@ -7,3 +7,9 @@ modes: [local]
 needs: scratch      # its own single-node cluster, lab-scratch-01-argocd-bootstrap
 stacks: []
 tools: [kubectl, helm, argocd, jq]
+# Pinned install commands, printed by lab labs start when a tool is missing.
+# argocd v3.5.5 matches the chart; the checksums are from its cli_checksums.txt.
+install:
+  argocd:
+    linux/amd64: 'mkdir -p ~/.local/bin && curl -fsSLo /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 && echo "c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba  /tmp/argocd" | sha256sum -c - && install -m 0755 /tmp/argocd ~/.local/bin/argocd'
+    darwin/amd64: 'mkdir -p ~/.local/bin && curl -fsSLo /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-darwin-amd64 && echo "5ecec70354a79fe206f3b677c8784bd4f3e1d60ec8e7d794e1b84a4ff54935d1  /tmp/argocd" | shasum -a 256 -c - && install -m 0755 /tmp/argocd ~/.local/bin/argocd'
