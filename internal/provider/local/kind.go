@@ -105,6 +105,9 @@ type kindClusters struct {
 	// kubeconfig is the file kind adds the cluster to and removes it from;
 	// "" is kind's default ($KUBECONFIG or ~/.kube/config).
 	kubeconfig string
+	// retain keeps the nodes of a failed create, so they can be inspected
+	// (kind create cluster --retain); the caller deletes them after.
+	retain bool
 }
 
 func newKindClusters(logger log.Logger) *kindClusters {
@@ -129,6 +132,7 @@ func (k *kindClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 		cluster.CreateWithDisplayUsage(false),
 		cluster.CreateWithDisplaySalutation(false),
 		cluster.CreateWithKubeconfigPath(k.kubeconfig),
+		cluster.CreateWithRetain(k.retain),
 	)
 }
 

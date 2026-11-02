@@ -68,3 +68,25 @@ func TestLabsCommands(t *testing.T) {
 		t.Errorf("progress: %+v", p)
 	}
 }
+
+// A failed lab labs start is in the op log with its output, like lab up.
+func TestLabsStartIsAnOp(t *testing.T) {
+	cfg, err := filepath.Abs(filepath.Join("..", "..", "lab.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	t.Setenv("PATH", t.TempDir()) // no tools: start fails before any cluster
+	_, err = runLab("labs", "start", "1", "--config", cfg, "--state", statePath)
+	if err == nil || !strings.Contains(err.Error(), "on PATH") {
+		t.Fatalf("start without tools: %v", err)
+	}
+	st, _ := state.NewStore(statePath).Load()
+	if len(st.Ops) != 1 {
+		t.Fatalf("ops = %+v", st.Ops)
+	}
+	op := st.Ops[0]
+	if op.Command != "lab labs start 01" || op.Stack != "01-argocd-bootstrap" || op.Action != "labs start" || op.Status != "failed" || op.Log == "" {
+		t.Errorf("op = %+v", op)
+	}
+}

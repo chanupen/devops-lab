@@ -105,6 +105,7 @@ type fakeClusters struct {
 	fail    error
 	// failFirst fails that many creates before the next one works.
 	failFirst int
+	retains   []bool // the retain flag of each Scratch clusters call
 }
 
 func (f *fakeClusters) List() ([]string, error) {

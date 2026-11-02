@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -13,8 +14,12 @@ func testScratch(t *testing.T, rt *fakeRuntime, kc *fakeClusters) (*Scratch, *[]
 	t.Helper()
 	var paths []string
 	s := &Scratch{home: t.TempDir(), rt: rt,
-		clusters: func(_ io.Writer, kubeconfig string) Clusters { paths = append(paths, kubeconfig); return kc },
-		ready:    func(context.Context, string, int, io.Writer) error { return nil }}
+		clusters: func(_ io.Writer, kubeconfig string, retain bool) Clusters {
+			paths = append(paths, kubeconfig)
+			kc.retains = append(kc.retains, retain)
+			return kc
+		},
+		ready: func(context.Context, string, int, io.Writer) error { return nil }}
 	return s, &paths
 }
 
@@ -47,7 +52,7 @@ func TestScratchCreate(t *testing.T) {
 	if b, _ := os.ReadFile(kubeconfig); string(b) != "kubeconfig for lab-scratch-01-x" {
 		t.Errorf("kubeconfig = %q", b)
 	}
-	if len(*paths) != 1 || (*paths)[0] != kubeconfig {
+	if len(*paths) != 2 || (*paths)[1] != kubeconfig {
 		t.Errorf("kind was given kubeconfig %q, want %q", *paths, kubeconfig)
 	}
 	if !strings.Contains(log.String(), "image cache: lab-zot") {
@@ -94,16 +99,36 @@ func TestScratchLeavesTheMainClusterAlone(t *testing.T) {
 	}
 }
 
-// One failed create is tried again; two fail the start.
+// A failed first create keeps its node (retain), records what Podman knew
+// about it, deletes it and tries once more; two failures fail the start.
 func TestScratchRetriesCreateOnce(t *testing.T) {
 	kc := &fakeClusters{nodes: map[string]int{}, failFirst: 1}
 	s, _ := testScratch(t, newFakeRuntime(), kc)
+	var diagnosed []string
+	s.diagnose = func(_ context.Context, node string, w io.Writer) {
+		diagnosed = append(diagnosed, node)
+		_, _ = io.WriteString(w, "--- podman logs "+node+" ---\nerror: too many open files\n")
+	}
 	var log strings.Builder
 	if err := s.Create(context.Background(), "lab-scratch-01-x", filepath.Join(s.home, "kc"), &log); err != nil || len(kc.created) != 1 {
 		t.Fatalf("after one failure: %v, %d created", err, len(kc.created))
 	}
-	if !strings.Contains(log.String(), "trying once more") {
-		t.Errorf("log: %s", log.String())
+	// List (no retain), first create (retain), second create (no retain).
+	if want := []bool{false, true, false}; !slices.Equal(kc.retains, want) {
+		t.Errorf("retain per call = %v, want %v", kc.retains, want)
+	}
+	if !slices.Equal(diagnosed, []string{"lab-scratch-01-x-control-plane"}) || !slices.Equal(kc.deleted, []string{"lab-scratch-01-x"}) {
+		t.Errorf("diagnosed %v, deleted %v", diagnosed, kc.deleted)
+	}
+	l := log.String()
+	for _, want := range []string{"creating \"lab-scratch-01-x\" failed: failed to copy kubeadm config", "error: too many open files",
+		"removing the failed cluster", "trying once more"} {
+		if !strings.Contains(l, want) {
+			t.Errorf("log lacks %q:\n%s", want, l)
+		}
+	}
+	if strings.Index(l, "too many open files") > strings.Index(l, "removing the failed cluster") {
+		t.Error("diagnostics written after the cluster was removed")
 	}
 	kc = &fakeClusters{nodes: map[string]int{}, failFirst: 2}
 	s, _ = testScratch(t, newFakeRuntime(), kc)

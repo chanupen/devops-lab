@@ -7,8 +7,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
+	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 )
@@ -18,10 +21,13 @@ import (
 // same Zot cache, but share nothing else with it: no host ports, their own
 // kubeconfig file.
 type Scratch struct {
-	home     string
-	rt       Runtime
-	clusters func(log io.Writer, kubeconfig string) Clusters
+	home string
+	rt   Runtime
+	// clusters adapts kind; retain keeps the nodes of a failed create.
+	clusters func(log io.Writer, kubeconfig string, retain bool) Clusters
 	ready    func(ctx context.Context, kubeconfig string, want int, log io.Writer) error
+	// diagnose writes what Podman knows about a node that failed to come up.
+	diagnose func(ctx context.Context, node string, w io.Writer)
 }
 
 // NewScratch uses the rootless Podman socket and the kind library. home is
@@ -32,11 +38,12 @@ func NewScratch(home string) (*Scratch, error) {
 		return nil, err
 	}
 	return &Scratch{home: home, rt: NewPodman(sock),
-		clusters: func(log io.Writer, kubeconfig string) Clusters {
+		clusters: func(log io.Writer, kubeconfig string, retain bool) Clusters {
 			k := newKindClusters(newKindLogger(log))
 			k.kubeconfig = kubeconfig // never ~/.kube/config: the user's current context stays as it is
+			k.retain = retain
 			return k
-		}, ready: waitNodesReady}, nil
+		}, ready: waitNodesReady, diagnose: diagnoseNode}, nil
 }
 
 func (s *Scratch) certsDir() string { return filepath.Join(s.home, "kind", "certs.d") }
@@ -57,7 +64,7 @@ func scratchConfig(name, certsDir string) *v1alpha4.Cluster {
 
 // Exists implements labs.Clusters.
 func (s *Scratch) Exists(name string) (bool, error) {
-	names, err := s.clusters(io.Discard, "").List()
+	names, err := s.clusters(io.Discard, "", false).List()
 	return slices.Contains(names, name), err
 }
 
@@ -78,23 +85,15 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 			return err
 		}
 	}
-	kc := s.clusters(log, kubeconfig)
+	kc := s.clusters(log, kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err
 	}
 	if slices.Contains(names, name) {
 		logf(log, "kind cluster %q exists", name)
-	} else {
-		logf(log, "creating kind cluster %q (one node)", name)
-		if err := kc.Create(scratchConfig(name, s.certsDir()), NodeImage); err != nil {
-			// Rootless Podman sometimes fails an exec into a node that has
-			// just started; kind removes the node, so one more try is clean.
-			logf(log, "creating %q failed (%v); trying once more", name, err)
-			if err := kc.Create(scratchConfig(name, s.certsDir()), NodeImage); err != nil {
-				return err
-			}
-		}
+	} else if err := s.create(ctx, name, kubeconfig, log); err != nil {
+		return err
 	}
 	cfg, err := kc.KubeConfig(name)
 	if err != nil {
@@ -108,12 +107,62 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 	return s.ready(ctx, kubeconfig, 1, log)
 }
 
+// create makes the cluster, trying twice. The first try keeps the nodes
+// if it fails (kind --retain), so what Podman and the node's systemd said
+// goes into the log before they are deleted; the second is a plain create.
+// Rootless Podman has failed an exec into a just-started node (exit 126).
+func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
+	logf(log, "creating kind cluster %q (one node)", name)
+	first := s.clusters(log, kubeconfig, true)
+	err := first.Create(scratchConfig(name, s.certsDir()), NodeImage)
+	if err == nil {
+		return nil
+	}
+	logf(log, "creating %q failed: %v", name, err)
+	if s.diagnose != nil {
+		s.diagnose(ctx, name+"-control-plane", log)
+	}
+	logf(log, "removing the failed cluster %q", name)
+	if derr := first.Delete(name); derr != nil {
+		return fmt.Errorf("%w; removing the failed cluster: %v", err, derr)
+	}
+	logf(log, "trying once more")
+	return s.clusters(log, kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
+}
+
+// diagnoseNode writes podman inspect, podman logs and the last two minutes
+// of the user journal that mention the node.
+func diagnoseNode(ctx context.Context, node string, w io.Writer) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	section := func(title string, out []byte, err error) {
+		logf(w, "--- %s ---", title)
+		_, _ = w.Write(out)
+		if err != nil {
+			logf(w, "(%v)", err)
+		}
+	}
+	out, err := exec.CommandContext(ctx, "podman", "inspect", node).CombinedOutput()
+	section("podman inspect "+node, out, err)
+	out, err = exec.CommandContext(ctx, "podman", "logs", node).CombinedOutput()
+	section("podman logs "+node, out, err)
+	out, err = exec.CommandContext(ctx, "journalctl", "--user", "--since", "-2min", "--no-pager", "-o", "short-iso").CombinedOutput()
+	var keep []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.Contains(l, node) {
+			keep = append(keep, l)
+		}
+	}
+	section("journalctl --user --since -2min (lines naming "+node+")", []byte(strings.Join(keep, "\n")+"\n"), err)
+	logf(w, "--- end of diagnostics ---")
+}
+
 // Delete implements labs.Clusters. A cluster already gone is not an error.
 func (s *Scratch) Delete(_ context.Context, name, kubeconfig string, log io.Writer) error {
 	if name == ClusterName {
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
-	kc := s.clusters(log, kubeconfig)
+	kc := s.clusters(log, kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err

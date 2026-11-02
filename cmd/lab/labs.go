@@ -63,6 +63,35 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	return m, nil
 }
 
+// labOp runs a lab action that changes things (start, stop, reset) the way
+// lab up runs a stack: its output goes to the terminal and to an op log
+// file, and the op is recorded in state.json, so the Ops screen and the
+// log keep what happened, including a failed cluster's diagnostics.
+func labOp(cmd *cobra.Command, m *labs.Manager, command, lab, action string, fn func(w io.Writer) error) error {
+	started := time.Now()
+	f, path, err := m.Store.OpenStepLog(lab, "labs-"+action, started)
+	if err != nil {
+		return fn(cmd.ErrOrStderr())
+	}
+	_, _ = fmt.Fprintf(f, "$ %s\n", command)
+	runErr := fn(io.MultiWriter(cmd.ErrOrStderr(), f))
+	_ = f.Close()
+	op := state.Op{Command: command, Stack: lab, Action: "labs " + action, Status: "ok", Started: started, Finished: time.Now(), Log: path}
+	if runErr != nil {
+		op.Status, op.Error = "failed", runErr.Error()
+	}
+	if err := m.Store.Update(func(s *state.State) error {
+		m.Store.RemoveLogs(s.AppendOp(op))
+		return nil
+	}); err != nil && runErr == nil {
+		return err
+	}
+	if runErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "log: %s\n", path)
+	}
+	return runErr
+}
+
 func newLabsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "labs",
@@ -151,7 +180,14 @@ func newLabsStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := m.Start(cmd.Context(), args[0], cmd.ErrOrStderr()); err != nil {
+			l, err := m.Find(args[0])
+			if err != nil {
+				return err
+			}
+			if err := labOp(cmd, m, "lab labs start "+l.Number(), l.ID, "start", func(w io.Writer) error {
+				_, err := m.Start(cmd.Context(), l.ID, w)
+				return err
+			}); err != nil {
 				return err
 			}
 			return writeLabStatus(cmd.OutOrStdout(), m, time.Now())
@@ -376,7 +412,10 @@ func newLabsResetCmd() *cobra.Command {
 			if err := confirm(cmd, f.yes, fmt.Sprintf("Reset lab %s? What you built in its cluster is deleted", l.ID)); err != nil {
 				return err
 			}
-			if _, err := m.Reset(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+			if err := labOp(cmd, m, "lab labs reset", l.ID, "reset", func(w io.Writer) error {
+				_, err := m.Reset(cmd.Context(), w)
+				return err
+			}); err != nil {
 				return err
 			}
 			return writeLabStatus(cmd.OutOrStdout(), m, time.Now())
@@ -398,8 +437,17 @@ func newLabsStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			l, err := m.Stop(cmd.Context(), cmd.ErrOrStderr())
+			l, _, ok, err := m.Active()
 			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("no lab is started: lab labs start <id>")
+			}
+			if err := labOp(cmd, m, "lab labs stop", l.ID, "stop", func(w io.Writer) error {
+				_, err := m.Stop(cmd.Context(), w)
+				return err
+			}); err != nil {
 				return err
 			}
 			st, _ := m.Store.Load()
