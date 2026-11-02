@@ -235,7 +235,11 @@ func TestTeardownRoleIsScoped(t *testing.T) {
 		t.Fatal("no DestroyLabTaggedInRegion statement")
 	}
 	stmt := src[i:]
-	stmt = stmt[:strings.Index(stmt, "\n  }\n")]
+	end := strings.Index(stmt, "\n  }\n")
+	if end < 0 {
+		t.Fatal("DestroyLabTaggedInRegion statement has no closing brace")
+	}
+	stmt = stmt[:end]
 	for _, want := range []string{`variable = "aws:RequestedRegion"`, `values   = [var.region]`, `variable = "aws:ResourceTag/lab"`, `values   = ["true"]`} {
 		if !strings.Contains(stmt, want) {
 			t.Errorf("DestroyLabTaggedInRegion lacks %s", want)
