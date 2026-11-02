@@ -46,6 +46,7 @@ Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~1
 - Log panes: ring buffer of 5,000 lines, at most 20 redraws a second.
 - k9s-style keys: `1`–`6` screens, `:` palette, `/` filter, `u`/`d` up/down the selected stack (`d` asks first), `U` the whole profile, `r` retry a failed stack, `l` logs, `K` open k9s, `m` mode, `v` verify, `?` help.
 - State shown with symbol and colour together: ● healthy, ◐ progressing, ○ off, ✕ failed.
+- Labs screen (3): `enter` opens the current step, `v` verifies it, `h` shows the next hint, `n`/`p` move between steps; ● done, ◐ current, ○ not started.
 - Every TUI action logs the equivalent CLI command.
 
 ## Cloud guardrails
@@ -80,7 +81,8 @@ internal/drills/         fault injection and timers
 internal/doctor/         host readiness checks for `lab doctor`
 infra/terraform/{local,aws}
 gitops/{bootstrap,stacks,overlays}
-labs/                    lab-NN-*.md + verify scripts
+labs/                    NN-name/: lab.yaml, README.md, steps/NN-verify.sh, reset.sh, solution/
+internal/labs/           lab catalog, verify runner, progress
 drills/                  drill definitions (YAML)
 docs/                    design.md, notes
 lab.yaml
@@ -97,6 +99,13 @@ Makefile                 builds linux/amd64 and darwin/amd64
 5. AI and release (wk 10–12): ai stack, AI On-Call Assistant, README, demo, binaries. Gate: v1.0 tag.
 
 If a phase slips, cut TUI screens before labs.
+
+## Labs
+
+- Format (`labs/README.md`): `lab.yaml` (id, title, time, level, modes, `needs: scratch | lab`, stacks, tools), README with `## Step N: title` sections (task, `### Hints`, `### Expected result`), `steps/NN-verify.sh` (read-only, idempotent, exit 0 = done, last line says why not), `reset.sh`, `solution/NN-solve.sh`. Generic, so labs can move to the public devops-roadmap repo.
+- A scratch lab gets its own single-node kind cluster `lab-scratch-<id>` on the kind network, pulling through Zot, with no host ports and its own kubeconfig (`~/.lab/labs/<id>/kubeconfig`, never `~/.kube/config`). `lab labs stop` deletes it.
+- CLI: `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. Verify runs with KUBECONFIG set and a 60 s timeout. Progress lives in `~/.lab/state.json`.
+- Every solution must pass its verify script on a fresh cluster: `go test -tags e2e -run E2E -timeout 40m ./internal/labs/` (needs Podman, kubectl, helm, jq, argocd).
 
 ## `lab doctor` checks (phase 0)
 

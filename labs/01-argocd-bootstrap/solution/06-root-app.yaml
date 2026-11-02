@@ -1,0 +1,32 @@
+# Step 6: an app of apps. The chart at path apps makes one Application per
+# entry in its applications value; here, two of them.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/argoproj/argocd-example-apps
+    targetRevision: 8088f4c0d970abb09e250248cc97e35623447cb5
+    path: apps
+    helm:
+      valuesObject:
+        config:
+          spec:
+            source:
+              targetRevision: 8088f4c0d970abb09e250248cc97e35623447cb5
+        applications:
+          - name: guestbook
+          - name: helm-guestbook
+            tool:
+              helm:
+                releaseName: helm-guestbook
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
