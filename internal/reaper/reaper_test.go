@@ -53,12 +53,15 @@ func (f *fakeDeleter) Delete(_ context.Context, t Target) error {
 }
 
 type fakeTeardown struct {
-	starts  int
-	running string
-	builds  map[string]Build
-	err     error
-	last    [2]int // attempt, max of the last Start
+	starts   int
+	running  string
+	builds   map[string]Build
+	err      error
+	checkErr error
+	last     [2]int // attempt, max of the last Start
 }
+
+func (f *fakeTeardown) Check(context.Context) error { return f.checkErr }
 
 func (f *fakeTeardown) Running(context.Context) (string, error) { return f.running, nil }
 

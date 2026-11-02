@@ -2,9 +2,12 @@
 # whose expires-at has passed, and everything inside an expired lab VPC,
 # and start the teardown build (teardown.tf) for the tofu-managed rest:
 # again while they remain, at most 6 builds, then it emails "manual action
-# needed". After a clean run it writes a heartbeat to the state bucket;
-# lab up --mode cloud refuses without a recent one. In dry-run mode it only
-# logs, and its role cannot delete or start builds.
+# needed". Each scheduled run tests itself (it can read its teardown state
+# and see the teardown project) and writes a heartbeat to the state bucket;
+# lab up --mode cloud refuses unless the latest one is recent and clean.
+# A run that returns an error emails the owner (on-failure destination,
+# SNS lab-teardown). In dry-run mode it only logs, and its role cannot
+# delete or start builds.
 locals {
   reaper_name = "lab-ttl-reaper"
 }
@@ -54,18 +57,50 @@ data "aws_iam_policy_document" "reaper" {
     resources = ["${aws_s3_bucket.state.arn}/reaper/heartbeat.json"]
   }
 
-  # How many teardown builds this lab has had (reaper/teardown.json).
+  # How many teardown builds this lab has had (teardown/state.json).
+  # Without s3:ListBucket, S3 answers a GetObject on a missing key with 403,
+  # not 404, and the reaper cannot tell "no state yet" from "no access".
+  # On 2 Nov 2026 that 403 stopped every teardown for five hours. Listing
+  # is held to the teardown/ prefix; if S3 still answers 403 for a missing
+  # key, the reaper lists the prefix itself (internal/reaper S3Store.Load).
   statement {
-    sid       = "TeardownAttempts"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${aws_s3_bucket.state.arn}/reaper/teardown.json"]
+    sid       = "ListTeardownPrefix"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["teardown/", "teardown/*"]
+    }
   }
 
-  # The "manual action needed" email after the last attempt.
   statement {
-    sid       = "ManualActionEmail"
+    sid       = "ReadTeardownPrefix"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.state.arn}/teardown/*"]
+  }
+
+  # Writes only its own state: teardown/ also holds teardown.sh and the
+  # module bundles, which the teardown build runs with destroy rights.
+  statement {
+    sid       = "TeardownAttempts"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.state.arn}/teardown/state.json"]
+  }
+
+  # The "manual action needed" email after the last attempt, and the
+  # on-failure destination below, which publishes with this role.
+  statement {
+    sid       = "EmailOwner"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.teardown.arn]
+  }
+
+  # The self-test: the teardown project exists and the reaper can see it.
+  statement {
+    sid       = "SelfTestTeardownProject"
+    actions   = ["codebuild:BatchGetProjects"]
+    resources = ["${local.arn}:codebuild:${var.region}:${local.account}:project/${local.teardown_name}"]
   }
 
   # Deletes exist only when dry-run is off, only in the lab region, and only
@@ -181,6 +216,21 @@ resource "aws_lambda_function" "reaper" {
   }
 
   depends_on = [aws_cloudwatch_log_group.reaper, aws_iam_role_policy.reaper]
+}
+
+# Any scheduled run that returns an error (EventBridge invokes the Lambda
+# asynchronously) emails the owner once Lambda's retries are spent, about
+# 3 minutes later. The teardown build's sweep-only calls are synchronous
+# and do not go through this; the build reports its own failures.
+resource "aws_lambda_function_event_invoke_config" "reaper" {
+  function_name          = aws_lambda_function.reaper.function_name
+  maximum_retry_attempts = 2
+
+  destination_config {
+    on_failure {
+      destination = aws_sns_topic.teardown.arn
+    }
+  }
 }
 
 resource "aws_cloudwatch_event_rule" "reaper" {

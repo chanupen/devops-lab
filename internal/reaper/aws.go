@@ -284,13 +284,20 @@ func (c CodeBuild) Get(ctx context.Context, id string) (Build, error) {
 	return Build{ID: id, State: string(b.BuildStatus), End: aws.ToTime(b.EndTime)}, nil
 }
 
-// Start implements Teardown. The build reads ATTEMPT and MAX_ATTEMPTS for
-// its summary email.
+func attemptVar(attempt int) string {
+	if attempt <= 0 {
+		return "unknown"
+	}
+	return strconv.Itoa(attempt)
+}
+
+// Start implements Teardown. The build reads ATTEMPT ("unknown" when the
+// reaper could not read its count) and MAX_ATTEMPTS for its summary email.
 func (c CodeBuild) Start(ctx context.Context, attempt, maxAttempts int) (string, error) {
 	out, err := c.Client.StartBuild(ctx, &codebuild.StartBuildInput{
 		ProjectName: aws.String(c.Project),
 		EnvironmentVariablesOverride: []cbtypes.EnvironmentVariable{
-			{Name: aws.String("ATTEMPT"), Value: aws.String(strconv.Itoa(attempt)), Type: cbtypes.EnvironmentVariableTypePlaintext},
+			{Name: aws.String("ATTEMPT"), Value: aws.String(attemptVar(attempt)), Type: cbtypes.EnvironmentVariableTypePlaintext},
 			{Name: aws.String("MAX_ATTEMPTS"), Value: aws.String(strconv.Itoa(maxAttempts)), Type: cbtypes.EnvironmentVariableTypePlaintext},
 		},
 	})
@@ -300,13 +307,35 @@ func (c CodeBuild) Start(ctx context.Context, attempt, maxAttempts int) (string,
 	return aws.ToString(out.Build.Id), nil
 }
 
+// Check implements Teardown.
+func (c CodeBuild) Check(ctx context.Context) error {
+	out, err := c.Client.BatchGetProjects(ctx, &codebuild.BatchGetProjectsInput{Names: []string{c.Project}})
+	if err != nil {
+		return err
+	}
+	if len(out.Projects) == 0 {
+		return fmt.Errorf("CodeBuild project %s not found", c.Project)
+	}
+	return nil
+}
+
+// S3API is the part of the S3 client the store uses.
+type S3API interface {
+	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	ListObjectsV2(ctx context.Context, in *s3.ListObjectsV2Input, opts ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
+
 // S3Store keeps TeardownState at TeardownStateKey in the state bucket.
 type S3Store struct {
-	Client *s3.Client
+	Client S3API
 	Bucket string
 }
 
-// Load implements StateStore.
+// Load implements StateStore. A missing object is the zero state. S3
+// reports a missing key as 403 AccessDenied, not 404, to callers that may
+// not list the bucket; then a listing of the key's prefix decides.
 func (s S3Store) Load(ctx context.Context) (TeardownState, error) {
 	var st TeardownState
 	out, err := s.Client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(TeardownStateKey)})
@@ -314,6 +343,11 @@ func (s S3Store) Load(ctx context.Context) (TeardownState, error) {
 	switch {
 	case errors.As(err, &nsk):
 		return st, nil
+	case accessDenied(err):
+		if missing, lerr := s.missing(ctx); lerr == nil && missing {
+			return st, nil
+		}
+		return st, err
 	case err != nil:
 		return st, err
 	}
@@ -323,6 +357,26 @@ func (s S3Store) Load(ctx context.Context) (TeardownState, error) {
 		return st, err
 	}
 	return st, json.Unmarshal(b, &st)
+}
+
+// missing lists TeardownStateKey's prefix: true when the key is not there.
+func (s S3Store) missing(ctx context.Context) (bool, error) {
+	out, err := s.Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.Bucket),
+		Prefix: aws.String(TeardownStateKey), MaxKeys: aws.Int32(1)})
+	if err != nil {
+		return false, err
+	}
+	for _, o := range out.Contents {
+		if aws.ToString(o.Key) == TeardownStateKey {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func accessDenied(err error) bool {
+	var api smithy.APIError
+	return errors.As(err, &api) && api.ErrorCode() == "AccessDenied"
 }
 
 // Save implements StateStore.

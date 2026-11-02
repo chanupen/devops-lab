@@ -15,7 +15,8 @@
 # Modules come from s3://$BUCKET/teardown/<stack>.zip, which lab uploads
 # before every apply: the exact files and variables it applied.
 # Environment: BUCKET, REAPER, TOPIC, AWS_REGION, TOFU_VERSION, TOFU_SHA256,
-# ATTEMPT and MAX_ATTEMPTS (set by the reaper on each start).
+# ATTEMPT ("unknown" when the reaper could not read its count) and
+# MAX_ATTEMPTS (set by the reaper on each start).
 set -uo pipefail
 export TF_IN_AUTOMATION=1 TF_INPUT=0
 
@@ -42,7 +43,9 @@ publish() {
     if [ "$result" = failed ]; then
       echo "FAILURE SUMMARY (attempt $attempt of $max_attempts)"
       for f in "${failures[@]}"; do echo "  - $f"; done
-      if [ "$attempt" -lt "$max_attempts" ]; then
+      if [ "$attempt" = unknown ]; then
+        echo "The reaper could not read its attempt count, so it does not cap the retries: it starts this build again within 15 minutes while lab resources remain. Check its errors in /aws/lambda/lab-ttl-reaper."
+      elif [ "$attempt" -lt "$max_attempts" ]; then
         echo "The reaper starts this build again within 15 minutes while lab resources remain."
       else
         echo "That was the last attempt: the reaper starts no more builds and emails \"manual action needed\"."

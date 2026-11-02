@@ -65,7 +65,7 @@ func checkReaper(ctx context.Context, p CloudProbe) Result {
 	if err := p.ReaperReady(ctx, account); err != nil {
 		return fail("lab up --mode cloud refuses until this passes", "%v", err)
 	}
-	return ok("reaper deletes for real and ran cleanly in the last 30 minutes")
+	return ok("reaper deletes for real, ran cleanly and passed its self-test in the last 30 minutes")
 }
 
 func checkLabProfile(ctx context.Context, p CloudProbe) Result {
