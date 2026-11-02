@@ -15,6 +15,13 @@
 //     lab resources remain it starts the build again, at most MaxAttempts
 //     times, then emails "manual action needed".
 //
+// It confirms before it acts: the tagging API lags deletions and tag
+// changes by up to an hour, so each expired resource is looked up directly
+// (gone or terminated: ignored; live tags: used instead). It starts a
+// build only for a stack whose OpenTofu state holds resources and whose
+// teardown bundle's expires-at has passed, so a new lab's resources never
+// trigger a teardown of it.
+//
 // It fails toward teardown: when it cannot read how many builds it already
 // started, it starts one anyway and reports the error, so the Lambda run
 // fails and its on-failure destination emails the owner.
@@ -26,6 +33,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -158,6 +166,44 @@ type TeardownState struct {
 	Updated   time.Time `json:"updated"`
 }
 
+// State keys of the tofu-managed stacks, and where lab uploads each stack's
+// teardown bundle. internal/provider/aws uses the same values.
+const (
+	ClusterStateKey  = "cluster/terraform.tfstate"
+	RegistryStateKey = "cluster/registry/terraform.tfstate"
+)
+
+// TofuStacks maps each tofu-managed stack to its state key.
+var TofuStacks = map[string]string{"cluster": ClusterStateKey, "registry": RegistryStateKey}
+
+// BundleKey is where the teardown build finds a stack's module bundle.
+func BundleKey(stack string) string { return "teardown/" + stack + ".zip" }
+
+// Live is what a direct lookup says about a resource.
+type Live struct {
+	Known bool              // the type can be looked up; false: assume it exists
+	Gone  bool              // deleted, or a terminated instance
+	Tags  map[string]string // its tags now, when the lookup returns them; nil otherwise
+}
+
+// Checker looks a resource up directly instead of trusting the tagging API.
+type Checker interface {
+	Check(ctx context.Context, arn string) (Live, error)
+}
+
+// StackInfo is what the teardown build would find for one stack.
+type StackInfo struct {
+	Name      string
+	Resources int       // managed resources in its OpenTofu state
+	Bundle    bool      // its teardown bundle exists
+	Expires   time.Time // the bundle's expires_at
+}
+
+// StackReader reads a stack's state and bundle.
+type StackReader interface {
+	Stack(ctx context.Context, name string) (StackInfo, error)
+}
+
 // TeardownStateKey is where TeardownState lives in the state bucket. It
 // sits under teardown/, the prefix the reaper may list: without
 // s3:ListBucket, S3 answers 403 instead of 404 for a missing key.
@@ -175,13 +221,15 @@ type Notifier interface {
 	Notify(ctx context.Context, subject, body string) error
 }
 
-// Env is what a run talks to. VPCs, Teardown, Store and Notify may be nil:
-// that part is then skipped (Teardown nil with expired tofu-managed
-// resources is an error).
+// Env is what a run talks to. VPCs, Checker, Stacks, Teardown, Store and
+// Notify may be nil: that part is then skipped (Teardown nil with expired
+// tofu-managed resources is an error).
 type Env struct {
 	Lister   Lister
 	Deleter  Deleter
 	VPCs     VPCScanner
+	Checker  Checker
+	Stacks   StackReader
 	Teardown Teardown
 	Store    StateStore
 	Notify   Notifier
@@ -205,6 +253,7 @@ type Result struct {
 	Skipped  []string // could not be handled: unknown type or bad expires-at
 	Waiting  []string // expired, but must wait for something else to go first
 	Errors   []string
+	Gone     []string // listed as expired by the tagging API, but no longer there
 	// ManualAction is set once MaxAttempts teardown builds did not clear
 	// the lab: the reaper starts no more and has emailed the owner.
 	ManualAction bool
@@ -222,11 +271,21 @@ func Run(ctx context.Context, env Env, now time.Time, opts Options, logf func(st
 	}
 	var targets, vpcs []Target
 	var lab time.Time // earliest expiry among tofu-managed targets
+	confirmed := 0    // tofu-managed targets a direct lookup found
 	for _, r := range found {
 		t, why := classify(r, now)
+		if why == nil && env.Checker != nil {
+			var known bool
+			t, known, why = confirm(ctx, env.Checker, r, t, now, &res, logf)
+			if why == nil && known && t.Managed {
+				confirmed++
+			}
+		}
 		switch {
-		case errors.Is(why, errKeep):
-			res.Kept++
+		case errors.Is(why, errKeep), errors.Is(why, errGone):
+			if errors.Is(why, errKeep) {
+				res.Kept++
+			}
 			continue
 		case why != nil:
 			res.Skipped = append(res.Skipped, r.ARN+": "+why.Error())
@@ -278,7 +337,7 @@ func Run(ctx context.Context, env Env, now time.Time, opts Options, logf func(st
 	case len(res.Managed) > 0 && opts.DryRun:
 		res.Teardown = "dry run: would start the teardown build"
 	case len(res.Managed) > 0:
-		runTeardown(ctx, env, lab, now, &res)
+		runTeardown(ctx, env, lab, now, confirmed, &res, logf)
 	case !opts.DryRun && env.Store != nil:
 		// Nothing expired is left: the next expired lab starts at attempt 1.
 		if err := env.Store.Clear(ctx); err != nil {
@@ -320,14 +379,84 @@ func scanVPCs(ctx context.Context, s VPCScanner, vpcs, have []Target, res *Resul
 	return out
 }
 
-// runTeardown starts the teardown build when none is running, at most
-// MaxAttempts times for one lab, and emails "manual action needed" once
-// those are used up.
-func runTeardown(ctx context.Context, env Env, lab, now time.Time, res *Result) {
+var errGone = errors.New("gone")
+
+// confirm looks an expired resource up directly. It returns the target to
+// use, whether the lookup could check it, and errGone or errKeep when it
+// must not be counted. A failed lookup is reported and the resource still
+// counts: the stack gate and the build check again before anything is
+// destroyed.
+func confirm(ctx context.Context, c Checker, r Resource, t Target, now time.Time, res *Result, logf func(string, ...any)) (Target, bool, error) {
+	live, err := c.Check(ctx, r.ARN)
+	switch {
+	case err != nil:
+		res.Errors = append(res.Errors, fmt.Sprintf("confirm %s: %v", r.ARN, err))
+		logf("confirm %s failed: %v", r.ARN, err)
+		return t, false, nil
+	case live.Gone:
+		res.Gone = append(res.Gone, r.ARN)
+		logf("gone %s: the tagging API still lists it", r.ARN)
+		return t, true, errGone
+	case live.Tags != nil:
+		r.Tags = live.Tags
+		lt, why := classify(r, now)
+		if errors.Is(why, errKeep) {
+			logf("keep %s: the tagging API says expired, its live expires-at is %q", r.ARN, live.Tags[ExpiresTag])
+		}
+		return lt, true, why
+	}
+	return t, live.Known, nil
+}
+
+// dueStacks returns the stacks the teardown build has work in: OpenTofu
+// state with resources and a bundle whose expires-at has passed, and why
+// the others are not due. A stack that cannot be read counts as due (fail
+// toward teardown: the build checks the bundle again).
+func dueStacks(ctx context.Context, sr StackReader, now time.Time, res *Result) (due []string, empty bool, why []string) {
+	empty = true
+	for _, name := range slices.Sorted(maps.Keys(TofuStacks)) {
+		info, err := sr.Stack(ctx, name)
+		switch {
+		case err != nil:
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v (counting it as due)", name, err))
+			due, empty = append(due, name), false
+		case info.Resources == 0:
+			why = append(why, name+": state is empty")
+		case !info.Bundle:
+			empty = false
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %d resources in its state but no teardown bundle to destroy them with: "+
+				"lab down --mode cloud on the lab host", name, info.Resources))
+			why = append(why, name+": no bundle")
+		case now.Before(info.Expires):
+			empty = false
+			why = append(why, fmt.Sprintf("%s: bundle expires-at %s is in the future", name, info.Expires.UTC().Format(time.RFC3339)))
+		default:
+			due, empty = append(due, name), false
+		}
+	}
+	return due, empty, why
+}
+
+// runTeardown starts the teardown build when a stack is due and none is
+// running, at most MaxAttempts times for one lab, and emails "manual
+// action needed" once those are used up.
+func runTeardown(ctx context.Context, env Env, lab, now time.Time, confirmed int, res *Result, logf func(string, ...any)) {
 	fail := func(what string, err error) { res.Errors = append(res.Errors, what+": "+err.Error()) }
 	if env.Teardown == nil {
 		res.Errors = append(res.Errors, "teardown: no teardown build configured")
 		return
+	}
+	if env.Stacks != nil {
+		due, empty, why := dueStacks(ctx, env.Stacks, now, res)
+		if len(due) == 0 {
+			res.Teardown = "not needed: " + strings.Join(why, "; ")
+			if empty && confirmed > 0 {
+				res.Errors = append(res.Errors, fmt.Sprintf("%d expired tofu-managed resources still exist but no OpenTofu state holds them: "+
+					"lab cloud leftovers lists them", confirmed))
+			}
+			return
+		}
+		logf("teardown due for %s", strings.Join(due, ", "))
 	}
 	// Fail toward teardown: if the state cannot be read, the attempt count
 	// is unknown, but the build still starts. The state is then not saved

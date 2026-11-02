@@ -46,6 +46,9 @@ data "aws_iam_policy_document" "reaper" {
       "ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:DescribeNetworkInterfaces",
       "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTargetGroups",
       "eks:DescribeNodegroup", "eks:DescribeCluster", "eks:ListNodegroups",
+      # Confirm before acting: the tagging API lags deletions by up to an hour.
+      "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables", "ec2:DescribeInternetGateways",
+      "ec2:DescribeLaunchTemplates", "ecr:DescribeRepositories",
       "codebuild:ListBuildsForProject", "codebuild:BatchGetBuilds",
     ]
     resources = ["*"]
@@ -61,17 +64,31 @@ data "aws_iam_policy_document" "reaper" {
   # Without s3:ListBucket, S3 answers a GetObject on a missing key with 403,
   # not 404, and the reaper cannot tell "no state yet" from "no access".
   # On 2 Nov 2026 that 403 stopped every teardown for five hours. Listing
-  # is held to the teardown/ prefix; if S3 still answers 403 for a missing
-  # key, the reaper lists the prefix itself (internal/reaper S3Store.Load).
+  # is held to the teardown/ prefix and the two stack state keys; if S3
+  # still answers 403 for a missing key, the reaper lists the key itself
+  # (internal/reaper getObject).
   statement {
-    sid       = "ListTeardownPrefix"
+    sid       = "ListTeardownAndStateKeys"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.state.arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["teardown/", "teardown/*"]
+      values   = ["teardown/", "teardown/*", "cluster/terraform.tfstate", "cluster/registry/terraform.tfstate"]
     }
+  }
+
+  # The stack gate: a teardown build starts only for a stack whose state
+  # holds resources (and whose bundle under teardown/ has expired). Read
+  # only: the states hold no secrets the reaper could not describe anyway,
+  # but it never writes them.
+  statement {
+    sid     = "ReadStackStates"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.state.arn}/cluster/terraform.tfstate",
+      "${aws_s3_bucket.state.arn}/cluster/registry/terraform.tfstate",
+    ]
   }
 
   statement {

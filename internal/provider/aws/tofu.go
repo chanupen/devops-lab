@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
+
+	"github.com/chanupen/devops-lab/internal/reaper"
 )
 
 // Module runs one OpenTofu root module whose state lives in the state
@@ -273,6 +276,56 @@ func Bundle(workDir string) ([]byte, error) {
 		if _, err := w.Write(data); err != nil {
 			return nil, err
 		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// SetBundleExpiry returns the bundle with expires_at in its variables file
+// set to exp, every other file as it was. lab extend uses it, so the
+// reaper and the teardown build, which read the bundle's expires-at, see
+// the extended one.
+func SetBundleExpiry(bundle []byte, exp time.Time) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(bundle), int64(len(bundle)))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	set := false
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		if f.Name == reaper.BundleVarsFile {
+			var vars map[string]any
+			if err := json.Unmarshal(data, &vars); err != nil {
+				return nil, fmt.Errorf("%s: %w", f.Name, err)
+			}
+			vars["expires_at"] = exp.UTC().Format(time.RFC3339)
+			if data, err = json.MarshalIndent(vars, "", "  "); err != nil {
+				return nil, err
+			}
+			set = true
+		}
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: f.Name, Method: zip.Deflate})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write(data); err != nil {
+			return nil, err
+		}
+	}
+	if !set {
+		return nil, fmt.Errorf("bundle has no %s", reaper.BundleVarsFile)
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err

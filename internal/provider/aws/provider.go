@@ -14,9 +14,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/gitops"
+	"github.com/chanupen/devops-lab/internal/reaper"
 )
 
 // ClusterName is the lab's EKS cluster. It matches the module's default.
@@ -24,8 +26,8 @@ const ClusterName = "lab"
 
 // State keys in the baseline's state bucket, all under cluster/.
 const (
-	ClusterStateKey  = "cluster/terraform.tfstate"
-	RegistryStateKey = "cluster/registry/terraform.tfstate"
+	ClusterStateKey  = reaper.ClusterStateKey
+	RegistryStateKey = reaper.RegistryStateKey
 )
 
 // Stacks lists the stacks the cloud provider runs itself.
@@ -57,6 +59,8 @@ type Provider struct {
 	helm    gitops.Helm
 	myIP    func(ctx context.Context) (string, error)
 	now     func() time.Time
+	// teardown is the ID of a running lab-teardown build, or "".
+	teardown func(ctx context.Context) (string, error)
 	// version is the cluster's Kubernetes version once ResolveVersion ran;
 	// destroys and outputs do not need it.
 	version string
@@ -95,7 +99,8 @@ func New(ctx context.Context, s Session, opts Options) (*Provider, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 20 * time.Minute
 	}
-	p := &Provider{opts: opts, cfg: cfg, env: env, account: account, myIP: PublicIP, now: time.Now}
+	p := &Provider{opts: opts, cfg: cfg, env: env, account: account, myIP: PublicIP, now: time.Now,
+		teardown: func(ctx context.Context) (string, error) { return RunningTeardown(ctx, cfg) }}
 	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"))
 	p.inCluster = &clusterAddons{helm: p.helm, kubeconfig: opts.Kubeconfig, cfg: cfg, timeout: opts.Timeout}
 	return p, nil
@@ -153,7 +158,7 @@ func (p *Provider) Destroy(ctx context.Context, stack string, log io.Writer) err
 }
 
 // BundleKey is where the teardown build finds a stack's module bundle.
-func BundleKey(stack string) string { return "teardown/" + stack + ".zip" }
+func BundleKey(stack string) string { return reaper.BundleKey(stack) }
 
 // uploadBundle stores the module as it is about to be applied, so the
 // teardown build can destroy it with no laptop. It runs before every apply:
@@ -169,6 +174,34 @@ func (p *Provider) uploadBundle(ctx context.Context, stack, workDir string, log 
 		return fmt.Errorf("upload teardown bundle: %w", err)
 	}
 	_, _ = fmt.Fprintf(log, "teardown bundle: s3://%s/%s\n", StateBucket(p.account), BundleKey(stack))
+	return nil
+}
+
+// extendBundle rewrites a stack's teardown bundle with expires_at = exp.
+// A stack without a bundle has nothing to extend.
+func (p *Provider) extendBundle(ctx context.Context, stack string, exp time.Time, log io.Writer) error {
+	client := s3.NewFromConfig(p.cfg)
+	bucket, key := aws.String(StateBucket(p.account)), aws.String(BundleKey(stack))
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: bucket, Key: key})
+	var nsk *s3types.NoSuchKey
+	if errors.As(err, &nsk) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("teardown bundle %s: %w", BundleKey(stack), err)
+	}
+	b, err := io.ReadAll(out.Body)
+	_ = out.Body.Close()
+	if err != nil {
+		return fmt.Errorf("teardown bundle %s: %w", BundleKey(stack), err)
+	}
+	if b, err = SetBundleExpiry(b, exp); err != nil {
+		return fmt.Errorf("teardown bundle %s: %w", BundleKey(stack), err)
+	}
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{Bucket: bucket, Key: key, Body: bytes.NewReader(b)}); err != nil {
+		return fmt.Errorf("teardown bundle %s: %w", BundleKey(stack), err)
+	}
+	_, _ = fmt.Fprintf(log, "teardown bundle %s: expires-at %s\n", BundleKey(stack), exp.UTC().Format(time.RFC3339))
 	return nil
 }
 
@@ -375,6 +408,13 @@ func (p *Provider) Extend(ctx context.Context, d time.Duration, log io.Writer) (
 	}
 	if err := WriteExpiry(ExpiryFile(p.opts.Home), exp); err != nil {
 		return time.Time{}, nil, err
+	}
+	// The bundles first: the reaper and the teardown build go by their
+	// expires-at, and the tagging API shows new tags only minutes later.
+	for _, stack := range Stacks() {
+		if err := p.extendBundle(ctx, stack, exp, log); err != nil {
+			return exp, nil, err
+		}
 	}
 	_, failed, err := Retag(ctx, p.cfg, exp, log)
 	if err != nil {

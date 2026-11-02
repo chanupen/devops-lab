@@ -57,7 +57,7 @@ func TestCloudChecksList(t *testing.T) {
 	for _, c := range CloudChecks(probe("", true, true)) {
 		names = append(names, c.Name)
 	}
-	if got := strings.Join(names, ","); got != "tofu,aws,lab profile,state bucket,budget,eks version,ttl reaper" {
+	if got := strings.Join(names, ","); got != "tofu,aws,lab profile,state bucket,budget,eks version,ttl reaper,teardown build" {
 		t.Errorf("checks = %s", got)
 	}
 }
@@ -104,5 +104,28 @@ func TestEKSVersionAndReaperChecks(t *testing.T) {
 	}
 	if r := checkReaper(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "dry run") || !strings.Contains(r.Fix, "refuses") {
 		t.Errorf("reaper dry: %s %q %q", r.Status, r.Detail, r.Fix)
+	}
+}
+
+// lab up --mode cloud refuses while a teardown build runs (it raced a new
+// lab on 2 Nov 2026, build cd95d461); doctor shows that build as a failure.
+func TestTeardownBuildCheck(t *testing.T) {
+	ctx := context.Background()
+	p := probe("arn:aws:sts::111122223333:assumed-role/lab-admin/lab", true, true)
+	if r := checkTeardownBuild(ctx, p); r.Status != Skip {
+		t.Errorf("no probe: %s", r.Status)
+	}
+	p.TeardownBuild = func(context.Context) (string, error) { return "", nil }
+	if r := checkTeardownBuild(ctx, p); r.Status != OK {
+		t.Errorf("idle: %s %q", r.Status, r.Detail)
+	}
+	p.TeardownBuild = func(context.Context) (string, error) { return "lab-teardown:cd95d461-ac12-49b6-875c-140e383b16ee", nil }
+	if r := checkTeardownBuild(ctx, p); r.Status != Fail || !strings.Contains(r.Detail, "lab-teardown:cd95d461-ac12-49b6-875c-140e383b16ee") ||
+		!strings.Contains(r.Fix, "refuses") {
+		t.Errorf("running: %s %q %q", r.Status, r.Detail, r.Fix)
+	}
+	p.TeardownBuild = func(context.Context) (string, error) { return "", errors.New("AccessDeniedException") }
+	if r := checkTeardownBuild(ctx, p); r.Status != Fail {
+		t.Errorf("error: %s %q", r.Status, r.Detail)
 	}
 }

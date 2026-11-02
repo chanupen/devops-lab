@@ -261,13 +261,19 @@ func TestReaperFailureDestination(t *testing.T) {
 		}
 	}
 	for sid, wants := range map[string][]string{
-		"EmailOwner":              {`"sns:Publish"`, "aws_sns_topic.teardown.arn"},
-		"ListTeardownPrefix":      {`"s3:ListBucket"`, `resources = [aws_s3_bucket.state.arn]`, `variable = "s3:prefix"`, `values   = ["teardown/", "teardown/*"]`},
+		"EmailOwner": {`"sns:Publish"`, "aws_sns_topic.teardown.arn"},
+		"ListTeardownAndStateKeys": {`"s3:ListBucket"`, `resources = [aws_s3_bucket.state.arn]`, `variable = "s3:prefix"`,
+			`values   = ["teardown/", "teardown/*", "` + reaper.ClusterStateKey + `", "` + reaper.RegistryStateKey + `"]`},
+		"ReadStackStates":         {`actions = ["s3:GetObject"]`, `/` + reaper.ClusterStateKey + `"`, `/` + reaper.RegistryStateKey + `"`},
 		"ReadTeardownPrefix":      {`"s3:GetObject"`, `/teardown/*"]`},
 		"TeardownAttempts":        {`"s3:PutObject", "s3:DeleteObject"`, `/` + reaper.TeardownStateKey + `"]`},
 		"SelfTestTeardownProject": {`"codebuild:BatchGetProjects"`, "project/${local.teardown_name}"},
 	} {
-		stmt := upTo(`sid       = "`+sid+`"`, "\n  }\n")
+		loc := regexp.MustCompile(`sid\s+= "` + sid + `"`).FindString(src)
+		if loc == "" {
+			t.Fatalf("reaper.tf has no %s statement", sid)
+		}
+		stmt := upTo(loc, "\n  }\n")
 		for _, want := range wants {
 			if !strings.Contains(stmt, want) {
 				t.Errorf("%s lacks %s", sid, want)

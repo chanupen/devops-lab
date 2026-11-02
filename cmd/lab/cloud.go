@@ -340,6 +340,7 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 		}
 		return fmt.Sprintf("Kubernetes %s: %s", c.Version, c.Reason), c.Warnings, nil
 	}
+	p.TeardownBuild = func(ctx context.Context) (string, error) { return labaws.RunningTeardown(ctx, cfg) }
 	p.ReaperReady = func(ctx context.Context, account string) error {
 		st, err := labaws.GetReaperStatus(ctx, cfg, account)
 		if err != nil {

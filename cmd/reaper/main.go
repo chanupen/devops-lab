@@ -52,13 +52,14 @@ func handle(ctx context.Context, ev Event) (reaper.Result, error) {
 		return reaper.Result{}, err
 	}
 	a := reaper.NewAWS(cfg)
-	env := reaper.Env{Lister: a, Deleter: a, VPCs: a}
+	env := reaper.Env{Lister: a, Deleter: a, VPCs: a, Checker: a}
 	if p := os.Getenv("TEARDOWN_PROJECT"); p != "" {
 		env.Teardown = reaper.CodeBuild{Client: codebuild.NewFromConfig(cfg), Project: p}
 	}
 	bucket := os.Getenv("HEARTBEAT_BUCKET")
 	if bucket != "" {
 		env.Store = reaper.S3Store{Client: s3.NewFromConfig(cfg), Bucket: bucket}
+		env.Stacks = reaper.S3Stacks{Client: s3.NewFromConfig(cfg), Bucket: bucket}
 	}
 	if t := os.Getenv("TEARDOWN_TOPIC"); t != "" {
 		env.Notify = reaper.SNS{Client: sns.NewFromConfig(cfg), Topic: t}

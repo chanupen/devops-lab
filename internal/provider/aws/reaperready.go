@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -98,10 +99,37 @@ func GetReaperStatus(ctx context.Context, cfg aws.Config, account string) (Reape
 	return st, nil
 }
 
+// TeardownProject is the baseline's teardown build.
+const TeardownProject = "lab-teardown"
+
+// RunningTeardown is the ID of a lab-teardown build in progress, or "".
+func RunningTeardown(ctx context.Context, cfg aws.Config) (string, error) {
+	id, err := reaper.CodeBuild{Client: codebuild.NewFromConfig(cfg), Project: TeardownProject}.Running(ctx)
+	if err != nil {
+		return "", fmt.Errorf("teardown builds: %w", err)
+	}
+	return id, nil
+}
+
+// TeardownBusy is the error while a teardown build runs: it may destroy
+// what a lab up creates.
+func TeardownBusy(id string) error {
+	return fmt.Errorf("teardown build %s is running and may destroy what lab up creates; wait for it to finish "+
+		"(log group /aws/codebuild/%s)", id, TeardownProject)
+}
+
 // PreflightCheck is everything lab up --mode cloud checks before it asks to
-// apply: the reaper is armed and recent, and EKS has a Kubernetes version
-// in standard support that the lab can use. It writes the version choice.
+// apply: no teardown build is running, the reaper is armed and recent, and
+// EKS has a Kubernetes version in standard support that the lab can use.
+// It writes the version choice.
 func (p *Provider) PreflightCheck(ctx context.Context, w io.Writer) error {
+	id, err := p.teardown(ctx)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		return fmt.Errorf("refusing to start a cloud lab: %w", TeardownBusy(id))
+	}
 	st, err := GetReaperStatus(ctx, p.cfg, p.account)
 	if err != nil {
 		return err
