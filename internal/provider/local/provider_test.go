@@ -103,6 +103,8 @@ type fakeClusters struct {
 	images  []string
 	deleted []string
 	fail    error
+	// failFirst fails that many creates before the next one works.
+	failFirst int
 }
 
 func (f *fakeClusters) List() ([]string, error) {
@@ -118,6 +120,10 @@ func (f *fakeClusters) NodeCount(name string) (int, error) { return f.nodes[name
 func (f *fakeClusters) Create(cfg *v1alpha4.Cluster, image string) error {
 	if f.fail != nil {
 		return f.fail
+	}
+	if f.failFirst > 0 {
+		f.failFirst--
+		return errors.New(`failed to copy kubeadm config to node: command "podman exec ..." failed with error: exit status 126`)
 	}
 	f.created = append(f.created, cfg)
 	f.images = append(f.images, image)

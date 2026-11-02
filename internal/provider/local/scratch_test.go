@@ -93,3 +93,21 @@ func TestScratchLeavesTheMainClusterAlone(t *testing.T) {
 		t.Errorf("deleting a gone cluster: %v", err)
 	}
 }
+
+// One failed create is tried again; two fail the start.
+func TestScratchRetriesCreateOnce(t *testing.T) {
+	kc := &fakeClusters{nodes: map[string]int{}, failFirst: 1}
+	s, _ := testScratch(t, newFakeRuntime(), kc)
+	var log strings.Builder
+	if err := s.Create(context.Background(), "lab-scratch-01-x", filepath.Join(s.home, "kc"), &log); err != nil || len(kc.created) != 1 {
+		t.Fatalf("after one failure: %v, %d created", err, len(kc.created))
+	}
+	if !strings.Contains(log.String(), "trying once more") {
+		t.Errorf("log: %s", log.String())
+	}
+	kc = &fakeClusters{nodes: map[string]int{}, failFirst: 2}
+	s, _ = testScratch(t, newFakeRuntime(), kc)
+	if err := s.Create(context.Background(), "lab-scratch-01-x", filepath.Join(s.home, "kc"), io.Discard); err == nil {
+		t.Error("two failures did not fail the start")
+	}
+}

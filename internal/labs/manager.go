@@ -46,6 +46,9 @@ type Manager struct {
 	Now            func() time.Time
 	// Timeout is how long a verify script may run; 0 is VerifyTimeout.
 	Timeout time.Duration
+	// Env is added to every script's environment, after lab's own
+	// variables (the e2e test gives the scripts a throwaway HOME this way).
+	Env []string
 }
 
 func (m *Manager) now() time.Time {
@@ -198,7 +201,7 @@ func (m *Manager) Reset(ctx context.Context, log io.Writer) (Lab, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, ResetTimeout)
 	defer cancel()
-	out, err := m.Runner.Run(ctx, l.ResetScript(), l.Dir, scriptEnv(l, 0, m.Kubeconfig(l)))
+	out, err := m.Runner.Run(ctx, l.ResetScript(), l.Dir, append(scriptEnv(l, 0, m.Kubeconfig(l)), m.Env...))
 	_, _ = io.WriteString(log, out)
 	if err != nil {
 		return l, fmt.Errorf("reset.sh: %w", err)
@@ -237,7 +240,7 @@ func (m *Manager) Verify(ctx context.Context, n int) (Lab, Result, error) {
 	if timeout == 0 {
 		timeout = VerifyTimeout
 	}
-	res := verify(ctx, m.Runner, l, n, m.Kubeconfig(l), timeout)
+	res := verify(ctx, m.Runner, l, n, m.Kubeconfig(l), timeout, m.Env)
 	now := m.now()
 	return l, res, m.Store.Update(func(s *state.State) error {
 		p := s.Labs[l.ID]

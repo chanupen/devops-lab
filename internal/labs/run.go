@@ -47,11 +47,11 @@ type Result struct {
 }
 
 // verify runs step n's verify script with KUBECONFIG set and a timeout.
-func verify(ctx context.Context, r Runner, l Lab, n int, kubeconfig string, timeout time.Duration) Result {
+func verify(ctx context.Context, r Runner, l Lab, n int, kubeconfig string, timeout time.Duration, extra []string) Result {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	out, err := r.Run(ctx, l.VerifyScript(n), l.Dir, scriptEnv(l, n, kubeconfig))
+	out, err := r.Run(ctx, l.VerifyScript(n), l.Dir, append(scriptEnv(l, n, kubeconfig), extra...))
 	res := Result{Step: n, Output: out, Duration: time.Since(start), Passed: err == nil}
 	var exit *exec.ExitError
 	switch {

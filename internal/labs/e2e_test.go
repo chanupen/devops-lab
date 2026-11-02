@@ -39,13 +39,12 @@ func TestE2ELab1(t *testing.T) {
 			t.Fatalf("needs %s on PATH", tool)
 		}
 	}
-	// The argocd CLI session and Helm's cache go to a throwaway HOME, so
-	// the test leaves the user's own config alone.
+	// The lab scripts get a throwaway HOME, so the argocd CLI session and
+	// Helm's cache leave the user's own config alone. Only the scripts:
+	// kind runs podman, and rootless Podman keeps its storage under HOME.
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpHome, ".config"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
-	t.Setenv("TMPDIR", tmpHome)
+	scriptEnv := []string{"HOME=" + tmpHome, "XDG_CONFIG_HOME=" + filepath.Join(tmpHome, ".config"),
+		"XDG_CACHE_HOME=" + filepath.Join(tmpHome, ".cache"), "TMPDIR=" + tmpHome}
 
 	all, err := labs.LoadAll(filepath.Join("..", "..", "labs"))
 	if err != nil {
@@ -57,7 +56,8 @@ func TestE2ELab1(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &labs.Manager{Labs: all, Store: state.NewStore(filepath.Join(labHome, "state.json")), Mode: "local", Clusters: scratch,
-		Runner: labs.ExecRunner{}, Home: labHome, MainKubeconfig: filepath.Join(labHome, "kubeconfig"), LookPath: exec.LookPath}
+		Runner: labs.ExecRunner{}, Home: labHome, MainKubeconfig: filepath.Join(labHome, "kubeconfig"), LookPath: exec.LookPath,
+		Env: scriptEnv}
 	ctx := context.Background()
 	log := logWriter{t}
 
@@ -98,10 +98,15 @@ func TestE2ELab1(t *testing.T) {
 	solve := func(n int) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 		defer cancel()
-		env := []string{"KUBECONFIG=" + kubeconfig, "LAB_ID=" + l.ID, "LAB_DIR=" + l.Dir, fmt.Sprintf("LAB_STEP=%d", n)}
+		env := append([]string{"KUBECONFIG=" + kubeconfig, "LAB_ID=" + l.ID, "LAB_DIR=" + l.Dir, fmt.Sprintf("LAB_STEP=%d", n)}, scriptEnv...)
 		out, err := labs.ExecRunner{}.Run(ctx, l.SolveScript(n), l.Dir, env)
 		if err != nil {
-			t.Fatalf("solution %d: %v\n%s", n, err, out)
+			// One retry, logged: the solutions download charts and talk to
+			// GitHub, and a network blip should not fail the lab.
+			t.Logf("solution %d failed once, retrying: %v\n%s", n, err, out)
+			if out, err = (labs.ExecRunner{}).Run(ctx, l.SolveScript(n), l.Dir, env); err != nil {
+				t.Fatalf("solution %d: %v\n%s", n, err, out)
+			}
 		}
 	}
 	// verifyUntil retries a few times: Argo CD needs a moment to report.

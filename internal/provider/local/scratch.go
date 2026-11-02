@@ -88,7 +88,12 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 	} else {
 		logf(log, "creating kind cluster %q (one node)", name)
 		if err := kc.Create(scratchConfig(name, s.certsDir()), NodeImage); err != nil {
-			return err
+			// Rootless Podman sometimes fails an exec into a node that has
+			// just started; kind removes the node, so one more try is clean.
+			logf(log, "creating %q failed (%v); trying once more", name, err)
+			if err := kc.Create(scratchConfig(name, s.certsDir()), NodeImage); err != nil {
+				return err
+			}
 		}
 	}
 	cfg, err := kc.KubeConfig(name)
