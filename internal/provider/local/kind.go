@@ -95,27 +95,28 @@ func kindConfig(certsDir string) *v1alpha4.Cluster {
 }
 
 // SupportedVersions are the Kubernetes versions the local lab can run: a
-// kind node image exists and every local row of the compatibility table
-// supports it. Oldest first.
-func SupportedVersions() []string {
+// kind node image exists and every row in comps supports it (the local rows
+// of the compatibility table for the lab's active stacks, ForStacks).
+// Oldest first.
+func SupportedVersions(comps []compat.Component) []string {
 	vs := make([]string, 0, len(NodeImages))
 	for v := range NodeImages {
 		vs = append(vs, v)
 	}
-	return compat.Supported(vs, compat.For("local"))
+	return compat.Supported(vs, comps)
 }
 
 // NodeImage is the kind node image for Kubernetes v. It refuses a version
-// outside the compatibility table, saying which component does not
-// support it and which versions work.
-func NodeImage(v string) (string, error) {
-	ok := strings.Join(SupportedVersions(), ", ")
+// that a row in comps does not support, saying which component and which
+// versions work.
+func NodeImage(v string, comps []compat.Component) (string, error) {
+	ok := strings.Join(SupportedVersions(comps), ", ")
 	img, found := NodeImages[v]
 	if !found {
 		return "", fmt.Errorf("k8sVersion %s: kind %s has no node image for it (local mode supports %s); change k8sVersion in lab.yaml",
 			v, kindVersion, ok)
 	}
-	if bad := compat.Unsupported(v, compat.For("local")); len(bad) > 0 {
+	if bad := compat.Unsupported(v, comps); len(bad) > 0 {
 		return "", fmt.Errorf("k8sVersion %s is outside the compatibility table: %s (local mode supports %s); change k8sVersion in lab.yaml",
 			v, strings.Join(bad, ", "), ok)
 	}

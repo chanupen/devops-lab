@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/doctor"
 	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -305,8 +306,12 @@ func orDefault(v, def string) string {
 func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
 	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
 	pin := ""
+	var active []string
 	if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 		pin = cfg.Cloud.K8sVersion
+		if path, err := state.PathFor("cloud"); err == nil {
+			active = activeStacks(cfg, filepath.Dir(path), nil)
+		}
 	}
 	cache, err := labaws.DefaultCacheDir()
 	if err != nil {
@@ -334,7 +339,7 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 		if err != nil {
 			return "", nil, err
 		}
-		c, err := labaws.ChooseVersion(pin, current, standard, labaws.Compatibility)
+		c, err := labaws.ChooseVersion(pin, current, standard, compat.ForStacks("cloud", active))
 		if err != nil {
 			return "", nil, err
 		}
