@@ -43,7 +43,11 @@ func (homeModel) view(d *data) (left, right string) {
 	case !c.known:
 		row("cluster", statusProgressing.symbol()+" connecting")
 	case !c.up:
-		row("cluster", statusOff.symbol()+" off "+faint.Render("("+c.reason+")"))
+		if u, _ := d.unit(UnitCluster, ""); d.clusterStopped() {
+			row("cluster", statusOff.symbol()+" stopped "+faint.Render("$ "+u.Fix))
+		} else {
+			row("cluster", statusOff.symbol()+" off "+faint.Render("("+c.reason+")"))
+		}
 	default:
 		s := statusHealthy
 		if c.nodesReady < c.nodes {
@@ -53,6 +57,13 @@ func (homeModel) view(d *data) (left, right string) {
 		row("apps", appSummary(c))
 	}
 	row("stacks", stackSummary(d))
+	if u, ok := d.unit(UnitCache, ""); ok {
+		if u.Running {
+			row("cache", statusHealthy.symbol()+" "+u.Name)
+		} else {
+			row("cache", statusOff.symbol()+" stopped "+faint.Render("$ "+u.Fix))
+		}
+	}
 	if c.known && !c.up {
 		l.WriteString("\n  " + warn.Render(emptyHint) + ".\n")
 	}

@@ -71,6 +71,15 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 
 Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
 
+### After a reboot
+
+A reboot leaves the lab's containers (`lab-*`: the kind nodes and `lab-zot`) in place but stopped. Every lab container's name starts with `lab-`, so lab finds them through the Podman API:
+
+- `lab up` starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
+- `lab labs start` starts `lab-zot` and the scratch cluster's node when they are there but stopped. Without Zot it says images come straight from the registries.
+- `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
+- The TUI's Home screen shows `○ stopped` and the command for a stopped cluster or `lab-zot`, in the header too. It lists the containers in the background: at start, every five file checks, and when the cluster goes down or comes back.
+
 ## Architecture
 
 The TUI is a thin view over one engine; the engine hands work to a local or an AWS provider, and after bootstrap Argo CD pulls every stack from Git, so both clusters end up identical apart from their overlays.
@@ -132,7 +141,7 @@ One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a
 
 ### Screens
 
-1. **Home**: mode, cluster health, running stacks, TTL countdown, last five operations. Empty state says which key to press next.
+1. **Home**: mode, cluster health (`○ stopped` with the `podman start` command when a reboot stopped it), running stacks, the image cache, TTL countdown, last five operations. Empty state says which key to press next.
 2. **Stacks**: the module catalog with install state, dependencies, endpoints and versions.
 3. **Labs**: the labs with progress (● done, ◐ current, ○ not started). `enter` opens the current step's text, `v` verifies it, `h` shows its next hint, `n`/`p` move between steps.
 4. **Drills**: break/fix scenarios. Start a fault, a timer runs, `verify` stops it and records your time.
@@ -210,7 +219,11 @@ Each lab is a directory, `labs/NN-name/`, in a generic format that can be copied
 
 A lab says where it runs. `needs: scratch` gives it its own single-node kind cluster, `lab-scratch-<id>`, on rootless Podman. It sits on the kind network and pulls through the Zot cache when that runs, but has no host ports and its own kubeconfig, so it never touches the main lab or `~/.kube/config`. `lab labs stop` deletes it. `needs: lab` runs on the main lab's cluster and lists the stacks it needs.
 
-`lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent across sessions. Only one lab is started at a time.
+`lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent. Only one lab is started at a time.
+
+- **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears the lab's progress, steps and time, because the work went with the cluster; the next start begins at step 1. A lab on the main cluster keeps its steps and starts its time from zero.
+- **`list`** shows the current step: `step 1/6, 0m, started` right after a start, `done, 6/6 steps, 42m` at the end.
+- **`start` output** is a few progress lines (image cache, creating the cluster, kubeconfig, nodes ready) and then the step. kind's own output and node diagnostics go to the op log only; `-v`/`--verbose` on `start` and `stop` streams them too.
 
 `go test -tags e2e ./internal/labs/` runs a lab for real: each step's verify fails before its solution and passes after it, then reset and stop.
 
@@ -285,7 +298,7 @@ The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo 
 
 - **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
 - **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
-- **`lab status`:** lists every stack with its state, the revision (highlighted when it is not `main`) and, once core is up, the app URLs. It changes nothing.
+- **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
 
 ### Repository layout
 

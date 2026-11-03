@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -132,6 +133,9 @@ type labRunner struct {
 	hosts        func(context.Context) ([]string, error) // nil without a GitOps runner
 	url          func(host string) string
 	hint         string
+	// start starts the main cluster's and the cache's stopped containers;
+	// nil in cloud mode.
+	start func(context.Context, io.Writer) ([]local.Unit, error)
 }
 
 // versionGate is implemented by providers that check the Kubernetes pin
@@ -146,6 +150,20 @@ func (l labRunner) CheckK8sVersion(ctx context.Context) error {
 		return nil
 	}
 	return l.checkVersion(ctx)
+}
+
+// stoppedStarter is implemented by providers whose lab can be stopped
+// under them, as a reboot stops local containers.
+type stoppedStarter interface {
+	StartStopped(ctx context.Context, log io.Writer) ([]local.Unit, error)
+}
+
+// StartStopped implements stoppedStarter.
+func (l labRunner) StartStopped(ctx context.Context, log io.Writer) ([]local.Unit, error) {
+	if l.start == nil {
+		return nil, nil
+	}
+	return l.start(ctx, log)
 }
 
 // AppURLs implements appAccess.
@@ -195,7 +213,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
-		l.url, l.hint, l.checkVersion = p.AppURL, p.AccessHint(), p.CheckK8sVersion
+		l.url, l.hint, l.start, l.checkVersion = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)
 		if err != nil {

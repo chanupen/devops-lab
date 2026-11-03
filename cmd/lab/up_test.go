@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -23,8 +25,21 @@ type fakeProvider struct {
 	fail    map[string]bool
 	urls    []string
 	urlsErr error
+	stopped []string // lab containers a reboot stopped
 	// versionErr is what CheckK8sVersion says about the pin.
 	versionErr error
+}
+
+// StartStopped implements stoppedStarter: it starts f.stopped, recording each.
+func (f *fakeProvider) StartStopped(_ context.Context, log io.Writer) ([]local.Unit, error) {
+	for _, c := range f.stopped {
+		_, _ = fmt.Fprintf(log, "%s was stopped; starting it\n", c)
+		if err := f.do("start " + c); err != nil {
+			return nil, err
+		}
+	}
+	f.stopped = nil
+	return nil, nil
 }
 
 // CheckK8sVersion implements versionGate.
@@ -70,6 +85,7 @@ func TestUpDown(t *testing.T) {
 		wantErr    string
 		wantStacks []string // applied stacks afterwards
 		wantOp     string   // command of the last op
+		stopped    []string // containers stopped before the run
 		versionErr error    // the provider refuses the k8sVersion pin
 	}{
 		{
@@ -79,12 +95,47 @@ func TestUpDown(t *testing.T) {
 			wantErr:    "k8sVersion 1.37 is outside the compatibility table",
 		},
 		{
+			name:       "a refused pin starts no stopped containers",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			stopped:    []string{"lab-control-plane", "lab-zot"},
+			versionErr: errors.New("k8sVersion 1.37 is outside the compatibility table"),
+			wantErr:    "outside the compatibility table",
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
 			name:       "up refuses a cluster on another version",
 			state:      deployedClusterRegistry,
 			args:       []string{"up"},
 			versionErr: errors.New("the main cluster runs Kubernetes 1.37, but lab.yaml pins 1.36"),
 			wantErr:    "lab.yaml pins 1.36",
 			wantStacks: []string{"cluster", "registry"},
+		},
+		{
+			name:       "up starts stopped containers before anything else",
+			state:      deployedClusterRegistry,
+			args:       []string{"up", "--stacks", "cluster"},
+			stopped:    []string{"lab-control-plane", "lab-zot"},
+			wantCalls:  []string{"start lab-control-plane", "start lab-zot"},
+			wantOut:    []string{"lab-control-plane was stopped; starting it", "lab-zot was stopped; starting it", "nothing to do"},
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
+			name:       "starting them first, then applying",
+			args:       []string{"up", "--stacks", "registry"},
+			stopped:    []string{"lab-zot"},
+			wantCalls:  []string{"start lab-zot", "apply registry"},
+			wantOut:    []string{"lab-zot was stopped; starting it", "● registry: applied in"},
+			wantStacks: []string{"registry"},
+			wantOp:     "lab up --stacks registry",
+		},
+		{
+			name:      "a container that will not start stops lab up",
+			args:      []string{"up", "--stacks", "registry"},
+			stopped:   []string{"lab-zot"},
+			fail:      map[string]bool{"start lab-zot": true},
+			wantCalls: []string{"start lab-zot"},
+			wantErr:   "starting the lab's stopped containers: boom",
 		},
 		{
 			name:      "up cluster and registry",
@@ -204,7 +255,7 @@ func TestUpDown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fp := &fakeProvider{fail: tt.fail, versionErr: tt.versionErr}
+			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped, versionErr: tt.versionErr}
 			var gotPurge, built bool
 			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
 				built, gotPurge = true, opts.Purge

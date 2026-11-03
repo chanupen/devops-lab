@@ -19,10 +19,11 @@ type Status int
 
 // Check outcomes. Only Fail makes `lab doctor` exit non-zero.
 const (
-	OK   Status = iota // check passed
-	Warn               // works, but not as recommended
-	Fail               // blocks the lab
-	Skip               // could not run; not counted as a failure
+	OK      Status = iota // check passed
+	Warn                  // works, but not as recommended
+	Fail                  // blocks the lab
+	Skip                  // could not run; not counted as a failure
+	Stopped               // a lab container is there but stopped (a reboot); not a failure
 )
 
 func (s Status) String() string {
@@ -33,6 +34,8 @@ func (s Status) String() string {
 		return "warn"
 	case Fail:
 		return "fail"
+	case Stopped:
+		return "stopped"
 	default:
 		return "skip"
 	}
@@ -57,6 +60,19 @@ type System struct {
 	LookPath func(name string) (string, error)
 	Run      func(ctx context.Context, name string, args ...string) (string, error)
 	HTTPGet  func(ctx context.Context, url string) (int, []byte, error)
+	// Units lists the lab's containers (cluster nodes, the image cache);
+	// nil skips those checks.
+	Units func(ctx context.Context) ([]Unit, error)
+}
+
+// Unit is a part of the lab made of containers: a kind cluster or the
+// image cache.
+type Unit struct {
+	Kind    string // "cluster" or "image cache"
+	Name    string
+	Nodes   int    // containers
+	Running bool   // all of them
+	Fix     string // the command that starts the stopped ones
 }
 
 // HostSystem returns a System backed by the real host.
@@ -122,6 +138,9 @@ func Checks() []Check {
 		{"tofu/terraform", checkIaC},
 		{"aws", toolCheck("aws")},
 		{"memory", checkMemory},
+		{"lab cluster", unitCheck("cluster", "lab")},
+		{"scratch clusters", checkScratchClusters},
+		{"image cache", unitCheck("image cache", "lab-zot")},
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // route answers one method and path (query ignored) with a status and body,
@@ -199,4 +200,55 @@ func describe(ci ContainerInfo) string {
 		return "stopped"
 	}
 	return "running " + ci.Image + " " + ci.Labels["lab"]
+}
+
+// Containers lists by name prefix, stopped ones too, with their times;
+// Container reads the times from inspect.
+func TestPodmanContainerTimes(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		routes map[string]route
+		call   func(p *Podman) ([]ContainerInfo, error)
+		want   []ContainerInfo
+	}{
+		{"list lab containers", map[string]route{"GET /containers/json": {200, `[
+			{"Names":["lab-zot"],"State":"exited","StartedAt":1793696400,"ExitedAt":1793700000},
+			{"Names":["other"],"State":"running","StartedAt":1793696400},
+			{"Names":["lab-control-plane"],"State":"running","StartedAt":1793696400,"ExitedAt":0}]`}},
+			func(p *Podman) ([]ContainerInfo, error) { return p.Containers(ctx, "lab-") },
+			[]ContainerInfo{
+				{Name: "lab-control-plane", Exists: true, Running: true, StartedAt: time.Unix(1793696400, 0)},
+				{Name: "lab-zot", Exists: true, StartedAt: time.Unix(1793696400, 0), FinishedAt: time.Unix(1793700000, 0)},
+			}},
+		{"inspect a stopped node", map[string]route{"GET /containers/lab-control-plane/json": {200,
+			`{"State":{"Running":false,"StartedAt":"2026-11-03T09:00:00Z","FinishedAt":"2026-11-03T09:40:00Z"}}`}},
+			func(p *Podman) ([]ContainerInfo, error) {
+				c, err := p.Container(ctx, "lab-control-plane")
+				return []ContainerInfo{c}, err
+			},
+			[]ContainerInfo{{Name: "lab-control-plane", Exists: true, StartedAt: t0, FinishedAt: t0.Add(40 * time.Minute)}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, seen, _ := fakePodman(t, tt.routes)
+			got, err := tt.call(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+			for i := range got {
+				g, w := got[i], tt.want[i]
+				if g.Name != w.Name || g.Running != w.Running || !g.StartedAt.Equal(w.StartedAt) || !g.FinishedAt.Equal(w.FinishedAt) {
+					t.Errorf("container %d = %+v, want %+v", i, g, w)
+				}
+			}
+			if strings.Contains((*seen)[0], "/containers/json") && !strings.Contains((*seen)[0], "all=true") {
+				t.Errorf("list without all=true misses stopped containers: %s", (*seen)[0])
+			}
+		})
+	}
 }
