@@ -1,0 +1,20 @@
+# Deployment legacy, by tag only: allowed only under PolicyException legacy-tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy
+  namespace: lab05-apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: legacy}
+  template:
+    metadata:
+      labels: {app: legacy}
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/stefanprodan/podinfo:6.15.0
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}

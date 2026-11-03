@@ -10,12 +10,12 @@ resources:
   - resources.yaml
 results:
   - policy: require-image-digest
-    rule: images-by-digest
+    isValidatingPolicy: true
     kind: Pod
     resources: [tagged]
     result: fail
   - policy: require-image-digest
-    rule: images-by-digest
+    isValidatingPolicy: true
     kind: Pod
     resources: [pinned]
     result: pass

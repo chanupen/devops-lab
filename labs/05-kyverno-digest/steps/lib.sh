@@ -25,13 +25,13 @@ KYVERNO_CLI=ghcr.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56
 
 need_kyverno() {
   kubectl version --request-timeout=5s >/dev/null 2>&1 || fail "the cluster does not answer: is the lab up? lab status"
-  kubectl get crd clusterpolicies.kyverno.io >/dev/null 2>&1 || fail "Kyverno is not installed: lab up --stacks policy"
+  kubectl get crd validatingpolicies.policies.kyverno.io >/dev/null 2>&1 || fail "Kyverno is not installed: lab up --stacks policy"
 }
 
-# policy: the ClusterPolicy as JSON; returns 1 when there is none. (Call
+# policy: the ValidatingPolicy as JSON; returns 1 when there is none. (Call
 # it as p=$(policy) || fail ...: a fail inside $(...) ends only the subshell.)
 policy() {
-  kubectl get clusterpolicy "$POLICY" -o json 2>/dev/null
+  kubectl get validatingpolicies.policies.kyverno.io "$POLICY" -o json 2>/dev/null
 }
 
 # dry_run_pod <name> <image>: try a Pod with a server-side dry run; prints

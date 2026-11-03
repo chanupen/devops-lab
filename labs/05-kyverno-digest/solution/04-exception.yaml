@@ -1,38 +1,21 @@
-# One named workload may keep a tag-only image: Deployment legacy and the
-# ReplicaSets and Pods it makes (their names start with legacy-). Kyverno
-# checks Deployments with the autogen rule, Pods with the rule itself.
-apiVersion: kyverno.io/v2
+# One named workload may keep a tag-only image: Deployment legacy, the
+# ReplicaSet it owns and that ReplicaSet's Pods. A PolicyException names the
+# policy and matches with CEL; ownerReferences keep it to this workload, so
+# a Pod that only copies its labels is still denied.
+apiVersion: policies.kyverno.io/v1
 kind: PolicyException
 metadata:
   name: legacy-tag
   namespace: lab05-apps
 spec:
-  exceptions:
-    - policyName: require-image-digest
-      ruleNames: [images-by-digest, autogen-images-by-digest]
-  match:
-    any:
-      - resources:
-          kinds: [Deployment, ReplicaSet, Pod]
-          namespaces: [lab05-apps]
-          names: [legacy, legacy-*]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: legacy
-  namespace: lab05-apps
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: legacy}
-  template:
-    metadata:
-      labels: {app: legacy}
-    spec:
-      containers:
-        - name: app
-          image: ghcr.io/stefanprodan/podinfo:6.15.0
-          resources:
-            requests: {cpu: 5m, memory: 16Mi}
-            limits: {memory: 64Mi}
+  policyRefs:
+    - name: require-image-digest
+      kind: ValidatingPolicy
+  matchConditions:
+    # Deployment legacy, the ReplicaSet it owns, and that ReplicaSet's Pods.
+    - name: legacy-and-its-children
+      expression: >-
+        (object.kind == 'Deployment' && object.metadata.name == 'legacy') ||
+        (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o,
+          (o.kind == 'Deployment' && o.name == 'legacy') ||
+          (o.kind == 'ReplicaSet' && o.name.startsWith('legacy-'))))
