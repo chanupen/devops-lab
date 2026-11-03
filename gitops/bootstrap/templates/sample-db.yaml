@@ -1,0 +1,31 @@
+{{- if index .Values.stacks "sample-db" }}
+# sample-db: the DB-backed sample app (apps/sample-db) and Postgres, from
+# the in-repo chart gitops/stacks/sample-db. Its image is built by the stack
+# and set here by digest (sampleDB.image). The ServiceMonitor exists only
+# when obs is on.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "sample-db" "sample-db" "0") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision }}
+    path: gitops/stacks/sample-db
+    helm:
+      ignoreMissingValueFiles: true
+      valueFiles:
+        - ../../overlays/{{ .Values.mode }}/sample-db/values.yaml
+      valuesObject:
+        image: {{ required "sampleDB.image is set by the sample-db stack" .Values.sampleDB.image | quote }}
+        serviceMonitor:
+          enabled: {{ .Values.stacks.obs | default false }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sample-db
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

@@ -1,0 +1,3 @@
+# Local mode: kind's local-path StorageClass is the default, so nothing to
+# change. The image comes from the lab registry (set by the stack).
+{}

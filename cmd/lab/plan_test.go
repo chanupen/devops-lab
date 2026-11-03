@@ -34,7 +34,8 @@ func TestPlanCmd(t *testing.T) {
 			want: []string{"local mode, standard profile, Kubernetes 1.36", "+ cluster", "+ core", "+ sample-app", "+ obs",
 				"+ secrets     not deployed",
 				"+ policy      not deployed",
-				"8 to apply, 0 to destroy, 0 unchanged, 1 skipped",
+				"+ sample-db   not deployed",
+				"9 to apply, 0 to destroy, 0 unchanged, 1 skipped",
 				"warning: 1 stack skipped, not supported by the local provider yet: scaling"},
 		},
 		{

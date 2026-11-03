@@ -12,4 +12,10 @@ stacks:
   core: false
   obs: false
   policy: false
+  secrets: false
+  sample-db: false
+# Set by the sample-db stack when it builds the app (lab up): its image by
+# digest in the lab registry.
+sampleDB:
+  image: ""
   sample-app: false

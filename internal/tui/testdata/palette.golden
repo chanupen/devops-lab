@@ -13,8 +13,8 @@
   :down ci           $ lab down --stacks ci                                                         
   :down policy       $ lab down --stacks policy                                                     
   :down sample-app   $ lab down --stacks sample-app                                                 
+  :down sample-db    $ lab down --stacks sample-db                                                  
   :down scaling      $ lab down --stacks scaling                                                    
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
