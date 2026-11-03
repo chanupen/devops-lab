@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -49,6 +50,20 @@ type Manager struct {
 	// Env is added to every script's environment, after lab's own
 	// variables (the e2e test gives the scripts a throwaway HOME this way).
 	Env []string
+	// ScratchName names a scratch lab's cluster; nil is ClusterName. The
+	// e2e test uses its own names, so it never meets a learner's cluster.
+	ScratchName func(Lab) string
+	// Platform is "linux/amd64" and the like, for the install commands;
+	// "" is this host's.
+	Platform string
+}
+
+// Scratch is the name of lab l's scratch cluster.
+func (m *Manager) Scratch(l Lab) string {
+	if m.ScratchName != nil {
+		return m.ScratchName(l)
+	}
+	return ClusterName(l)
 }
 
 func (m *Manager) now() time.Time {
@@ -119,7 +134,7 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		return l, fmt.Errorf("lab %s runs in %s mode, not %s", l.ID, strings.Join(l.Modes, ", "), m.Mode)
 	}
 	if missing := m.missingTools(l); len(missing) > 0 {
-		return l, fmt.Errorf("lab %s needs %s on PATH: the lab README says how to install them", l.ID, strings.Join(missing, ", "))
+		return l, m.toolsError(l, missing)
 	}
 	switch l.Needs {
 	case NeedsLab:
@@ -136,10 +151,33 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		if m.Clusters == nil {
 			return l, errors.New("scratch clusters are not available in this mode")
 		}
-		if err := m.Clusters.Create(ctx, ClusterName(l), m.Kubeconfig(l), log); err != nil {
-			return l, fmt.Errorf("scratch cluster %s: %w", ClusterName(l), err)
+		name := m.Scratch(l)
+		// A cluster with this name that this state did not start belongs to
+		// someone else: another lab home, or a test run. Never reuse it.
+		exists, err := m.Clusters.Exists(name)
+		if err != nil {
+			return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+		}
+		if exists && st.ActiveLab != l.ID {
+			return l, fmt.Errorf("a kind cluster named %s already exists, but %s did not start it "+
+				"(another lab home or a test run may own it); lab labs start never reuses it. "+
+				"If it is yours and unused, delete it: KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name %s",
+				name, m.Store.Path(), name)
+		}
+		if err := m.Clusters.Create(ctx, name, m.Kubeconfig(l), log); err != nil {
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s: %w", name, err), log)
+		}
+		// The lab is started only once its cluster is there.
+		ok, err := m.Clusters.Exists(name)
+		if err != nil {
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s: checking it after create: %w", name, err), log)
+		}
+		if !ok {
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s is not there after create", name), log)
 		}
 	}
+	// Only now, with the cluster up and every check passed, is the lab
+	// recorded as started: a start that fails leaves no progress behind.
 	now := m.now()
 	return l, m.Store.Update(func(s *state.State) error {
 		if s.Labs == nil {
@@ -157,6 +195,19 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 	})
 }
 
+// undoCreate deletes a cluster this start created before it failed, so a
+// failed start leaves neither progress nor a cluster that the next start
+// would refuse as foreign. A cluster that was there before is left alone.
+func (m *Manager) undoCreate(ctx context.Context, name string, l Lab, existed bool, err error, log io.Writer) error {
+	if existed {
+		return err
+	}
+	if derr := m.Clusters.Delete(ctx, name, m.Kubeconfig(l), log); derr != nil {
+		return fmt.Errorf("%w; removing the half-made cluster also failed: %w", err, derr)
+	}
+	return err
+}
+
 func (m *Manager) missingTools(l Lab) []string {
 	look := m.LookPath
 	if look == nil {
@@ -171,6 +222,25 @@ func (m *Manager) missingTools(l Lab) []string {
 	return missing
 }
 
+// toolsError says which tools are missing and, for each, the pinned
+// install command lab.yaml gives for this platform.
+func (m *Manager) toolsError(l Lab, missing []string) error {
+	platform := m.Platform
+	if platform == "" {
+		platform = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "lab %s needs %s on PATH", l.ID, strings.Join(missing, ", "))
+	for _, t := range missing {
+		if c := l.Install[t][platform]; c != "" {
+			fmt.Fprintf(&b, "\n  install %s:\n    %s", t, c)
+		} else {
+			fmt.Fprintf(&b, "\n  %s: install it with your package manager (lab doctor lists the tool versions lab expects)", t)
+		}
+	}
+	return errors.New(b.String())
+}
+
 // Stop ends the active lab's session and deletes its scratch cluster.
 // Progress is kept: starting the lab again picks up at the same step.
 func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, error) {
@@ -179,8 +249,22 @@ func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, error) {
 		return l, err
 	}
 	if l.Needs == NeedsScratch && m.Clusters != nil {
-		if err := m.Clusters.Delete(ctx, ClusterName(l), m.Kubeconfig(l), log); err != nil {
-			return l, fmt.Errorf("scratch cluster %s: %w", ClusterName(l), err)
+		name := m.Scratch(l)
+		exists, err := m.Clusters.Exists(name)
+		switch {
+		case err != nil:
+			return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+		case !exists:
+			// Already gone (deleted by hand, or never there): the lab's
+			// state still has to be cleared.
+			_, _ = fmt.Fprintf(log, "scratch cluster %s was not found; clearing the lab's state\n", name)
+			if err := os.Remove(m.Kubeconfig(l)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return l, err
+			}
+		default:
+			if err := m.Clusters.Delete(ctx, name, m.Kubeconfig(l), log); err != nil {
+				return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+			}
 		}
 	}
 	now := m.now()

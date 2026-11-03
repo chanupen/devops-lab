@@ -2,8 +2,7 @@
 # Step 1: install Argo CD with Helm, chart pinned, and wait for the pods.
 set -euo pipefail
 # upgrade --install is helm install that can also be run again.
-helm upgrade --install argocd argo-cd \
-  --repo https://argoproj.github.io/argo-helm \
+helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd \
   --version 10.10.5 \
   --namespace argocd --create-namespace \
   --wait --timeout 10m

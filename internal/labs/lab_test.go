@@ -96,6 +96,11 @@ func TestRepoLabs(t *testing.T) {
 	if l.Needs != NeedsScratch || len(l.Steps) != 6 || l.Title != "Bootstrap Argo CD from scratch" {
 		t.Errorf("lab 1 = %s needs %s, %d steps", l.Title, l.Needs, len(l.Steps))
 	}
+	// The README's install command is the one lab labs start prints.
+	readme, _ := os.ReadFile(filepath.Join(l.Dir, "README.md"))
+	if c := l.Install["argocd"]["linux/amd64"]; c == "" || !strings.Contains(string(readme), c) {
+		t.Errorf("README does not show lab.yaml's argocd install command %q", c)
+	}
 	for _, s := range l.Steps {
 		for _, f := range []string{l.VerifyScript(s.N), l.SolveScript(s.N)} {
 			if fi, err := os.Stat(f); err != nil || fi.Mode()&0o100 == 0 {

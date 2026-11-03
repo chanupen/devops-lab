@@ -34,6 +34,9 @@ type Lab struct {
 	Needs  string   `yaml:"needs"` // scratch or lab
 	Stacks []string `yaml:"stacks"`
 	Tools  []string `yaml:"tools"` // commands the steps use, checked on start
+	// Install is a pinned install command per tool and platform
+	// ("linux/amd64"), printed when lab labs start finds the tool missing.
+	Install map[string]map[string]string `yaml:"install"`
 
 	Dir   string `yaml:"-"`
 	Intro string `yaml:"-"`

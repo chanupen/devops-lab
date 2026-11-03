@@ -4,25 +4,26 @@ Argo CD keeps a cluster in line with what Git says. In this lab you install it o
 
 You work on a cluster of your own. `lab labs start 01` creates it, and `lab labs stop` deletes it. Your main lab is not touched.
 
-Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. To install the `argocd` CLI that matches this lab:
+Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. `lab labs start` checks, and prints the install command for anything missing. To install the `argocd` CLI that matches this lab (v3.5.5, checksum verified):
 
 ```bash
-curl -fsSLo ~/.local/bin/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64
-chmod +x ~/.local/bin/argocd
+mkdir -p ~/.local/bin && curl -fsSLo /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 && echo "c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba  /tmp/argocd" | sha256sum -c - && install -m 0755 /tmp/argocd ~/.local/bin/argocd
 ```
 
-On a Mac, use `argocd-darwin-amd64` instead.
+On a Mac, `lab.yaml` has the `darwin/amd64` command.
 
 Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
 
 ## Step 1: Install Argo CD with Helm
 
-Install Argo CD into the `argocd` namespace with Helm. Use the `argo-cd` chart from `https://argoproj.github.io/argo-helm`, version `10.10.5`.
+Install Argo CD into the `argocd` namespace with Helm. Use the `argo-cd` chart, version `10.10.5`, from the OCI registry `oci://ghcr.io/argoproj/argo-helm`.
+
+Charts can come from an OCI registry, like images. The same chart is also in the classic Helm repository `https://argoproj.github.io/argo-helm`.
 
 Always pin the chart version. Without a pin, the same command installs something different next month.
 
 ### Hints
-- `helm install` takes `--repo` with the chart repository URL, so you do not need `helm repo add`.
+- `helm install` takes an OCI reference as the chart: `oci://<registry>/<path>/<chart>`. You do not need `helm repo add`.
 - Pin the version with `--version 10.10.5`. Create the namespace with `--create-namespace`.
 - `--wait` makes Helm wait until the pods are Ready. Give it a few minutes with `--timeout 10m`.
 

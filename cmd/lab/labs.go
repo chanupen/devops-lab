@@ -227,7 +227,7 @@ func writeLabStatus(w io.Writer, m *labs.Manager, now time.Time) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "lab %s: %s\n", l.ID, l.Title)
 	if l.Needs == labs.NeedsScratch {
-		fmt.Fprintf(&b, "cluster: %s (its own; the main lab is not touched)\n", labs.ClusterName(l))
+		fmt.Fprintf(&b, "cluster: %s (its own; the main lab is not touched)\n", m.Scratch(l))
 	} else {
 		b.WriteString("cluster: the main lab\n")
 	}

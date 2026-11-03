@@ -23,6 +23,7 @@ labs/NN-name/
 | `needs` | `scratch`: the lab gets its own single-node cluster, `lab-scratch-<id>`. `lab`: it runs on the main lab's cluster. |
 | `stacks` | for `needs: lab`, the main-lab stacks it needs |
 | `tools` | commands the steps use; `lab labs start` checks they are on PATH |
+| `install` | a pinned install command per tool and platform (`linux/amd64`, `darwin/amd64`), printed when the tool is missing |
 
 Each step in the README has three parts: the task, `### Hints` (a list, one hint each) and `### Expected result`.
 
@@ -37,4 +38,5 @@ Each step in the README has three parts: the task, `### Hints` (a list, one hint
 - Each step teaches one thing.
 - Short sentences, plain words, no company names.
 - Pin every version: charts, images, Git tags or commits.
-- The solutions must pass the verify scripts on a fresh cluster. `go test -tags e2e ./internal/labs/` checks that.
+- The solutions must pass the verify scripts on a fresh cluster. `go test -tags e2e ./internal/labs/` checks that, on a cluster named `lab-scratch-e2e-<NN>-<pid>`, so it never meets a learner's.
+- `lab labs start` never reuses a scratch cluster that its state did not start; it says how to delete it instead.
