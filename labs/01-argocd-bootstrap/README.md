@@ -4,6 +4,8 @@ Argo CD keeps a cluster in line with what Git says. In this lab you install it o
 
 You work on a cluster of your own. `lab labs start 01` creates it, and `lab labs stop` deletes it. Your main lab is not touched.
 
+`lab labs start` prints a few progress lines and then the first step. Creating the cluster takes about a minute. Add `-v` to see kind's full output; it is always in the op log. Time counts only while your cluster runs. If the host reboots, run `lab labs start 01` again: it starts the cluster and the image cache, and you pick up at your step. `lab labs stop` resets the time; the steps you finished stay done.
+
 Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. `lab labs start` checks, and prints the install command for anything missing. To install the `argocd` CLI that matches this lab (v3.5.5, checksum verified):
 
 ```bash

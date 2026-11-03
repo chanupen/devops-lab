@@ -40,3 +40,4 @@ Each step in the README has three parts: the task, `### Hints` (a list, one hint
 - Pin every version: charts, images, Git tags or commits.
 - The solutions must pass the verify scripts on a fresh cluster. `go test -tags e2e ./internal/labs/` checks that, on a cluster named `lab-scratch-e2e-<NN>-<pid>`, so it never meets a learner's.
 - `lab labs start` never reuses a scratch cluster that its state did not start; it says how to delete it instead.
+- Time spent counts only while the lab's cluster runs. `lab labs stop` resets it and keeps the steps done.
