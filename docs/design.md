@@ -253,13 +253,13 @@ profiles:
   local:
     host: asuszephyrus
     runtime: podman        # rootless, always; KIND_EXPERIMENTAL_PROVIDER=podman
-    cluster: { provider: kind, workers: 2, k8sVersion: "1.37" }
+    cluster: { provider: kind, workers: 2, k8sVersion: "1.36" }
     awsEndpoint: http://localhost.localstack.cloud:4566
     registry: zot
     memoryLimitGiB: 14     # lab doctor warns above this
   cloud:
     region: ap-south-1
-    cluster: { provider: eks, k8sVersion: "1.37", nodes: spot }
+    cluster: { provider: eks, k8sVersion: "1.36", nodes: spot }
     awsProfile: lab        # existing account; IAM user today, MFA role later
     ttl: 4h                # destroy after this, no exceptions
     budgetMonthlyUSD: 30
@@ -271,6 +271,13 @@ repo:                      # what Argo CD syncs from (gitops/bootstrap is the ap
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.
+
+### Kubernetes version
+
+Both modes check their Kubernetes version against one compatibility table, `internal/compat`: for each pinned component, the range its upstream states for the release lab installs, and the modes that install it. Argo CD 3.5 (tested on 1.33 to 1.36) is in both modes, Karpenter and the Load Balancer Controller in cloud mode, and the kind v0.33.0 node images (1.34 to 1.37) in local mode. Today that holds both labs at 1.36.
+
+- **Local:** `lab.yaml` `k8sVersion` (default 1.36) picks the kind node image, by digest from kind's release notes, for the main cluster and the scratch clusters. `lab up` refuses a pin outside the table and says which component does not support it and which versions work. It also refuses when the main cluster runs another version than the pin: a kind cluster cannot change version in place, so `lab down`, then `lab up` makes it again (the image cache volume is kept).
+- **Cloud:** lab picks the newest EKS version in standard support that the table's cloud rows all support, or `cloud.k8sVersion`; a running cluster keeps its version.
 
 ### GitOps revision
 
