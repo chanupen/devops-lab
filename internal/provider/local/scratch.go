@@ -15,6 +15,7 @@ import (
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/labs"
 )
 
@@ -166,7 +167,8 @@ func (s *Scratch) startNode(ctx context.Context, name string, log io.Writer) err
 // goes into the log before they are deleted; the second is a plain create.
 // Rootless Podman has failed an exec into a just-started node (exit 126).
 func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
-	image, err := NodeImage(s.k8sVersion)
+	// A scratch lab installs what its steps say, so every local row counts.
+	image, err := NodeImage(s.k8sVersion, compat.For("local"))
 	if err != nil {
 		return err
 	}

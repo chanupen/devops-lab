@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/reaper"
 )
@@ -336,4 +337,24 @@ func bootstrapPin(t *testing.T, template, app string) string {
 		t.Fatalf("no version for %s in %s", app, template)
 	}
 	return string(m[1])
+}
+
+// The EKS version follows the active stacks' rows: with gitops, Argo CD
+// holds it at 1.36; with only the cluster stack, Karpenter allows 1.37.
+func TestChooseVersionByStacks(t *testing.T) {
+	standard := []string{"1.35", "1.36", "1.37"}
+	tests := []struct {
+		stacks []string
+		want   string
+	}{
+		{nil, "1.36"},
+		{[]string{"registry", "cluster", "gitops"}, "1.36"},
+		{[]string{"registry", "cluster"}, "1.37"},
+	}
+	for _, tt := range tests {
+		c, err := ChooseVersion("", "", standard, compat.ForStacks("cloud", tt.stacks))
+		if err != nil || c.Version != tt.want {
+			t.Errorf("stacks %v: %s, %v; want %s", tt.stacks, c.Version, err, tt.want)
+		}
+	}
 }

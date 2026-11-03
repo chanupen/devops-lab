@@ -17,6 +17,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/kube"
 )
 
@@ -29,7 +30,14 @@ type Options struct {
 	Kubeconfig string // where the lab cluster's kubeconfig is written
 	K8sVersion string // lab.yaml k8sVersion; picks the node image (NodeImage)
 	Purge      bool   // Destroy("registry") also removes the cache volume
+	// Stacks are the lab's active stacks (profile, extraStacks, asked for,
+	// deployed): only their rows of the compatibility table limit
+	// k8sVersion. Nil applies every local row.
+	Stacks []string
 }
+
+// comps are the compatibility rows that limit this lab's k8sVersion.
+func (p *Provider) comps() []compat.Component { return compat.ForStacks("local", p.opts.Stacks) }
 
 // Provider runs stacks in local mode. It implements engine.Runner.
 type Provider struct {
@@ -212,7 +220,7 @@ func (p *Provider) destroyRegistry(ctx context.Context, log io.Writer) error {
 // CheckK8sVersion refuses a k8sVersion pin outside the compatibility
 // table. It reads nothing from the cluster, so lab up runs it first.
 func (p *Provider) CheckK8sVersion(context.Context) error {
-	_, err := NodeImage(p.opts.K8sVersion)
+	_, err := NodeImage(p.opts.K8sVersion, p.comps())
 	return err
 }
 
@@ -229,7 +237,7 @@ func (p *Provider) CheckClusterVersion(ctx context.Context) error {
 // if it is missing, writes its kubeconfig and waits until every node is Ready.
 // An existing cluster with the expected nodes is kept.
 func (p *Provider) applyCluster(ctx context.Context, log io.Writer) error {
-	image, err := NodeImage(p.opts.K8sVersion)
+	image, err := NodeImage(p.opts.K8sVersion, p.comps())
 	if err != nil {
 		return err
 	}

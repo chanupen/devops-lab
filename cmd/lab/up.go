@@ -56,7 +56,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if _, err := eng.PlanUp(cfg, opts); err != nil {
 				return err
 			}
-			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Revision: revision, Timeout: timeout}))
+			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Revision: revision, Timeout: timeout, Stacks: stacks}))
 			if err != nil {
 				return err
 			}

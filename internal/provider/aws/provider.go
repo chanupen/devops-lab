@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/reaper"
@@ -47,6 +48,9 @@ type Options struct {
 	// pick. The local pin (k8sVersion) does not apply to EKS.
 	K8sVersion string
 	Timeout    time.Duration // per wait (nodes ready, Helm releases)
+	// Stacks are the lab's active stacks: only their rows of the
+	// compatibility table limit the EKS version. Nil applies every row.
+	Stacks []string
 }
 
 // Provider runs the registry (ECR) and cluster (VPC, EKS, Karpenter, Load
@@ -320,7 +324,7 @@ func (p *Provider) ResolveVersion(ctx context.Context, log io.Writer) (VersionCh
 	if err != nil {
 		return VersionChoice{}, err
 	}
-	c, err := ChooseVersion(p.opts.K8sVersion, current, standard, Compatibility)
+	c, err := ChooseVersion(p.opts.K8sVersion, current, standard, compat.ForStacks("cloud", p.opts.Stacks))
 	if err != nil {
 		return c, err
 	}
