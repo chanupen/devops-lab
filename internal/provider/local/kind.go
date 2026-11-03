@@ -9,6 +9,8 @@ import (
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/kind/pkg/cluster"
 	"sigs.k8s.io/kind/pkg/log"
+
+	"github.com/chanupen/devops-lab/internal/compat"
 )
 
 const (
@@ -19,9 +21,6 @@ const (
 	KindNetwork = "kind"
 	// kindIPv6Subnet is the subnet kind derives for a network named "kind".
 	kindIPv6Subnet = "fc00:f853:ccd:e793::/64"
-	// NodeImage is the kind library's default image; it must match the k8sVersion pin.
-	NodeImage = defaults.Image
-
 	workers        = 2
 	certsDirInNode = "/etc/containerd/certs.d"
 )
@@ -41,6 +40,18 @@ const AppDomain = "localtest.me"
 
 // TunnelHost is the Mac's ssh config entry that forwards 8080 and 8443 here.
 const TunnelHost = "fedora-lab"
+
+// NodeImages are the node images kind v0.33.0 (the library in go.mod)
+// pre-builds, by Kubernetes minor version, with the digests from its
+// release notes: kind says to use the digest, so the image is the one built
+// for this release. lab.yaml k8sVersion picks one; it must also be in the
+// compatibility table (internal/compat). Update this with the kind library.
+var NodeImages = map[string]string{
+	"1.34": "kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d",
+	"1.35": "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0",
+	"1.36": "kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed",
+	"1.37": defaults.Image,
+}
 
 // containerdPatch points containerd at per-registry hosts.toml files.
 const containerdPatch = `[plugins."io.containerd.grpc.v1.cri".registry]
@@ -82,6 +93,37 @@ func kindConfig(certsDir string) *v1alpha4.Cluster {
 	}
 	return c
 }
+
+// SupportedVersions are the Kubernetes versions the local lab can run: a
+// kind node image exists and every local row of the compatibility table
+// supports it. Oldest first.
+func SupportedVersions() []string {
+	vs := make([]string, 0, len(NodeImages))
+	for v := range NodeImages {
+		vs = append(vs, v)
+	}
+	return compat.Supported(vs, compat.For("local"))
+}
+
+// NodeImage is the kind node image for Kubernetes v. It refuses a version
+// outside the compatibility table, saying which component does not
+// support it and which versions work.
+func NodeImage(v string) (string, error) {
+	ok := strings.Join(SupportedVersions(), ", ")
+	img, found := NodeImages[v]
+	if !found {
+		return "", fmt.Errorf("k8sVersion %s: kind %s has no node image for it (local mode supports %s); change k8sVersion in lab.yaml",
+			v, kindVersion, ok)
+	}
+	if bad := compat.Unsupported(v, compat.For("local")); len(bad) > 0 {
+		return "", fmt.Errorf("k8sVersion %s is outside the compatibility table: %s (local mode supports %s); change k8sVersion in lab.yaml",
+			v, strings.Join(bad, ", "), ok)
+	}
+	return img, nil
+}
+
+// kindVersion is the kind library in go.mod; NodeImages are its images.
+const kindVersion = "v0.33.0"
 
 // imageMinor returns "1.37" from "kindest/node:v1.37.0@sha256:...".
 func imageMinor(image string) (string, error) {

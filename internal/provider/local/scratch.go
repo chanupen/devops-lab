@@ -24,7 +24,10 @@ import (
 // kubeconfig file.
 type Scratch struct {
 	home string
-	rt   Runtime
+	// k8sVersion is lab.yaml k8sVersion: scratch clusters run the same
+	// Kubernetes as the main lab (NodeImage).
+	k8sVersion string
+	rt         Runtime
 	// clusters adapts kind; retain keeps the nodes of a failed create.
 	clusters func(log io.Writer, kubeconfig string, retain bool) Clusters
 	ready    func(ctx context.Context, kubeconfig string, want int, log io.Writer) error
@@ -34,12 +37,13 @@ type Scratch struct {
 
 // NewScratch uses the rootless Podman socket and the kind library. home is
 // ~/.lab: the containerd mirror files are the main lab's, under home/kind.
-func NewScratch(home string) (*Scratch, error) {
+// k8sVersion is lab.yaml k8sVersion.
+func NewScratch(home, k8sVersion string) (*Scratch, error) {
 	sock, err := PodmanSocket()
 	if err != nil {
 		return nil, err
 	}
-	return &Scratch{home: home, rt: NewPodman(sock),
+	return &Scratch{home: home, k8sVersion: k8sVersion, rt: NewPodman(sock),
 		clusters: func(log io.Writer, kubeconfig string, retain bool) Clusters {
 			k := newKindClusters(newKindLogger(log))
 			k.kubeconfig = kubeconfig // never ~/.kube/config: the user's current context stays as it is
@@ -160,9 +164,13 @@ func (s *Scratch) startNode(ctx context.Context, name string, log io.Writer) err
 // goes into the log before they are deleted; the second is a plain create.
 // Rootless Podman has failed an exec into a just-started node (exit 126).
 func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
-	logf(log, "creating kind cluster %q (one node)", name)
+	image, err := NodeImage(s.k8sVersion)
+	if err != nil {
+		return err
+	}
+	logf(log, "creating kind cluster %q (one node, Kubernetes %s)", name, s.k8sVersion)
 	first := s.clusters(detail(log), kubeconfig, true)
-	err := first.Create(scratchConfig(name, s.certsDir()), NodeImage)
+	err = first.Create(scratchConfig(name, s.certsDir()), image)
 	if err == nil {
 		return nil
 	}
@@ -175,7 +183,7 @@ func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Wr
 		return fmt.Errorf("%w; removing the failed cluster: %w", err, derr)
 	}
 	logf(log, "trying once more")
-	return s.clusters(detail(log), kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
+	return s.clusters(detail(log), kubeconfig, false).Create(scratchConfig(name, s.certsDir()), image)
 }
 
 // diagnoseNode writes podman inspect, podman logs and the last two minutes

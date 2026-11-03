@@ -27,7 +27,7 @@ var ErrUnsupported = errors.New("not supported by the local provider yet")
 type Options struct {
 	Home       string // ~/.lab; config files go under it
 	Kubeconfig string // where the lab cluster's kubeconfig is written
-	K8sVersion string // the config pin; the node image must match it
+	K8sVersion string // lab.yaml k8sVersion; picks the node image (NodeImage)
 	Purge      bool   // Destroy("registry") also removes the cache volume
 }
 
@@ -209,16 +209,35 @@ func (p *Provider) destroyRegistry(ctx context.Context, log io.Writer) error {
 	return nil
 }
 
+// CheckK8sVersion refuses a k8sVersion pin outside the compatibility
+// table, and a running main cluster on another version: a kind cluster
+// cannot change version in place, so it has to be made again.
+func (p *Provider) CheckK8sVersion(ctx context.Context) error {
+	if _, err := NodeImage(p.opts.K8sVersion); err != nil {
+		return err
+	}
+	node, err := p.rt.Container(ctx, ClusterName+"-control-plane")
+	if err != nil || !node.Exists {
+		return err
+	}
+	running, err := imageMinor(node.Image)
+	if err != nil {
+		return nil // an image without a version tag: nothing to compare
+	}
+	if running != p.opts.K8sVersion {
+		return fmt.Errorf("the main cluster runs Kubernetes %s, but lab.yaml pins %s; a kind cluster cannot change version, "+
+			"so make it again: lab down, then lab up (the image cache volume is kept)", running, p.opts.K8sVersion)
+	}
+	return nil
+}
+
 // applyCluster writes the containerd mirror files, creates the kind cluster
 // if it is missing, writes its kubeconfig and waits until every node is Ready.
 // An existing cluster with the expected nodes is kept.
 func (p *Provider) applyCluster(ctx context.Context, log io.Writer) error {
-	minor, err := imageMinor(NodeImage)
+	image, err := NodeImage(p.opts.K8sVersion)
 	if err != nil {
 		return err
-	}
-	if minor != p.opts.K8sVersion {
-		return fmt.Errorf("kind node image %s is Kubernetes %s, but lab.yaml pins %s", NodeImage, minor, p.opts.K8sVersion)
 	}
 	zot, err := p.rt.Container(ctx, ZotContainer)
 	if err != nil {
@@ -247,7 +266,7 @@ func (p *Provider) applyCluster(ctx context.Context, log io.Writer) error {
 			return fmt.Errorf("kind cluster %q exists with %d nodes, want %d; run lab down first", ClusterName, n, want)
 		}
 		logf(log, "kind cluster %q exists with %d nodes", ClusterName, n)
-	} else if err := kc.Create(kindConfig(p.certsDir()), NodeImage); err != nil {
+	} else if err := kc.Create(kindConfig(p.certsDir()), image); err != nil {
 		return err
 	}
 	cfg, err := kc.KubeConfig(ClusterName)

@@ -53,7 +53,7 @@ cloud:
 		}},
 		{name: "blank extra stack", yaml: "extraStacks: [\"\"]\n", wantErr: []string{"extraStacks: empty stack name"}},
 		{name: "k8sVersion defaults when omitted", yaml: "mode: local\n", check: func(t *testing.T, c Config) {
-			if c.K8sVersion != "1.37" {
+			if c.K8sVersion != "1.36" {
 				t.Errorf("k8sVersion = %q", c.K8sVersion)
 			}
 		}},
@@ -62,7 +62,13 @@ cloud:
 				t.Errorf("k8sVersion = %q", c.K8sVersion)
 			}
 		}},
-		{name: "k8sVersion other than pin", yaml: `k8sVersion: "1.36"`, wantErr: []string{`k8sVersion "1.36"`, "pinned to 1.37"}},
+		// Any minor version parses; lab up checks it against the compatibility table.
+		{name: "k8sVersion another minor", yaml: `k8sVersion: "1.35"`, check: func(t *testing.T, c Config) {
+			if c.K8sVersion != "1.35" {
+				t.Errorf("k8sVersion = %q", c.K8sVersion)
+			}
+		}},
+		{name: "k8sVersion not a minor", yaml: `k8sVersion: "latest"`, wantErr: []string{`k8sVersion "latest"`, `want a minor version such as "1.36"`}},
 		{name: "bad mode", yaml: "mode: hybrid", wantErr: []string{`mode "hybrid"`}},
 		{name: "bad profile", yaml: "profile: huge", wantErr: []string{`profile "huge"`}},
 		{name: "bad gitops", yaml: "gitops: spinnaker", wantErr: []string{`gitops "spinnaker"`}},

@@ -75,7 +75,7 @@ Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux 
 
 A reboot leaves the lab's containers (`lab-*`: the kind nodes and `lab-zot`) in place but stopped. Every lab container's name starts with `lab-`, so lab finds them through the Podman API:
 
-- `lab up` starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
+- `lab up` checks the Kubernetes pin first (see Kubernetes version), then starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
 - `lab labs start` starts `lab-zot` and the scratch cluster's node when they are there but stopped. Without Zot it says images come straight from the registries.
 - `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
 - The TUI's Home screen shows `○ stopped` and the command for a stopped cluster or `lab-zot`, in the header too. It lists the containers in the background: at start, every five file checks, and when the cluster goes down or comes back.
@@ -266,13 +266,13 @@ profiles:
   local:
     host: asuszephyrus
     runtime: podman        # rootless, always; KIND_EXPERIMENTAL_PROVIDER=podman
-    cluster: { provider: kind, workers: 2, k8sVersion: "1.37" }
+    cluster: { provider: kind, workers: 2, k8sVersion: "1.36" }
     awsEndpoint: http://localhost.localstack.cloud:4566
     registry: zot
     memoryLimitGiB: 14     # lab doctor warns above this
   cloud:
     region: ap-south-1
-    cluster: { provider: eks, k8sVersion: "1.37", nodes: spot }
+    cluster: { provider: eks, k8sVersion: "1.36", nodes: spot }
     awsProfile: lab        # existing account; IAM user today, MFA role later
     ttl: 4h                # destroy after this, no exceptions
     budgetMonthlyUSD: 30
@@ -284,6 +284,13 @@ repo:                      # what Argo CD syncs from (gitops/bootstrap is the ap
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.
+
+### Kubernetes version
+
+Both modes check their Kubernetes version against one compatibility table, `internal/compat`: for each pinned component, the range its upstream states for the release lab installs, and the modes that install it. Argo CD 3.5 (tested on 1.33 to 1.36) is in both modes, Karpenter and the Load Balancer Controller in cloud mode, and the kind v0.33.0 node images (1.34 to 1.37) in local mode. Today that holds both labs at 1.36.
+
+- **Local:** `lab.yaml` `k8sVersion` (default 1.36) picks the kind node image, by digest from kind's release notes, for the main cluster and the scratch clusters. `lab up` refuses a pin outside the table and says which component does not support it and which versions work. It also refuses when the main cluster runs another version than the pin: a kind cluster cannot change version in place, so `lab down`, then `lab up` makes it again (the image cache volume is kept).
+- **Cloud:** lab picks the newest EKS version in standard support that the table's cloud rows all support, or `cloud.k8sVersion`; a running cluster keeps its version.
 
 ### GitOps revision
 

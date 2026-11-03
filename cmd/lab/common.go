@@ -127,12 +127,29 @@ type appAccess interface {
 // from the GitOps runner's Gateway hostnames and the mode's URL format.
 type labRunner struct {
 	engine.Router
-	hosts func(context.Context) ([]string, error) // nil without a GitOps runner
-	url   func(host string) string
-	hint  string
+	// checkVersion refuses a Kubernetes pin the mode cannot run; nil when
+	// the provider checks at apply time (cloud).
+	checkVersion func(context.Context) error
+	hosts        func(context.Context) ([]string, error) // nil without a GitOps runner
+	url          func(host string) string
+	hint         string
 	// start starts the main cluster's and the cache's stopped containers;
 	// nil in cloud mode.
 	start func(context.Context, io.Writer) ([]local.Unit, error)
+}
+
+// versionGate is implemented by providers that check the Kubernetes pin
+// before lab up does anything.
+type versionGate interface {
+	CheckK8sVersion(ctx context.Context) error
+}
+
+// CheckK8sVersion implements versionGate.
+func (l labRunner) CheckK8sVersion(ctx context.Context) error {
+	if l.checkVersion == nil {
+		return nil
+	}
+	return l.checkVersion(ctx)
 }
 
 // stoppedStarter is implemented by providers whose lab can be stopped
@@ -196,7 +213,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
-		l.url, l.hint, l.start = p.AppURL, p.AccessHint(), p.StartStopped
+		l.url, l.hint, l.start, l.checkVersion = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)
 		if err != nil {

@@ -16,7 +16,7 @@ import (
 func testScratch(t *testing.T, rt *fakeRuntime, kc *fakeClusters) (*Scratch, *[]string) {
 	t.Helper()
 	var paths []string
-	s := &Scratch{home: t.TempDir(), rt: rt,
+	s := &Scratch{home: t.TempDir(), k8sVersion: "1.36", rt: rt,
 		clusters: func(_ io.Writer, kubeconfig string, retain bool) Clusters {
 			paths = append(paths, kubeconfig)
 			kc.retains = append(kc.retains, retain)
@@ -41,6 +41,9 @@ func TestScratchCreate(t *testing.T) {
 	}
 	if len(kc.created) != 1 {
 		t.Fatalf("created %d clusters", len(kc.created))
+	}
+	if kc.images[0] != NodeImages["1.36"] {
+		t.Errorf("image = %s, want the 1.36 node image", kc.images[0])
 	}
 	c := kc.created[0]
 	if c.Name != "lab-scratch-01-x" || len(c.Nodes) != 1 || len(c.Nodes[0].ExtraPortMappings) != 0 {

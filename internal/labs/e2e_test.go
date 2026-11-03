@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -51,7 +52,11 @@ func TestE2ELab1(t *testing.T) {
 		t.Fatal(err)
 	}
 	labHome := t.TempDir()
-	scratch, err := local.NewScratch(labHome)
+	cfg, err := config.Load(filepath.Join("..", "..", "lab.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch, err := local.NewScratch(labHome, cfg.K8sVersion)
 	if err != nil {
 		t.Fatal(err)
 	}

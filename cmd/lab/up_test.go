@@ -26,6 +26,8 @@ type fakeProvider struct {
 	urls    []string
 	urlsErr error
 	stopped []string // lab containers a reboot stopped
+	// versionErr is what CheckK8sVersion says about the pin.
+	versionErr error
 }
 
 // StartStopped implements stoppedStarter: it starts f.stopped, recording each.
@@ -39,6 +41,9 @@ func (f *fakeProvider) StartStopped(_ context.Context, log io.Writer) ([]local.U
 	f.stopped = nil
 	return nil, nil
 }
+
+// CheckK8sVersion implements versionGate.
+func (f *fakeProvider) CheckK8sVersion(context.Context) error { return f.versionErr }
 
 func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.urls, f.urlsErr }
 
@@ -81,7 +86,31 @@ func TestUpDown(t *testing.T) {
 		wantStacks []string // applied stacks afterwards
 		wantOp     string   // command of the last op
 		stopped    []string // containers stopped before the run
+		versionErr error    // the provider refuses the k8sVersion pin
 	}{
+		{
+			name:       "up refuses a pin outside the compatibility table before doing anything",
+			args:       []string{"up", "--stacks", "cluster"},
+			versionErr: errors.New("k8sVersion 1.37 is outside the compatibility table: Argo CD v3.5.5 (1.33–1.36)"),
+			wantErr:    "k8sVersion 1.37 is outside the compatibility table",
+		},
+		{
+			name:       "a refused pin starts no stopped containers",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			stopped:    []string{"lab-control-plane", "lab-zot"},
+			versionErr: errors.New("k8sVersion 1.37 is outside the compatibility table"),
+			wantErr:    "outside the compatibility table",
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
+			name:       "up refuses a cluster on another version",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			versionErr: errors.New("the main cluster runs Kubernetes 1.37, but lab.yaml pins 1.36"),
+			wantErr:    "lab.yaml pins 1.36",
+			wantStacks: []string{"cluster", "registry"},
+		},
 		{
 			name:       "up starts stopped containers before anything else",
 			state:      deployedClusterRegistry,
@@ -226,7 +255,7 @@ func TestUpDown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped}
+			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped, versionErr: tt.versionErr}
 			var gotPurge, built bool
 			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
 				built, gotPurge = true, opts.Purge

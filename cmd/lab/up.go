@@ -60,6 +60,13 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A pin outside the compatibility table is refused before
+			// anything else happens, even before stopped containers start.
+			if g, ok := prov.(versionGate); ok {
+				if err := g.CheckK8sVersion(cmd.Context()); err != nil {
+					return err
+				}
+			}
 			// After a reboot the lab's containers are there but stopped:
 			// start the main cluster and the cache before anything else
 			// looks at them.

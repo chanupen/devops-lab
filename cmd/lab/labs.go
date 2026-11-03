@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -54,7 +55,12 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	home := filepath.Dir(path)
 	m := &labs.Manager{Labs: all, Store: state.NewStore(path), Mode: "local", Runner: labs.ExecRunner{}, Home: home,
 		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath}
-	s, err := local.NewScratch(home)
+	// Scratch clusters run lab.yaml's k8sVersion, like the main lab.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	s, err := local.NewScratch(home, cfg.K8sVersion)
 	switch {
 	case err == nil:
 		m.Clusters = s

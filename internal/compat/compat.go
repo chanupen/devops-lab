@@ -1,0 +1,149 @@
+// Package compat is the Kubernetes compatibility table both modes use: the
+// version range each pinned component's upstream states for the release
+// lab installs. The local lab's k8sVersion pin and the cloud lab's EKS
+// version both have to fall inside the ranges of the rows for their mode.
+package compat
+
+import (
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/chanupen/devops-lab/internal/gitops"
+)
+
+// Component is something lab pins that must support the cluster's
+// Kubernetes version. MinK8s and MaxK8s are the range its upstream states
+// for the pinned release; an empty MaxK8s means upstream states no upper
+// bound.
+type Component struct {
+	Name         string
+	ChartVersion string // the pin in code; a test keeps the two in step
+	AppVersion   string
+	MinK8s       string
+	MaxK8s       string
+	Source       string   // where the range comes from
+	Modes        []string // the lab modes that install it
+}
+
+// Table is why each lab runs the Kubernetes version it does. Update the
+// row whenever a pin moves; the tests next to each pin fail until it is.
+//
+// Checked on 2026-11-02:
+//   - Karpenter 1.15: the v1.15.0 release notes say "bump max k8s version to
+//     1.37" and the karpenter.sh matrix lists 1.37 → 1.15.x. (The matrix in
+//     the v1.15.1 tag still stops at 1.36; that file was not updated on the
+//     release branch.)
+//   - AWS Load Balancer Controller: "v2.4.0+ requires Kubernetes 1.19+", no
+//     upper bound. v3.6.2 is built against client-go v0.36.
+//   - Argo CD 3.5: tested on 1.33 to 1.36. This row holds both labs at 1.36
+//     until an Argo CD release lists 1.37.
+//
+// Checked on 2026-11-03:
+//   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
+//     1.37.0 (internal/provider/local NodeImages, digests from the release
+//     notes).
+var Table = []Component{
+	{Name: "Karpenter", ChartVersion: "1.15.1", AppVersion: "1.15.1", MinK8s: "1.26", MaxK8s: "1.37",
+		Source: "karpenter.sh/docs/upgrading/compatibility, v1.15.0 release notes", Modes: []string{"cloud"}},
+	{Name: "AWS Load Balancer Controller", ChartVersion: "3.6.2", AppVersion: "v3.6.2", MinK8s: "1.19",
+		Source: "aws-load-balancer-controller docs/deploy/installation.md", Modes: []string{"cloud"}},
+	{Name: "Argo CD", ChartVersion: gitops.ArgoChartVersion, AppVersion: "v3.5.5", MinK8s: "1.33", MaxK8s: "1.36",
+		Source: "argo-cd docs/operator-manual/tested-kubernetes-versions.md", Modes: []string{"local", "cloud"}},
+	{Name: "kind node images", ChartVersion: "v0.33.0", AppVersion: "v0.33.0", MinK8s: "1.34", MaxK8s: "1.37",
+		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}},
+}
+
+// For returns the rows for a lab mode.
+func For(mode string) []Component {
+	var out []Component
+	for _, c := range Table {
+		if slices.Contains(c.Modes, mode) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Supports reports whether the component's stated range includes v.
+func (c Component) Supports(v string) bool {
+	if c.MinK8s != "" && Less(v, c.MinK8s) {
+		return false
+	}
+	return c.MaxK8s == "" || !Less(c.MaxK8s, v)
+}
+
+// Range is "1.33–1.36", or "1.19+" without an upper bound.
+func (c Component) Range() string {
+	if c.MaxK8s == "" {
+		return c.MinK8s + "+"
+	}
+	return c.MinK8s + "–" + c.MaxK8s
+}
+
+// Unsupported names the components that do not state support for v.
+func Unsupported(v string, comps []Component) []string {
+	var out []string
+	for _, c := range comps {
+		if !c.Supports(v) {
+			out = append(out, fmt.Sprintf("%s %s (%s)", c.Name, c.AppVersion, c.Range()))
+		}
+	}
+	return out
+}
+
+// Supported is the versions in vs that every component supports, oldest
+// first.
+func Supported(vs []string, comps []Component) []string {
+	var ok []string
+	for _, v := range Sorted(vs) {
+		if len(Unsupported(v, comps)) == 0 {
+			ok = append(ok, v)
+		}
+	}
+	return ok
+}
+
+// Preferred is the newest version in vs that every component supports, or
+// "" when there is none.
+func Preferred(vs []string, comps []Component) string { return Newest(Supported(vs, comps)) }
+
+// Newest returns the highest version in vs ("1.37" > "1.9").
+func Newest(vs []string) string {
+	best := ""
+	for _, v := range vs {
+		if best == "" || Less(best, v) {
+			best = v
+		}
+	}
+	return best
+}
+
+// Sorted returns vs oldest first.
+func Sorted(vs []string) []string {
+	out := slices.Clone(vs)
+	slices.SortFunc(out, func(a, b string) int {
+		switch {
+		case Less(a, b):
+			return -1
+		case Less(b, a):
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+// Less compares dotted versions numerically: "1.9" < "1.37".
+func Less(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return len(pa) < len(pb)
+}

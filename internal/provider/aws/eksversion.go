@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/chanupen/devops-lab/internal/compat"
 )
 
 // ClusterVersion is the running cluster's Kubernetes version, or "" when
@@ -48,24 +48,6 @@ func StandardVersions(ctx context.Context, cfg aws.Config) ([]string, error) {
 }
 
 // NewestVersion returns the highest version in vs ("1.37" > "1.9").
-func NewestVersion(vs []string) string {
-	best := ""
-	for _, v := range vs {
-		if best == "" || versionLess(best, v) {
-			best = v
-		}
-	}
-	return best
-}
+func NewestVersion(vs []string) string { return compat.Newest(vs) }
 
-func versionLess(a, b string) bool {
-	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
-	for i := 0; i < len(pa) && i < len(pb); i++ {
-		x, _ := strconv.Atoi(pa[i])
-		y, _ := strconv.Atoi(pb[i])
-		if x != y {
-			return x < y
-		}
-	}
-	return len(pa) < len(pb)
-}
+func versionLess(a, b string) bool { return compat.Less(a, b) }
