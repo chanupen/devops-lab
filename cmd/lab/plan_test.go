@@ -31,7 +31,7 @@ func TestPlanCmd(t *testing.T) {
 			config: "profile: standard\n",
 			// lab plan checks what the local provider supports: the rest is
 			// skipped at plan time rather than failing lab up later.
-			want: []string{"local mode, standard profile, Kubernetes 1.37", "+ cluster", "+ core", "+ sample-app", "+ obs",
+			want: []string{"local mode, standard profile, Kubernetes 1.36", "+ cluster", "+ core", "+ sample-app", "+ obs",
 				"- secrets     skip: not supported by the local provider yet",
 				"- policy      skip: not supported by the local provider yet",
 				"6 to apply, 0 to destroy, 0 unchanged, 3 skipped",
@@ -172,7 +172,7 @@ func TestPlanCmdJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &p); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if p.K8sVersion != "1.37" || len(p.Steps) != 5 || p.Steps[0].Stack != "registry" || p.Steps[0].Action != "apply" {
+	if p.K8sVersion != "1.36" || len(p.Steps) != 5 || p.Steps[0].Stack != "registry" || p.Steps[0].Action != "apply" {
 		t.Errorf("unexpected plan: %+v", p)
 	}
 }

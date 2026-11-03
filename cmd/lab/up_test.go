@@ -23,7 +23,12 @@ type fakeProvider struct {
 	fail    map[string]bool
 	urls    []string
 	urlsErr error
+	// versionErr is what CheckK8sVersion says about the pin.
+	versionErr error
 }
+
+// CheckK8sVersion implements versionGate.
+func (f *fakeProvider) CheckK8sVersion(context.Context) error { return f.versionErr }
 
 func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.urls, f.urlsErr }
 
@@ -65,7 +70,22 @@ func TestUpDown(t *testing.T) {
 		wantErr    string
 		wantStacks []string // applied stacks afterwards
 		wantOp     string   // command of the last op
+		versionErr error    // the provider refuses the k8sVersion pin
 	}{
+		{
+			name:       "up refuses a pin outside the compatibility table before doing anything",
+			args:       []string{"up", "--stacks", "cluster"},
+			versionErr: errors.New("k8sVersion 1.37 is outside the compatibility table: Argo CD v3.5.5 (1.33–1.36)"),
+			wantErr:    "k8sVersion 1.37 is outside the compatibility table",
+		},
+		{
+			name:       "up refuses a cluster on another version",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			versionErr: errors.New("the main cluster runs Kubernetes 1.37, but lab.yaml pins 1.36"),
+			wantErr:    "lab.yaml pins 1.36",
+			wantStacks: []string{"cluster", "registry"},
+		},
 		{
 			name:      "up cluster and registry",
 			args:      []string{"up", "--stacks", "cluster,registry"},
@@ -184,7 +204,7 @@ func TestUpDown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fp := &fakeProvider{fail: tt.fail}
+			fp := &fakeProvider{fail: tt.fail, versionErr: tt.versionErr}
 			var gotPurge, built bool
 			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
 				built, gotPurge = true, opts.Purge

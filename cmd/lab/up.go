@@ -58,6 +58,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g, ok := prov.(versionGate); ok {
+				if err := g.CheckK8sVersion(cmd.Context()); err != nil {
+					return err
+				}
+			}
 			opts.Supports = prov.Supports
 			p, err := eng.PlanUp(cfg, opts)
 			if err != nil {

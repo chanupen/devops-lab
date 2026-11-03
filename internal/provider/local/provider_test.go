@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
+
+	"github.com/chanupen/devops-lab/internal/config"
 )
 
 // fakeRuntime records calls and holds container, network and volume state.
@@ -144,7 +146,7 @@ func testProvider(t *testing.T, rt *fakeRuntime, kc *fakeClusters, purge bool) *
 	t.Helper()
 	home := t.TempDir()
 	p := newProvider(rt, func(io.Writer) Clusters { return kc },
-		Options{Home: home, Kubeconfig: filepath.Join(home, "kubeconfig"), K8sVersion: "1.37", Purge: purge})
+		Options{Home: home, Kubeconfig: filepath.Join(home, "kubeconfig"), K8sVersion: "1.36", Purge: purge})
 	p.zotReady = func(context.Context, io.Writer) error { return rt.call("zotReady") }
 	p.nodesReady = func(context.Context, string, int, io.Writer) error { return rt.call("nodesReady") }
 	return p
@@ -287,16 +289,18 @@ func TestApplyCluster(t *testing.T) {
 		wantCreated bool
 		wantErr     string
 	}{
-		{name: "creates when missing", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.37", wantCreated: true},
-		{name: "existing complete cluster is kept", zot: runningZot(hash), nodes: map[string]int{ClusterName: 3}, k8s: "1.37"},
-		{name: "other kind clusters are ignored", zot: runningZot(hash), nodes: map[string]int{"kind": 1}, k8s: "1.37", wantCreated: true},
-		{name: "incomplete cluster is an error", zot: runningZot(hash), nodes: map[string]int{ClusterName: 1}, k8s: "1.37",
+		{name: "creates when missing", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.36", wantCreated: true},
+		{name: "existing complete cluster is kept", zot: runningZot(hash), nodes: map[string]int{ClusterName: 3}, k8s: "1.36"},
+		{name: "other kind clusters are ignored", zot: runningZot(hash), nodes: map[string]int{"kind": 1}, k8s: "1.36", wantCreated: true},
+		{name: "incomplete cluster is an error", zot: runningZot(hash), nodes: map[string]int{ClusterName: 1}, k8s: "1.36",
 			wantErr: "exists with 1 nodes, want 3"},
-		{name: "registry must run first", zot: ContainerInfo{}, nodes: map[string]int{}, k8s: "1.37",
+		{name: "registry must run first", zot: ContainerInfo{}, nodes: map[string]int{}, k8s: "1.36",
 			wantErr: "registry (Zot) is not running"},
-		{name: "pin mismatch", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.36",
-			wantErr: "lab.yaml pins 1.36"},
-		{name: "kind failure surfaces", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.37",
+		{name: "pin outside the table", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.37",
+			wantErr: "k8sVersion 1.37 is outside the compatibility table: Argo CD v3.5.5 (1.33–1.36)"},
+		{name: "pin without a node image", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.30",
+			wantErr: "kind v0.33.0 has no node image for it"},
+		{name: "kind failure surfaces", zot: runningZot(hash), nodes: map[string]int{}, k8s: "1.36",
 			kindErr: errors.New("node not ready"), wantErr: "node not ready"},
 	}
 	for _, tt := range tests {
@@ -317,8 +321,8 @@ func TestApplyCluster(t *testing.T) {
 			if got := len(kc.created) == 1; got != tt.wantCreated {
 				t.Fatalf("created = %v, want %v", got, tt.wantCreated)
 			}
-			if tt.wantCreated && kc.images[0] != NodeImage {
-				t.Errorf("image = %s, want %s", kc.images[0], NodeImage)
+			if tt.wantCreated && kc.images[0] != NodeImages[tt.k8s] {
+				t.Errorf("image = %s, want %s", kc.images[0], NodeImages[tt.k8s])
 			}
 			if tt.wantErr == "" {
 				if b, err := os.ReadFile(p.opts.Kubeconfig); err != nil || string(b) != "kubeconfig for lab" {
@@ -454,9 +458,66 @@ func TestImageMinor(t *testing.T) {
 			t.Errorf("imageMinor(%q) = %q, %v; want %q, %q", tt.image, got, err, tt.want, tt.wantErr)
 		}
 	}
-	// The kind library's default image must follow the config pin.
-	if m, err := imageMinor(NodeImage); err != nil || m != "1.37" {
-		t.Errorf("NodeImage %s is %q, %v; want 1.37", NodeImage, m, err)
+	// Each node image is the version it is listed under, pinned by digest.
+	for v, img := range NodeImages {
+		if m, err := imageMinor(img); err != nil || m != v || !strings.Contains(img, "@sha256:") {
+			t.Errorf("NodeImages[%s] = %s: Kubernetes %q, %v; want %s with a digest", v, img, m, err, v)
+		}
+	}
+}
+
+// local mode runs the versions that have a node image and that every local
+// row of the compatibility table supports; the default pin is the newest.
+func TestNodeImage(t *testing.T) {
+	tests := []struct {
+		v, want, wantErr string
+	}{
+		{"1.36", NodeImages["1.36"], ""},
+		{"1.34", NodeImages["1.34"], ""},
+		{"1.37", "", "outside the compatibility table: Argo CD v3.5.5 (1.33–1.36) (local mode supports 1.34, 1.35, 1.36)"},
+		{"1.33", "", "kind v0.33.0 has no node image for it (local mode supports 1.34, 1.35, 1.36)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.v, func(t *testing.T) {
+			got, err := NodeImage(tt.v)
+			if got != tt.want || (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("NodeImage(%s) = %q, %v; want %q, %q", tt.v, got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+	if vs := SupportedVersions(); vs[len(vs)-1] != config.K8sVersion {
+		t.Errorf("supported %v: the default pin %s is not the newest", vs, config.K8sVersion)
+	}
+}
+
+// lab up refuses a pin outside the table, and a main cluster that runs
+// another version than the pin.
+func TestCheckK8sVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		pin     string
+		node    *ContainerInfo
+		wantErr string
+	}{
+		{"no cluster yet", "1.36", nil, ""},
+		{"cluster on the pin", "1.36", &ContainerInfo{Exists: true, Image: NodeImages["1.36"]}, ""},
+		{"cluster on 1.37, pin 1.36", "1.36", &ContainerInfo{Exists: true, Image: "docker.io/kindest/node:v1.37.0@sha256:a1ed"},
+			"the main cluster runs Kubernetes 1.37, but lab.yaml pins 1.36; a kind cluster cannot change version, so make it again: lab down, then lab up"},
+		{"image without a tag", "1.36", &ContainerInfo{Exists: true, Image: "kindest/node@sha256:a1ed"}, ""},
+		{"pin outside the table", "1.37", nil, "outside the compatibility table"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newFakeRuntime()
+			if tt.node != nil {
+				rt.containers["lab-control-plane"] = *tt.node
+			}
+			p := newProvider(rt, nil, Options{K8sVersion: tt.pin})
+			err := p.CheckK8sVersion(context.Background())
+			if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

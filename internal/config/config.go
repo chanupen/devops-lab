@@ -15,11 +15,13 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// K8sVersion is the Kubernetes minor version the local lab is pinned to:
-// the kind node image and kubectl skew checks follow it. The cloud lab picks
-// its own (cloud.k8sVersion, else the newest EKS version in standard
+// K8sVersion is the default Kubernetes minor version of the local lab
+// (lab.yaml k8sVersion): the newest the compatibility table allows in local
+// mode, 1.36 because of Argo CD 3.5. The kind node image follows it, and
+// lab up refuses a pin outside the table (internal/compat). The cloud lab
+// picks its own (cloud.k8sVersion, else the newest EKS version in standard
 // support that the pinned components support).
-const K8sVersion = "1.37"
+const K8sVersion = "1.36"
 
 var minorVersion = regexp.MustCompile(`^1\.[0-9]{1,3}$`)
 
@@ -145,8 +147,8 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("extraStacks: empty stack name"))
 		}
 	}
-	if c.K8sVersion != K8sVersion {
-		errs = append(errs, fmt.Errorf("k8sVersion %q: the lab is pinned to %s", c.K8sVersion, K8sVersion))
+	if !minorVersion.MatchString(c.K8sVersion) {
+		errs = append(errs, fmt.Errorf("k8sVersion %q: want a minor version such as %q", c.K8sVersion, K8sVersion))
 	}
 	if v := c.Cloud.K8sVersion; v != "" && !minorVersion.MatchString(v) {
 		errs = append(errs, fmt.Errorf("cloud.k8sVersion %q: want a minor version such as \"1.36\", or leave it out", v))
