@@ -42,13 +42,17 @@ type fakeClusters struct {
 	have    map[string]bool
 	created []string
 	deleted []string
+	// createErr fails Create, after the cluster half exists; vanish makes
+	// Create report success without the cluster being there.
+	createErr error
+	vanish    bool
 }
 
 func (f *fakeClusters) Exists(name string) (bool, error) { return f.have[name], nil }
 func (f *fakeClusters) Create(_ context.Context, name, _ string, _ io.Writer) error {
 	f.created = append(f.created, name)
-	f.have[name] = true
-	return nil
+	f.have[name] = !f.vanish
+	return f.createErr
 }
 func (f *fakeClusters) Delete(_ context.Context, name, _ string, _ io.Writer) error {
 	f.deleted = append(f.deleted, name)
@@ -321,5 +325,77 @@ func TestStartRefusesAForeignCluster(t *testing.T) {
 	m.ScratchName = func(l Lab) string { return "lab-scratch-e2e-" + l.Number() + "-42" }
 	if l, _ := m.Find("1"); m.Scratch(l) != "lab-scratch-e2e-01-42" {
 		t.Errorf("scratch name = %s", m.Scratch(l))
+	}
+}
+
+// A start that fails records nothing: no active lab, no progress, and no
+// cluster of its own left behind for the next start to refuse.
+func TestFailedStartLeavesNothing(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		setup   func(*Manager, *fakeClusters)
+		created int // Create calls
+		deleted int // the half-made cluster removed
+		want    string
+	}{
+		{"a tool is missing", func(m *Manager, _ *fakeClusters) {
+			m.Labs[0].Tools = []string{"argocd"}
+			m.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+		}, 0, 0, "needs argocd on PATH"},
+		{"the create fails half-way", func(_ *Manager, c *fakeClusters) {
+			c.createErr = errors.New("nodes ready: 0/1 after 3m0s")
+		}, 1, 1, "nodes ready: 0/1"},
+		{"the create says ok but the cluster is not there", func(_ *Manager, c *fakeClusters) {
+			c.vanish = true
+		}, 1, 1, "is not there after create"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _, c, _ := testManager(t)
+			tt.setup(m, c)
+			_, err := m.Start(ctx, "1", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+			st, err := m.Store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.ActiveLab != "" || len(st.Labs) != 0 {
+				t.Errorf("a failed start left state behind: active %q, labs %+v", st.ActiveLab, st.Labs)
+			}
+			if len(c.created) != tt.created || len(c.deleted) != tt.deleted {
+				t.Errorf("created %v, deleted %v", c.created, c.deleted)
+			}
+		})
+	}
+}
+
+// Stop succeeds when the scratch cluster is already gone: it says so,
+// clears the lab's state and keeps its progress.
+func TestStopWhenTheClusterIsGone(t *testing.T) {
+	ctx := context.Background()
+	m, r, c, clk := testManager(t)
+	if _, err := m.Start(ctx, "1", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	r.pass["01-verify.sh"] = true
+	if _, _, err := m.Verify(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	delete(c.have, "lab-scratch-01-scratch") // deleted by hand, or by someone else
+	clk.t = clk.t.Add(7 * time.Minute)
+	var log strings.Builder
+	l, err := m.Stop(ctx, &log)
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if !strings.Contains(log.String(), "scratch cluster lab-scratch-01-scratch was not found; clearing the lab's state") || len(c.deleted) != 0 {
+		t.Errorf("log %q, deleted %v", log.String(), c.deleted)
+	}
+	st, _ := m.Store.Load()
+	if p := st.Labs[l.ID]; st.ActiveLab != "" || p.Step != 2 || p.Spent != 7*time.Minute || !p.Session.IsZero() {
+		t.Errorf("after stop: active %q, %+v", st.ActiveLab, p)
 	}
 }

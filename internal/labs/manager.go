@@ -165,9 +165,19 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 				name, m.Store.Path(), name)
 		}
 		if err := m.Clusters.Create(ctx, name, m.Kubeconfig(l), log); err != nil {
-			return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s: %w", name, err), log)
+		}
+		// The lab is started only once its cluster is there.
+		ok, err := m.Clusters.Exists(name)
+		if err != nil {
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s: checking it after create: %w", name, err), log)
+		}
+		if !ok {
+			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s is not there after create", name), log)
 		}
 	}
+	// Only now, with the cluster up and every check passed, is the lab
+	// recorded as started: a start that fails leaves no progress behind.
 	now := m.now()
 	return l, m.Store.Update(func(s *state.State) error {
 		if s.Labs == nil {
@@ -183,6 +193,19 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		s.Labs[l.ID], s.ActiveLab = p, l.ID
 		return nil
 	})
+}
+
+// undoCreate deletes a cluster this start created before it failed, so a
+// failed start leaves neither progress nor a cluster that the next start
+// would refuse as foreign. A cluster that was there before is left alone.
+func (m *Manager) undoCreate(ctx context.Context, name string, l Lab, existed bool, err error, log io.Writer) error {
+	if existed {
+		return err
+	}
+	if derr := m.Clusters.Delete(ctx, name, m.Kubeconfig(l), log); derr != nil {
+		return fmt.Errorf("%w; removing the half-made cluster also failed: %w", err, derr)
+	}
+	return err
 }
 
 func (m *Manager) missingTools(l Lab) []string {
@@ -226,8 +249,22 @@ func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, error) {
 		return l, err
 	}
 	if l.Needs == NeedsScratch && m.Clusters != nil {
-		if err := m.Clusters.Delete(ctx, m.Scratch(l), m.Kubeconfig(l), log); err != nil {
-			return l, fmt.Errorf("scratch cluster %s: %w", m.Scratch(l), err)
+		name := m.Scratch(l)
+		exists, err := m.Clusters.Exists(name)
+		switch {
+		case err != nil:
+			return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+		case !exists:
+			// Already gone (deleted by hand, or never there): the lab's
+			// state still has to be cleared.
+			_, _ = fmt.Fprintf(log, "scratch cluster %s was not found; clearing the lab's state\n", name)
+			if err := os.Remove(m.Kubeconfig(l)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return l, err
+			}
+		default:
+			if err := m.Clusters.Delete(ctx, name, m.Kubeconfig(l), log); err != nil {
+				return l, fmt.Errorf("scratch cluster %s: %w", name, err)
+			}
 		}
 	}
 	now := m.now()
