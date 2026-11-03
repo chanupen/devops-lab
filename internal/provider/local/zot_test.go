@@ -2,6 +2,8 @@ package local
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,5 +104,28 @@ func TestConfigHash(t *testing.T) {
 		if same != tt.wantSameHash {
 			t.Errorf("%s: same = %v, want %v", tt.name, same, tt.wantSameHash)
 		}
+	}
+}
+
+// The mirror files cover every upstream and the lab registry, which the
+// nodes reach over plain HTTP by name.
+func TestWriteMirrorFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := EnsureLabRegistry(home); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ dir, want string }{
+		{"docker.io", "http://lab-zot:5000/v2/docker.io"},
+		{"ghcr.io", "http://lab-zot:5000/v2/ghcr.io"},
+		{"lab-zot:5000", "server = \"http://lab-zot:5000\""},
+	}
+	for _, tt := range tests {
+		b, err := os.ReadFile(filepath.Join(home, "kind", "certs.d", tt.dir, "hosts.toml"))
+		if err != nil || !strings.Contains(string(b), tt.want) {
+			t.Errorf("%s/hosts.toml = %q, %v; want %q", tt.dir, b, err, tt.want)
+		}
+	}
+	if LabRegistryPush != "127.0.0.1:5000/lab" || LabRegistryPull != "lab-zot:5000/lab" {
+		t.Errorf("lab registry = %s, %s", LabRegistryPush, LabRegistryPull)
 	}
 }

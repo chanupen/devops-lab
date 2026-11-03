@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 )
 
 // Zot runs as a rootless Podman container on the kind network, so nodes reach
@@ -86,4 +87,48 @@ func configHash(image string, config []byte) string {
 	h.Write([]byte{0})
 	h.Write(config)
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// The lab registry: a writable namespace in Zot for images the labs build,
+// apart from the pull-through cache, whose repositories are all under an
+// upstream's name (docker.io/..., ghcr.io/...). Nothing syncs into lab/.
+const (
+	// LabRegistryPush is where the host pushes: Zot's port on 127.0.0.1.
+	LabRegistryPush = "127.0.0.1:5000/lab"
+	// LabRegistryPull is the same namespace as the cluster pulls it, by
+	// name on the kind network, over plain HTTP (labRegistryHosts).
+	LabRegistryPull = ZotContainer + ":5000/lab"
+	labRegistryHost = ZotContainer + ":5000"
+)
+
+// labRegistryHosts is containerd's hosts.toml for lab-zot:5000: Zot speaks
+// plain HTTP, and containerd would try HTTPS for a registry it has no
+// config for.
+func labRegistryHosts() string {
+	return fmt.Sprintf(`server = "http://%s"
+
+[host."http://%s"]
+  capabilities = ["pull", "resolve"]
+`, labRegistryHost, labRegistryHost)
+}
+
+// writeMirrorFiles writes containerd's per-registry config under certsDir:
+// a mirror through Zot for each upstream, and the lab registry. The nodes
+// mount certsDir read-only and read it on every pull, so a change applies
+// to running clusters too.
+func writeMirrorFiles(certsDir string) error {
+	for _, u := range upstreams() {
+		if err := writeFile(filepath.Join(certsDir, u.Name, "hosts.toml"), []byte(hostsTOML(u))); err != nil {
+			return err
+		}
+	}
+	return writeFile(filepath.Join(certsDir, labRegistryHost, "hosts.toml"), []byte(labRegistryHosts()))
+}
+
+// EnsureLabRegistry writes the mirror files under home (~/.lab), so the
+// running clusters can pull from the lab registry. lab labs start calls it
+// for labs on the main cluster, which lab up may have made before the lab
+// registry existed.
+func EnsureLabRegistry(home string) error {
+	return writeMirrorFiles(filepath.Join(home, "kind", "certs.d"))
 }

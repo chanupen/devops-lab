@@ -240,10 +240,8 @@ func (p *Provider) applyCluster(ctx context.Context, log io.Writer) error {
 	if !zot.Running {
 		return errors.New("registry (Zot) is not running; run lab up --stacks registry first")
 	}
-	for _, u := range upstreams() {
-		if err := writeFile(filepath.Join(p.certsDir(), u.Name, "hosts.toml"), []byte(hostsTOML(u))); err != nil {
-			return err
-		}
+	if err := writeMirrorFiles(p.certsDir()); err != nil {
+		return err
 	}
 	kc := p.clusters(log)
 	names, err := kc.List()
