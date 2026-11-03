@@ -18,7 +18,7 @@ trivy()  { podman run --rm --network host -v lab02-trivy-cache:/root/.cache ghcr
 skopeo() { podman run --rm --network host quay.io/skopeo/stable:v1.22.3@sha256:62da3f53e4b72219741bfa6681e092d30391a880b6346d20bf064778f7caa3c5 "$@"; }
 ```
 
-Paste both lines into your shell first. `--network host` lets the containers reach the registry on 127.0.0.1. The volume keeps Trivy's vulnerability database between runs; the first scan downloads it, which takes about half a minute.
+Paste both lines into your shell first. `--network host` lets the containers reach the registry on 127.0.0.1. The volume `lab02-trivy-cache` keeps Trivy's vulnerability database between runs: the first scan downloads it, which takes about half a minute, and it uses about 1.6 GB of disk. `podman volume rm lab02-trivy-cache` frees it when you are done.
 
 Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
 
