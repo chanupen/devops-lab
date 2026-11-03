@@ -25,6 +25,32 @@ type Component struct {
 	MaxK8s       string
 	Source       string   // where the range comes from
 	Modes        []string // the lab modes that install it
+	// Stack is the lab stack that installs it; "" for every lab of the mode.
+	Stack string
+	// StatedMaxK8s is set when MaxK8s comes from upstream's tests, not a
+	// stated support range: the highest version upstream states. Versions
+	// above it and up to MaxK8s are "tested, not stated" (TestedNotStated).
+	StatedMaxK8s string
+}
+
+// TestedNotStated reports whether v is inside the range only because
+// upstream's tests cover it: above StatedMaxK8s, up to MaxK8s. lab allows
+// it; lab doctor warns.
+func (c Component) TestedNotStated(v string) bool {
+	return c.StatedMaxK8s != "" && Less(c.StatedMaxK8s, v) && c.Supports(v)
+}
+
+// TestedNotStated lists the components, among those deployed, that support
+// v only by upstream's tests. deployed reports whether a stack is up; rows
+// with no stack always count.
+func TestedNotStated(v string, comps []Component, deployed func(stack string) bool) []Component {
+	var out []Component
+	for _, c := range comps {
+		if (c.Stack == "" || deployed(c.Stack)) && c.TestedNotStated(v) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Table is why each lab runs the Kubernetes version it does. Update the
@@ -44,22 +70,25 @@ type Component struct {
 //   - Kyverno 1.19 (chart 3.9.2): kyverno.io/docs/installation/releases lists
 //     "Kubernetes Versions Supported: v1.33 - v1.35", but the release-1.19
 //     conformance workflow (.github/workflows/tests-conformance.yaml) tests
-//     v1.33.7, v1.34.3, v1.35.1 and v1.36.1. The row uses the tested range.
+//     v1.33.7, v1.34.3, v1.35.1 and v1.36.1. The row uses the tested range
+//     and marks 1.36 as tested, not stated (StatedMaxK8s 1.35); lab doctor
+//     warns while the policy stack runs on it. The only newer release is
+//     v1.20.0-rc.1 (chart 3.10.0-rc.1), a release candidate.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
 //     1.37.0 (internal/provider/local NodeImages, digests from the release
 //     notes).
 var Table = []Component{
 	{Name: "Karpenter", ChartVersion: "1.15.1", AppVersion: "1.15.1", MinK8s: "1.26", MaxK8s: "1.37",
-		Source: "karpenter.sh/docs/upgrading/compatibility, v1.15.0 release notes", Modes: []string{"cloud"}},
+		Source: "karpenter.sh/docs/upgrading/compatibility, v1.15.0 release notes", Modes: []string{"cloud"}, Stack: "cluster"},
 	{Name: "AWS Load Balancer Controller", ChartVersion: "3.6.2", AppVersion: "v3.6.2", MinK8s: "1.19",
-		Source: "aws-load-balancer-controller docs/deploy/installation.md", Modes: []string{"cloud"}},
+		Source: "aws-load-balancer-controller docs/deploy/installation.md", Modes: []string{"cloud"}, Stack: "cluster"},
 	{Name: "Argo CD", ChartVersion: gitops.ArgoChartVersion, AppVersion: "v3.5.5", MinK8s: "1.33", MaxK8s: "1.36",
-		Source: "argo-cd docs/operator-manual/tested-kubernetes-versions.md", Modes: []string{"local", "cloud"}},
+		Source: "argo-cd docs/operator-manual/tested-kubernetes-versions.md", Modes: []string{"local", "cloud"}, Stack: "gitops"},
 	{Name: "Kyverno", ChartVersion: "3.9.2", AppVersion: "v1.19.2", MinK8s: "1.33", MaxK8s: "1.36",
 		Source: "kyverno release-1.19 tests-conformance.yaml (tested v1.33–v1.36); kyverno.io releases page lists v1.33–v1.35",
-		Modes:  []string{"local", "cloud"}},
+		Modes:  []string{"local", "cloud"}, Stack: "policy", StatedMaxK8s: "1.35"},
 	{Name: "kind node images", ChartVersion: "v0.33.0", AppVersion: "v0.33.0", MinK8s: "1.34", MaxK8s: "1.37",
-		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}},
+		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}, Stack: "cluster"},
 }
 
 // For returns the rows for a lab mode.

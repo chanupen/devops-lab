@@ -117,7 +117,9 @@ type Options struct {
 	Profile string
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
-	Timeout    time.Duration // per check
+	// Stacks are the stacks deployed, from the state file.
+	Stacks  []string
+	Timeout time.Duration // per check
 }
 
 // Check is one named host check.
@@ -151,6 +153,7 @@ func Checks() []Check {
 		{"scratch clusters", checkScratchClusters},
 		{"image cache", unitCheck("image cache", "lab-zot")},
 		{"lab registry", checkLabRegistry},
+		{"k8s support", checkK8sSupport},
 	}
 }
 

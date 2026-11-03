@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -52,6 +53,7 @@ func newDoctorCmd() *cobra.Command {
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
 				}
+				opts.Stacks = deployedStacks()
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
@@ -125,4 +127,25 @@ func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
 		return doctor.RegistryState{Pending: err.Error()}
 	}
 	return doctor.RegistryState{Err: err}
+}
+
+// deployedStacks are the stacks the local state file records as applied;
+// none when it cannot be read.
+func deployedStacks() []string {
+	path, err := state.DefaultPath()
+	if err != nil {
+		return nil
+	}
+	st, err := state.NewStore(path).Load()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for name := range st.Stacks {
+		if st.IsApplied(name) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

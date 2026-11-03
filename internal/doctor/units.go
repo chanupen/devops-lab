@@ -3,7 +3,10 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/chanupen/devops-lab/internal/compat"
 )
 
 // scratchPrefix names the scratch labs' clusters (labs.ScratchPrefix).
@@ -122,4 +125,24 @@ func checkLabRegistry(ctx context.Context, sys System, _ Options) Result {
 		return warn("lab labs start (or lab up) writes it", "%s", st.Pending)
 	}
 	return ok("push 127.0.0.1:5000/lab from the host, pull lab-zot:5000/lab in the cluster")
+}
+
+// checkK8sSupport warns when a deployed component supports the pinned
+// Kubernetes version only by upstream's tests, not a stated range: it
+// works, and lab allows it, but no release promises it.
+func checkK8sSupport(_ context.Context, _ System, opts Options) Result {
+	if opts.K8sVersion == "" {
+		return Result{Status: Skip, Detail: "no k8sVersion"}
+	}
+	deployed := func(s string) bool { return slices.Contains(opts.Stacks, s) }
+	var notes []string
+	for _, c := range compat.TestedNotStated(opts.K8sVersion, compat.For("local"), deployed) {
+		notes = append(notes, fmt.Sprintf("%s %s is tested on %s by its CI, but states support only up to %s",
+			c.Name, c.AppVersion, opts.K8sVersion, c.StatedMaxK8s))
+	}
+	if len(notes) > 0 {
+		return warn("allowed: lab's table uses the tested range; move to a release that states "+opts.K8sVersion+" when there is one",
+			"%s", strings.Join(notes, "; "))
+	}
+	return ok("every deployed component states support for Kubernetes %s", opts.K8sVersion)
 }
