@@ -81,18 +81,13 @@ func (s *Scratch) Uptime(name string) (labs.Uptime, error) {
 	return labs.Uptime{Exists: c.Exists, Running: c.Running, Started: c.StartedAt, Stopped: c.FinishedAt}, nil
 }
 
-// Create implements labs.Clusters. Without a running Zot, containerd's
-// mirror files fall back to the upstream registries, so the cluster still
-// works, only slower; it says so.
+// Create implements labs.Clusters. It starts the image cache and an
+// existing cluster's node when they are stopped (after a reboot).
 func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
 	if name == ClusterName {
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
-	if zot, err := s.rt.Container(ctx, ZotContainer); err != nil || !zot.Running {
-		logf(log, "image cache %s is not running: images come straight from the registries (lab up --stacks registry starts it)", ZotContainer)
-	} else {
-		logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
-	}
+	s.startZot(ctx, log)
 	for _, u := range upstreams() {
 		if err := writeFile(filepath.Join(s.certsDir(), u.Name, "hosts.toml"), []byte(hostsTOML(u))); err != nil {
 			return err
@@ -105,6 +100,9 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 	}
 	if slices.Contains(names, name) {
 		logf(log, "kind cluster %q exists", name)
+		if err := s.startNode(ctx, name, log); err != nil {
+			return err
+		}
 	} else if err := s.create(ctx, name, kubeconfig, log); err != nil {
 		return err
 	}
@@ -118,6 +116,43 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 	}
 	logf(log, "wrote kubeconfig %s", kubeconfig)
 	return s.ready(ctx, kubeconfig, 1, log)
+}
+
+// startZot starts the image cache when it is there but stopped (after a
+// reboot). Without it, containerd's mirror files fall back to the upstream
+// registries: the cluster still works, only slower, and it says so.
+func (s *Scratch) startZot(ctx context.Context, log io.Writer) {
+	zot, err := s.rt.Container(ctx, ZotContainer)
+	switch {
+	case err == nil && zot.Running:
+		logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
+		return
+	case err == nil && zot.Exists:
+		logf(log, "image cache %s was stopped; starting it", ZotContainer)
+		if err = s.rt.StartContainer(ctx, ZotContainer); err == nil {
+			logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
+			return
+		}
+		logf(log, "image cache %s did not start (%v): images come straight from the registries", ZotContainer, err)
+	case err == nil:
+		logf(log, "image cache %s is not there: images come straight from the registries (lab up --stacks registry makes it)", ZotContainer)
+	default:
+		logf(log, "image cache %s: %v; images come straight from the registries", ZotContainer, err)
+	}
+}
+
+// startNode starts the cluster's node when it is there but stopped.
+func (s *Scratch) startNode(ctx context.Context, name string, log io.Writer) error {
+	node := name + "-control-plane"
+	c, err := s.rt.Container(ctx, node)
+	if err != nil || !c.Exists || c.Running {
+		return err
+	}
+	logf(log, "its node %s was stopped; starting it", node)
+	if err := s.rt.StartContainer(ctx, node); err != nil {
+		return fmt.Errorf("start %s: %w", node, err)
+	}
+	return nil
 }
 
 // create makes the cluster, trying twice. The first try keeps the nodes

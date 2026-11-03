@@ -535,3 +535,5 @@ func TestAppAccess(t *testing.T) {
 		t.Errorf("TunnelHint() = %q, want %q", got, want)
 	}
 }
+
+func (f *fakeRuntime) callList() string { return strings.Join(f.calls, " ") }
