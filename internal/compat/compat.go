@@ -41,6 +41,10 @@ type Component struct {
 //     until an Argo CD release lists 1.37.
 //
 // Checked on 2026-11-03:
+//   - Kyverno 1.19 (chart 3.9.2): kyverno.io/docs/installation/releases lists
+//     "Kubernetes Versions Supported: v1.33 - v1.35", but the release-1.19
+//     conformance workflow (.github/workflows/tests-conformance.yaml) tests
+//     v1.33.7, v1.34.3, v1.35.1 and v1.36.1. The row uses the tested range.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
 //     1.37.0 (internal/provider/local NodeImages, digests from the release
 //     notes).
@@ -51,6 +55,9 @@ var Table = []Component{
 		Source: "aws-load-balancer-controller docs/deploy/installation.md", Modes: []string{"cloud"}},
 	{Name: "Argo CD", ChartVersion: gitops.ArgoChartVersion, AppVersion: "v3.5.5", MinK8s: "1.33", MaxK8s: "1.36",
 		Source: "argo-cd docs/operator-manual/tested-kubernetes-versions.md", Modes: []string{"local", "cloud"}},
+	{Name: "Kyverno", ChartVersion: "3.9.2", AppVersion: "v1.19.2", MinK8s: "1.33", MaxK8s: "1.36",
+		Source: "kyverno release-1.19 tests-conformance.yaml (tested v1.33–v1.36); kyverno.io releases page lists v1.33–v1.35",
+		Modes:  []string{"local", "cloud"}},
 	{Name: "kind node images", ChartVersion: "v0.33.0", AppVersion: "v0.33.0", MinK8s: "1.34", MaxK8s: "1.37",
 		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}},
 }

@@ -17,8 +17,8 @@ func TestFor(t *testing.T) {
 		mode string
 		want []string
 	}{
-		{"local", []string{"Argo CD", "kind node images"}},
-		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD"}},
+		{"local", []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD", "Kyverno"}},
 		{"other", nil},
 	}
 	for _, tt := range tests {

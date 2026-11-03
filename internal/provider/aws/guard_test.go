@@ -68,6 +68,7 @@ func TestCompatibilityMatchesPins(t *testing.T) {
 		"Karpenter":                    KarpenterChart.Version,
 		"AWS Load Balancer Controller": LBCChart.Version,
 		"Argo CD":                      gitops.ArgoChartVersion,
+		"Kyverno":                      bootstrapPin(t, "policy.yaml", "kyverno"),
 	}
 	if len(Compatibility) != len(pins) {
 		t.Fatalf("Compatibility has %d rows, want one per pinned component (%d)", len(Compatibility), len(pins))
@@ -320,4 +321,19 @@ func TestTeardownRoleIsScoped(t *testing.T) {
 			t.Errorf("%s is granted outside the region- and tag-scoped statement", action)
 		}
 	}
+}
+
+// bootstrapPin is the chart version the bootstrap template pins for an app,
+// from its (dict "name" "<app>" ... "version" "<v>") entry.
+func bootstrapPin(t *testing.T, template, app string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "gitops", "bootstrap", "templates", template))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`dict "name" "` + regexp.QuoteMeta(app) + `" .*"version" "([^"]+)"`).FindSubmatch(b)
+	if m == nil {
+		t.Fatalf("no version for %s in %s", app, template)
+	}
+	return string(m[1])
 }
