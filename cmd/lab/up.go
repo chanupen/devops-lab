@@ -69,10 +69,14 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			}
 			// After a reboot the lab's containers are there but stopped:
 			// start the main cluster and the cache before anything else
-			// looks at them.
-			if s, ok := prov.(stoppedStarter); ok {
-				if _, err := s.StartStopped(cmd.Context(), cmd.OutOrStdout()); err != nil {
-					return fmt.Errorf("starting the lab's stopped containers: %w", err)
+			// looks at them. Then the running cluster's version can be
+			// read from its node, and must be the pin.
+			if err := startStopped(cmd, prov); err != nil {
+				return err
+			}
+			if g, ok := prov.(clusterVersionGate); ok {
+				if err := g.CheckClusterVersion(cmd.Context()); err != nil {
+					return err
 				}
 			}
 			opts.Supports = prov.Supports

@@ -265,6 +265,78 @@ func (p *Podman) StartContainer(ctx context.Context, name string) error {
 	return resp.Body.Close()
 }
 
+// Exec implements Runtime with libpod's exec API: create the session, start
+// it attached (the response is the multiplexed stdout/stderr stream), then
+// read its exit code.
+func (p *Podman) Exec(ctx context.Context, name string, cmd []string) (string, error) {
+	resp, err := p.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(name)+"/exec",
+		map[string]any{"AttachStdout": true, "AttachStderr": true, "Cmd": cmd}, http.StatusCreated, http.StatusOK)
+	if err != nil {
+		return "", err
+	}
+	var created struct {
+		ID string `json:"Id"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&created)
+	_ = resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("exec in %s: %w", name, err)
+	}
+	if created.ID == "" {
+		return "", fmt.Errorf("exec in %s: no session id", name)
+	}
+	resp, err = p.do(ctx, http.MethodPost, "/exec/"+url.PathEscape(created.ID)+"/start",
+		map[string]any{"Detach": false, "Tty": false}, http.StatusOK)
+	if err != nil {
+		return "", err
+	}
+	stdout, stderr, err := demux(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("exec in %s: %w", name, err)
+	}
+	resp, err = p.do(ctx, http.MethodGet, "/exec/"+url.PathEscape(created.ID)+"/json", nil, http.StatusOK)
+	if err != nil {
+		return "", err
+	}
+	var inspect struct {
+		ExitCode int  `json:"ExitCode"`
+		Running  bool `json:"Running"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&inspect)
+	_ = resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("exec in %s: %w", name, err)
+	}
+	if inspect.ExitCode != 0 {
+		return stdout, fmt.Errorf("%s in %s exited %d: %s", strings.Join(cmd, " "), name, inspect.ExitCode, strings.TrimSpace(stderr))
+	}
+	return stdout, nil
+}
+
+// demux splits Docker's multiplexed stream: frames of an 8-byte header
+// (stream 1 stdout, 2 stderr; big-endian length in bytes 4 to 7) and the
+// payload.
+func demux(r io.Reader) (stdout, stderr string, err error) {
+	var out, errb strings.Builder
+	hdr := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(r, hdr); errors.Is(err, io.EOF) {
+			return out.String(), errb.String(), nil
+		} else if err != nil {
+			return out.String(), errb.String(), fmt.Errorf("read stream: %w", err)
+		}
+		n := int64(hdr[4])<<24 | int64(hdr[5])<<16 | int64(hdr[6])<<8 | int64(hdr[7])
+		w := &out
+		if hdr[0] == 2 {
+			w = &errb
+		}
+		if _, err := io.CopyN(w, r, n); err != nil {
+			return out.String(), errb.String(), fmt.Errorf("read stream: %w", err)
+		}
+	}
+}
+
 // RemoveContainer implements Runtime.
 func (p *Podman) RemoveContainer(ctx context.Context, name string) error {
 	resp, err := p.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(name)+"?force=true", nil,

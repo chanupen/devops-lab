@@ -28,6 +28,9 @@ type fakeRuntime struct {
 	volumes    map[string]bool
 	created    []ContainerSpec
 	failOn     string // a call name such as "PullImage" that fails
+	// exec answers Exec by "container cmd args..."; execErr fails it.
+	exec    map[string]string
+	execErr map[string]error
 }
 
 func newFakeRuntime() *fakeRuntime {
@@ -70,6 +73,21 @@ func (f *fakeRuntime) Containers(_ context.Context, prefix string) ([]ContainerI
 	}
 	slices.SortFunc(out, func(a, b ContainerInfo) int { return strings.Compare(a.Name, b.Name) })
 	return out, f.call("Containers")
+}
+
+func (f *fakeRuntime) Exec(_ context.Context, name string, cmd []string) (string, error) {
+	if err := f.call("Exec"); err != nil {
+		return "", err
+	}
+	c := f.containers[name]
+	if !c.Exists || !c.Running {
+		return "", errors.New("container " + name + " is not running")
+	}
+	key := name + " " + strings.Join(cmd, " ")
+	if err, ok := f.execErr[key]; ok {
+		return "", err
+	}
+	return f.exec[key], nil
 }
 
 func (f *fakeRuntime) CreateContainer(_ context.Context, c ContainerSpec) error {
@@ -502,34 +520,68 @@ func TestNodeImage(t *testing.T) {
 	}
 }
 
-// lab up refuses a pin outside the table, and a main cluster that runs
-// another version than the pin.
+// lab up refuses a pin outside the table before it reads anything.
 func TestCheckK8sVersion(t *testing.T) {
+	for _, tt := range []struct{ pin, wantErr string }{{"1.36", ""}, {"1.37", "outside the compatibility table"}} {
+		err := newProvider(newFakeRuntime(), nil, Options{K8sVersion: tt.pin}).CheckK8sVersion(context.Background())
+		if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+			t.Errorf("pin %s: err = %v, want %q", tt.pin, err, tt.wantErr)
+		}
+	}
+}
+
+// The main cluster's version comes from the node (/kind/version), never
+// from its image name, and lab up never passes a cluster it cannot read.
+func TestCheckClusterVersion(t *testing.T) {
+	const node = "lab-control-plane"
+	digestOnly := "docker.io/kindest/node@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
+	cat := node + " cat /kind/version"
 	tests := []struct {
 		name    string
-		pin     string
 		node    *ContainerInfo
+		out     string
+		execErr error
+		listErr bool
 		wantErr string
 	}{
-		{"no cluster yet", "1.36", nil, ""},
-		{"cluster on the pin", "1.36", &ContainerInfo{Exists: true, Image: NodeImages["1.36"]}, ""},
-		{"cluster on 1.37, pin 1.36", "1.36", &ContainerInfo{Exists: true, Image: "docker.io/kindest/node:v1.37.0@sha256:a1ed"},
-			"the main cluster runs Kubernetes 1.37, but lab.yaml pins 1.36; a kind cluster cannot change version, so make it again: lab down, then lab up"},
-		{"image without a tag", "1.36", &ContainerInfo{Exists: true, Image: "kindest/node@sha256:a1ed"}, ""},
-		{"pin outside the table", "1.37", nil, "outside the compatibility table"},
+		{"no cluster yet: made at the pin", nil, "", nil, false, ""},
+		{"matching version", &ContainerInfo{Exists: true, Running: true, Image: digestOnly}, "v1.36.4\n", nil, false, ""},
+		{"digest-only image name, node on 1.37.0", &ContainerInfo{Exists: true, Running: true, Image: digestOnly}, "v1.37.0\n", nil, false,
+			"kind cluster lab runs Kubernetes v1.37.0, but lab.yaml pins 1.36; a kind cluster cannot change version, so make it again: lab down, then lab up"},
+		{"tagged image name says 1.36, node says 1.37", &ContainerInfo{Exists: true, Running: true, Image: NodeImages["1.36"]}, "v1.37.0", nil, false,
+			"runs Kubernetes v1.37.0, but lab.yaml pins 1.36"},
+		{"version file unreadable", &ContainerInfo{Exists: true, Running: true, Image: digestOnly}, "", errors.New("cat: /kind/version: No such file"), false,
+			"cannot read the Kubernetes version of kind cluster lab (read /kind/version in lab-control-plane: cat: /kind/version: No such file); lab does not run against a cluster of unknown version: lab down, then lab up"},
+		{"version file holds something else", &ContainerInfo{Exists: true, Running: true}, "garbage", nil, false, `says "garbage"`},
+		{"node stopped", &ContainerInfo{Exists: true}, "", nil, false, "is stopped, so its Kubernetes version cannot be read; start it (podman start lab-control-plane)"},
+		{"podman unreachable", nil, "", nil, true, "Container failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rt := newFakeRuntime()
 			if tt.node != nil {
-				rt.containers["lab-control-plane"] = *tt.node
+				rt.containers[node] = *tt.node
 			}
-			p := newProvider(rt, nil, Options{K8sVersion: tt.pin})
-			err := p.CheckK8sVersion(context.Background())
+			rt.exec = map[string]string{cat: tt.out}
+			if tt.execErr != nil {
+				rt.execErr = map[string]error{cat: tt.execErr}
+			}
+			if tt.listErr {
+				rt.failOn = "Container"
+			}
+			err := newProvider(rt, nil, Options{K8sVersion: "1.36"}).CheckClusterVersion(context.Background())
 			if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
-				t.Errorf("err = %v, want %q", err, tt.wantErr)
+				t.Errorf("err = %v\nwant %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestVersionMinor(t *testing.T) {
+	for in, want := range map[string]string{"v1.37.0": "1.37", "v1.36.4": "1.36", "1.35.8": "1.35", "v1": "v1"} {
+		if got := VersionMinor(in); got != want {
+			t.Errorf("VersionMinor(%s) = %s, want %s", in, got, want)
+		}
 	}
 }
 

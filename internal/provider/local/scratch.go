@@ -107,6 +107,10 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 		if err := s.startNode(ctx, name, log); err != nil {
 			return err
 		}
+		if err := checkClusterVersion(ctx, s.rt, name, s.k8sVersion,
+			"lab labs stop, then lab labs start (stop deletes the cluster and resets the lab's steps)"); err != nil {
+			return err
+		}
 	} else if err := s.create(ctx, name, kubeconfig, log); err != nil {
 		return err
 	}

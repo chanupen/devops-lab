@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -161,6 +162,7 @@ func TestScratchStartsWhatIsStopped(t *testing.T) {
 				rt.containers["lab-scratch-01-x-control-plane"] = *tt.node
 				kc.nodes["lab-scratch-01-x"] = 1
 			}
+			rt.exec = map[string]string{"lab-scratch-01-x-control-plane cat /kind/version": "v1.36.4\n"}
 			s, _ := testScratch(t, rt, kc)
 			var log strings.Builder
 			if err := s.Create(context.Background(), "lab-scratch-01-x", s.home+"/kc", &log); err != nil {
@@ -182,6 +184,42 @@ func TestScratchStartsWhatIsStopped(t *testing.T) {
 				if !strings.Contains(log.String(), w) {
 					t.Errorf("log lacks %q:\n%s", w, log.String())
 				}
+			}
+		})
+	}
+}
+
+// lab labs start refuses an existing scratch cluster on another version
+// than the pin, or of unknown version, after starting its node.
+func TestScratchVersionGate(t *testing.T) {
+	const node = "lab-scratch-01-x-control-plane"
+	tests := []struct {
+		name    string
+		out     string
+		execErr error
+		wantErr string
+	}{
+		{"matching", "v1.36.4", nil, ""},
+		{"on 1.37 from before the pin moved", "v1.37.0", nil,
+			"kind cluster lab-scratch-01-x runs Kubernetes v1.37.0, but lab.yaml pins 1.36; a kind cluster cannot change version, so make it again: lab labs stop, then lab labs start"},
+		{"unreadable", "", errors.New("exec failed"), "cannot read the Kubernetes version of kind cluster lab-scratch-01-x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newFakeRuntime()
+			rt.containers[ZotContainer] = ContainerInfo{Exists: true, Running: true}
+			rt.containers[node] = ContainerInfo{Exists: true} // stopped by a reboot: started, then read
+			rt.exec = map[string]string{node + " cat /kind/version": tt.out}
+			if tt.execErr != nil {
+				rt.execErr = map[string]error{node + " cat /kind/version": tt.execErr}
+			}
+			s, _ := testScratch(t, rt, &fakeClusters{nodes: map[string]int{"lab-scratch-01-x": 1}})
+			err := s.Create(context.Background(), "lab-scratch-01-x", s.home+"/kc", io.Discard)
+			if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("err = %v\nwant %q", err, tt.wantErr)
+			}
+			if !rt.containers[node].Running {
+				t.Error("the node was not started before its version was read")
 			}
 		})
 	}
