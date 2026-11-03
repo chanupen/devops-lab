@@ -75,3 +75,13 @@ func checkClusterVersion(ctx context.Context, rt Runtime, name, pin, remake stri
 	}
 	return nil
 }
+
+// HostClusterVersion reads the main cluster's version over the rootless
+// Podman socket, for lab status, lab doctor and the TUI.
+func HostClusterVersion(ctx context.Context) (string, error) {
+	sock, err := PodmanSocket()
+	if err != nil {
+		return "", err
+	}
+	return ClusterVersion(ctx, NewPodman(sock), ClusterName)
+}

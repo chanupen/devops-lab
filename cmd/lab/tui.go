@@ -145,7 +145,13 @@ func tuiUnits(ctx context.Context) ([]tui.Unit, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toTUIUnits(units), nil
+	out := toTUIUnits(units)
+	for i, u := range out {
+		if u.Kind == tui.UnitCluster && u.Running {
+			out[i].Version, out[i].VersionErr = clusterVersion(ctx)
+		}
+	}
+	return out, nil
 }
 
 func toTUIUnits(units []local.Unit) []tui.Unit {

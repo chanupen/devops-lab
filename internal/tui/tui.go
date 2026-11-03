@@ -119,6 +119,10 @@ type Unit struct {
 	Running bool   // every container of it
 	Fix     string // the command that starts the stopped ones
 	Uptime  labs.Uptime
+	// Version is a running cluster's Kubernetes version from its node
+	// ("v1.36.4"); VersionErr says why it could not be read.
+	Version    string
+	VersionErr string
 }
 
 // Unit kinds.

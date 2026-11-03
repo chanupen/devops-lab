@@ -73,6 +73,10 @@ type Unit struct {
 	Nodes   int    // containers
 	Running bool   // all of them
 	Fix     string // the command that starts the stopped ones
+	// Version is a running cluster's Kubernetes version from its node
+	// ("v1.36.4"); VersionErr says why it could not be read.
+	Version    string
+	VersionErr string
 }
 
 // HostSystem returns a System backed by the real host.
@@ -108,7 +112,9 @@ func HostSystem() System {
 // Options select what the checks compare against.
 type Options struct {
 	Profile string
-	Timeout time.Duration // per check
+	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
+	K8sVersion string
+	Timeout    time.Duration // per check
 }
 
 // Check is one named host check.
