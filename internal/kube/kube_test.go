@@ -3,9 +3,12 @@ package kube
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/klog/v2"
 )
 
 // syncBuffer is a bytes.Buffer safe for the informer goroutine.
@@ -289,6 +293,72 @@ func TestReadHealth(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.wantApps) || (tt.noArgo != (h.Apps == nil)) {
 				t.Errorf("apps %v, want %v", got, tt.wantApps)
+			}
+		})
+	}
+}
+
+// detailBuffer is a Detailer: progress to log, client-go to detail.
+type detailBuffer struct {
+	log, detail syncBuffer
+}
+
+func (d *detailBuffer) Write(p []byte) (int, error) { return d.log.Write(p) }
+func (d *detailBuffer) Detail() io.Writer           { return &d.detail }
+
+// While a new cluster's RBAC comes up, listing nodes is forbidden for a
+// moment. The wait retries quietly: client-go's message goes to the log's
+// detail (the op log), never to the progress lines or klog's stderr.
+func TestWaitRoutesClientGoLogs(t *testing.T) {
+	tests := []struct {
+		name     string
+		detailer bool
+	}{
+		{"op log with detail (lab labs start)", true},
+		{"plain step log (lab up)", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var klogOut syncBuffer
+			klog.SetOutput(&klogOut)
+			klog.LogToStderr(false)
+			defer klog.LogToStderr(true)
+
+			cs := fake.NewClientset(node("cp", "True"))
+			var calls atomic.Int32
+			cs.PrependReactor("list", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
+				if calls.Add(1) == 1 {
+					return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "nodes"}, "",
+						errors.New(`User "kubernetes-admin" cannot list resource "nodes"`))
+				}
+				return false, nil, nil
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			d := &detailBuffer{}
+			var w io.Writer = &d.log
+			if tt.detailer {
+				w = d
+			}
+			if err := WaitNodesReady(ctx, cs, 1, w); err != nil {
+				t.Fatalf("wait: %v", err)
+			}
+			clientGo := d.log.String()
+			if tt.detailer {
+				clientGo = d.detail.String()
+				if strings.Contains(d.log.String(), "client-go") {
+					t.Errorf("client-go on the progress lines:\n%s", d.log.String())
+				}
+			}
+			if !strings.Contains(clientGo, "client-go: ") || !strings.Contains(clientGo, "forbidden") {
+				t.Errorf("client-go message missing:\n%s", clientGo)
+			}
+			if !strings.Contains(d.log.String(), "nodes ready: 1/1") {
+				t.Errorf("progress: %q", d.log.String())
+			}
+			klog.Flush()
+			if klogOut.String() != "" {
+				t.Errorf("klog got output: %s", klogOut.String())
 			}
 		})
 	}
