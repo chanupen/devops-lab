@@ -245,7 +245,7 @@ func TestBootstrapChartSampleApp(t *testing.T) {
 			}
 		})
 	}
-	for name := range renderStacks(t, map[string]any{"core": false, "obs": false, "sample-app": false}) {
+	for name := range renderStacks(t, map[string]any{"core": false, "obs": false, "policy": false, "sample-app": false}) {
 		if !strings.HasPrefix(name, "Secret/oci-") {
 			t.Errorf("all off renders %s", name)
 		}
@@ -266,7 +266,7 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 	if err := yaml.Unmarshal(b, &overlay); err != nil || overlay.Charts.OCIMirror != "lab-zot:5000" {
 		t.Fatalf("local overlay mirror = %q, %v", overlay.Charts.OCIMirror, err)
 	}
-	objs := render(t, map[string]any{"core": true, "obs": true, "sample-app": true}, overlay.Charts.OCIMirror)
+	objs := render(t, map[string]any{"core": true, "obs": true, "policy": true, "sample-app": true}, overlay.Charts.OCIMirror)
 	single := map[string]string{
 		"cert-manager":     "lab-zot:5000/quay.io/jetstack/charts",
 		"envoy-gateway":    "lab-zot:5000/docker.io/envoyproxy",
@@ -282,6 +282,8 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 		"kube-prometheus-stack": "lab-zot:5000/ghcr.io/prometheus-community/charts",
 		"loki":                  "lab-zot:5000/ghcr.io/grafana/helm-charts",
 		"otel-collector":        "lab-zot:5000/ghcr.io/open-telemetry/opentelemetry-helm-charts",
+		"kyverno":               "lab-zot:5000/ghcr.io/kyverno/charts",
+		"kyverno-policies":      "lab-zot:5000/ghcr.io/kyverno/charts",
 	}
 	for app, want := range multi {
 		srcs, _ := field(objs["Application/"+app], "spec", "sources").([]any)
@@ -301,7 +303,50 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 			t.Errorf("%s = %v", name, o["stringData"])
 		}
 	}
-	if n != 6 {
-		t.Errorf("%d OCI repository secrets, want 6", n)
+	if n != 7 {
+		t.Errorf("%d OCI repository secrets, want 7", n)
+	}
+}
+
+// policy: Kyverno, then the baseline Pod Security policies, each from the
+// pinned chart with base values and the mode's overlay, server-side applied.
+func TestBootstrapChartPolicy(t *testing.T) {
+	objs := renderStacks(t, map[string]any{"policy": true})
+	tests := []struct {
+		app, wave string
+	}{{"kyverno", "0"}, {"kyverno-policies", "1"}}
+	for _, tt := range tests {
+		o, ok := objs["Application/"+tt.app]
+		if !ok {
+			t.Fatalf("%s not rendered", tt.app)
+		}
+		srcs, _ := field(o, "spec", "sources").([]any)
+		if len(srcs) != 2 {
+			t.Fatalf("%s sources = %v", tt.app, srcs)
+		}
+		chart := srcs[0].(map[string]any)
+		vf, _ := field(chart, "helm", "valueFiles").([]any)
+		if chart["chart"] != tt.app || chart["targetRevision"] != "3.9.2" || chart["repoURL"] != "ghcr.io/kyverno/charts" ||
+			len(vf) != 2 || vf[0] != "$values/gitops/stacks/policy/"+tt.app+"/values.yaml" || vf[1] != "$values/gitops/overlays/local/policy/"+tt.app+"/values.yaml" {
+			t.Errorf("%s chart source = %v", tt.app, chart)
+		}
+		if field(o, "spec", "destination", "namespace") != "kyverno" || field(o, "metadata", "labels", "lab.stack") != "policy" ||
+			field(o, "metadata", "annotations", "argocd.argoproj.io/sync-wave") != tt.wave {
+			t.Errorf("%s = %v", tt.app, o["metadata"])
+		}
+		opts, _ := field(o, "spec", "syncPolicy", "syncOptions").([]any)
+		if !slices.Contains(opts, any("ServerSideApply=true")) {
+			t.Errorf("%s syncOptions = %v", tt.app, opts)
+		}
+		// Only kyverno ships the CRDs with empty metadata maps.
+		ign, _ := field(o, "spec", "ignoreDifferences").([]any)
+		if (tt.app == "kyverno") != (len(ign) == 1) {
+			t.Errorf("%s ignoreDifferences = %v", tt.app, ign)
+		}
+	}
+	for name := range renderStacks(t, map[string]any{"policy": false}) {
+		if strings.Contains(name, "kyverno") && !strings.HasPrefix(name, "Secret/") {
+			t.Errorf("policy off renders %s", name)
+		}
 	}
 }

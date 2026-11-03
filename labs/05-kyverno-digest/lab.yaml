@@ -1,0 +1,10 @@
+# Lab 5. The format is described in labs/README.md.
+id: 05-kyverno-digest
+title: Kyverno policy that blocks images without a digest
+time: 35m
+level: intermediate
+modes: [local]      # cloud needs only an overlay: the policy stack runs there too
+needs: lab          # the main lab's cluster, namespace lab05-apps
+stacks: [policy]
+# The kyverno CLI runs as a pinned image through rootless Podman.
+tools: [kubectl, jq, podman]

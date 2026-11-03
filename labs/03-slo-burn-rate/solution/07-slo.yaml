@@ -1,0 +1,26 @@
+# The same SLO for Sloth: 99.5% of podinfo-frontend requests without a 5xx,
+# over its default 30-day period. Sloth writes the recording rules and the
+# page and ticket alerts, with the SRE workbook's windows.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: podinfo-frontend
+  namespace: lab03-slo
+spec:
+  service: lab03-podinfo
+  labels:
+    lab: lab03
+  slos:
+    - name: availability
+      objective: 99.5
+      description: podinfo-frontend answers without a 5xx.
+      sli:
+        events:
+          errorQuery: sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend",status=~"5.."}[{{.window}}]))
+          totalQuery: sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend"}[{{.window}}]))
+      alerting:
+        name: Lab03SlothAvailability
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}

@@ -83,7 +83,7 @@ func TestLabsUnits(t *testing.T) {
 			m := labsModel1(t, st)
 			m.d.units, m.d.unitsKnown = tt.units, tt.known
 			m = pressLabs(t, m, "3")
-			next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+			next, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40}) // wide enough for the full lab line
 			if view := plain(next.(Model)); !strings.Contains(view, tt.want) {
 				t.Errorf("view lacks %q:\n%s", tt.want, view)
 			}

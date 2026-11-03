@@ -1,0 +1,11 @@
+# Lab 2. The format is described in labs/README.md.
+id: 02-image-promotion
+title: Build, scan and promote an image by retagging
+time: 40m
+level: intermediate
+modes: [local]      # cloud needs only an overlay: ECR for the lab registry (LAB_REGISTRY_PUSH/PULL)
+needs: lab          # the main lab's cluster, namespaces lab02-dev and lab02-prod
+stacks: [registry, cluster]
+# Trivy and Skopeo run as pinned images through rootless Podman, so only
+# these are needed on the host.
+tools: [podman, kubectl, jq, curl]

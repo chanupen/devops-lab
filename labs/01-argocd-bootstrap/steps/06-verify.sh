@@ -4,7 +4,7 @@
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
 need_cluster
-a=$(app root)
+a=$(app root) || fail "$a"
 path=$(jq -r '.spec.source.path // ""' <<<"$a")
 [ "$path" = apps ] || fail "root's source path is '$path', want apps"
 jq -e '.spec.syncPolicy.automated' <<<"$a" >/dev/null || fail "root has no automated sync policy"

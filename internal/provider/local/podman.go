@@ -169,12 +169,24 @@ func (p *Podman) Container(ctx context.Context, name string) (ContainerInfo, err
 		Config struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
+		NetworkSettings struct {
+			Ports map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"Ports"`
+		} `json:"NetworkSettings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
 		return ContainerInfo{}, fmt.Errorf("inspect %s: %w", name, err)
 	}
+	ports := map[string][]string{}
+	for p, binds := range d.NetworkSettings.Ports {
+		for _, b := range binds {
+			ports[p] = append(ports[p], net.JoinHostPort(b.HostIP, b.HostPort))
+		}
+	}
 	return ContainerInfo{Name: name, Exists: true, Running: d.State.Running, Image: d.ImageName, Labels: d.Config.Labels,
-		StartedAt: d.State.StartedAt, FinishedAt: d.State.FinishedAt}, nil
+		StartedAt: d.State.StartedAt, FinishedAt: d.State.FinishedAt, HostPorts: ports}, nil
 }
 
 // Containers implements Runtime. libpod's list gives the times as Unix

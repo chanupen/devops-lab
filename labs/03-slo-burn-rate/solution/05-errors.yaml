@@ -1,0 +1,28 @@
+# Inject errors: about 5 requests a second to podinfo's /status/500, which
+# answers 500, for 10 minutes. With the steady load that is half of all
+# requests: a burn rate of about 100.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: errors
+  namespace: lab03-load
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: errors
+          image: docker.io/curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40
+          command: [sh, -c, 'end=$(($(date +%s) + 600)); while [ $(date +%s) -lt $end ]; do curl -s -o /dev/null http://podinfo-frontend.podinfo:9898/status/500; sleep 0.2; done']
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 8Mi}
+            limits: {memory: 32Mi}

@@ -4,7 +4,7 @@
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
 need_cluster
-a=$(app podinfo)
+a=$(app podinfo) || fail "$a"
 repo=$(jq -r '.spec.source.repoURL // ""' <<<"$a" | sed 's#\.git$##; s#/$##')
 path=$(jq -r '.spec.source.path // ""' <<<"$a")
 rev=$(jq -r '.spec.source.targetRevision // ""' <<<"$a")

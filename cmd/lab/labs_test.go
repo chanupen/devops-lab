@@ -26,7 +26,8 @@ func TestLabsCommands(t *testing.T) {
 		Running: true, StartedAt: time.Now().Add(-time.Hour)}})
 
 	out, err := runLab(append([]string{"labs", "list"}, flags...)...)
-	if err != nil || !strings.Contains(out, "○  01-argocd-bootstrap  Bootstrap Argo CD from scratch  45m   beginner  scratch  not started") {
+	// Column widths follow the longest title, so compare the line's fields.
+	if err != nil || !hasFields(out, "○ 01-argocd-bootstrap Bootstrap Argo CD from scratch 45m beginner scratch not started") {
 		t.Errorf("list: %v\n%s", err, out)
 	}
 	if out, err := runLab(append([]string{"labs", "status"}, flags...)...); err != nil || !strings.Contains(out, "no lab is started") {
@@ -171,4 +172,14 @@ func TestStopMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// hasFields reports whether a line of out has exactly want's fields.
+func hasFields(out, want string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Join(strings.Fields(line), " ") == want {
+			return true
+		}
+	}
+	return false
 }

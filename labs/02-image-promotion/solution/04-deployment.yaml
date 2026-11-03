@@ -1,0 +1,32 @@
+# Deployment hello, pinned to an image digest. 04-solve.sh fills in
+# NAMESPACE and IMAGE (registry/lab02-hello@sha256:...).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello
+  namespace: NAMESPACE
+  labels: {app: hello}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: hello}
+  template:
+    metadata:
+      labels: {app: hello}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: hello
+          image: IMAGE
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /, port: 8080}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {memory: 32Mi}

@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +16,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
 	"github.com/chanupen/devops-lab/internal/provider/local"
+	"github.com/chanupen/devops-lab/internal/state"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -44,10 +48,12 @@ func newDoctorCmd() *cobra.Command {
 			sys := doctor.HostSystem()
 			if mode == "local" {
 				sys.Units = doctorUnits
+				sys.LabRegistry = doctorLabRegistry
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
 				}
+				opts.Stacks = deployedStacks()
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
@@ -104,4 +110,42 @@ func clusterVersion(ctx context.Context) (version, why string) {
 		return "", err.Error()
 	}
 	return v, ""
+}
+
+// doctorLabRegistry checks the lab registry for lab doctor. The mirror
+// files are under ~/.lab, where lab writes them.
+func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
+	home, err := state.DefaultPath()
+	if err != nil {
+		return doctor.RegistryState{Err: err}
+	}
+	err = local.HostCheckLabRegistry(ctx, filepath.Dir(home))
+	switch {
+	case errors.Is(err, local.ErrNoRegistry):
+		return doctor.RegistryState{Missing: true}
+	case errors.Is(err, local.ErrNoPullFile):
+		return doctor.RegistryState{Pending: err.Error()}
+	}
+	return doctor.RegistryState{Err: err}
+}
+
+// deployedStacks are the stacks the local state file records as applied;
+// none when it cannot be read.
+func deployedStacks() []string {
+	path, err := state.DefaultPath()
+	if err != nil {
+		return nil
+	}
+	st, err := state.NewStore(path).Load()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for name := range st.Stacks {
+		if st.IsApplied(name) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

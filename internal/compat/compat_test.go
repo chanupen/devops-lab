@@ -17,8 +17,8 @@ func TestFor(t *testing.T) {
 		mode string
 		want []string
 	}{
-		{"local", []string{"Argo CD", "kind node images"}},
-		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD"}},
+		{"local", []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD", "Kyverno"}},
 		{"other", nil},
 	}
 	for _, tt := range tests {
@@ -69,5 +69,41 @@ func TestLessAndRange(t *testing.T) {
 	}
 	if r := (Component{MinK8s: "1.33", MaxK8s: "1.36"}).Range(); r != "1.33–1.36" {
 		t.Errorf("range = %s", r)
+	}
+}
+
+// Kyverno's 1.36 comes from its CI, not a stated range: allowed, flagged.
+func TestTestedNotStated(t *testing.T) {
+	up := func(stacks ...string) func(string) bool {
+		return func(s string) bool { return slices.Contains(stacks, s) }
+	}
+	names := func(cs []Component) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+	tests := []struct {
+		name     string
+		v        string
+		deployed func(string) bool
+		want     []string
+	}{
+		{"1.36 with the policy stack", "1.36", up("cluster", "gitops", "policy"), []string{"Kyverno"}},
+		{"1.36 without it", "1.36", up("cluster", "gitops"), nil},
+		{"1.35 is stated", "1.35", up("cluster", "gitops", "policy"), nil},
+		{"1.37 is not supported at all", "1.37", up("policy"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := names(TestedNotStated(tt.v, For("local"), tt.deployed)); !slices.Equal(got, tt.want) {
+				t.Errorf("TestedNotStated(%s) = %v, want %v", tt.v, got, tt.want)
+			}
+		})
+	}
+	// Still allowed: the table's range includes 1.36.
+	if bad := Unsupported("1.36", For("local")); len(bad) != 0 {
+		t.Errorf("1.36 unsupported: %v", bad)
 	}
 }

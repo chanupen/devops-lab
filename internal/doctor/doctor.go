@@ -63,6 +63,9 @@ type System struct {
 	// Units lists the lab's containers (cluster nodes, the image cache);
 	// nil skips those checks.
 	Units func(ctx context.Context) ([]Unit, error)
+	// LabRegistry checks the host can push to the lab registry and the
+	// cluster can pull from it; nil skips the check.
+	LabRegistry func(ctx context.Context) RegistryState
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -114,7 +117,9 @@ type Options struct {
 	Profile string
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
-	Timeout    time.Duration // per check
+	// Stacks are the stacks deployed, from the state file.
+	Stacks  []string
+	Timeout time.Duration // per check
 }
 
 // Check is one named host check.
@@ -147,6 +152,8 @@ func Checks() []Check {
 		{"lab cluster", unitCheck("cluster", "lab")},
 		{"scratch clusters", checkScratchClusters},
 		{"image cache", unitCheck("image cache", "lab-zot")},
+		{"lab registry", checkLabRegistry},
+		{"k8s support", checkK8sSupport},
 	}
 }
 

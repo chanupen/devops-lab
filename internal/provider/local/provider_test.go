@@ -504,7 +504,7 @@ func TestNodeImage(t *testing.T) {
 	}{
 		{"1.36", NodeImages["1.36"], ""},
 		{"1.34", NodeImages["1.34"], ""},
-		{"1.37", "", "outside the compatibility table: Argo CD v3.5.5 (1.33–1.36) (local mode supports 1.34, 1.35, 1.36)"},
+		{"1.37", "", "outside the compatibility table: Argo CD v3.5.5 (1.33–1.36), Kyverno v1.19.2 (1.33–1.36) (local mode supports 1.34, 1.35, 1.36)"},
 		{"1.33", "", "kind v0.33.0 has no node image for it (local mode supports 1.34, 1.35, 1.36)"},
 	}
 	for _, tt := range tests {

@@ -1,7 +1,8 @@
 # Lab configuration. Read by `lab` from phase 1 onward.
 mode: local          # local | cloud
 profile: minimal     # minimal | standard | full
-extraStacks: [obs]   # on top of the profile; minimal + obs is what the local provider runs today
+extraStacks: [obs]   # on top of the profile; minimal + obs is what the local provider runs today.
+                     # Add policy (Kyverno, about 0.8 GiB more) for lab 5: [obs, policy]
 gitops: argocd       # argocd | flux
 k8sVersion: "1.36"   # the local lab; kind node image follows it. Must be in internal/compat (1.36 max: Argo CD 3.5)
 

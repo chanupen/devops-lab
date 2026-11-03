@@ -92,10 +92,8 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
 	s.startZot(ctx, log)
-	for _, u := range upstreams() {
-		if err := writeFile(filepath.Join(s.certsDir(), u.Name, "hosts.toml"), []byte(hostsTOML(u))); err != nil {
-			return err
-		}
+	if err := writeMirrorFiles(s.certsDir()); err != nil {
+		return err
 	}
 	kc := s.clusters(detail(log), kubeconfig, false)
 	names, err := kc.List()

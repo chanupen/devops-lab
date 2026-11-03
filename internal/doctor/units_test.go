@@ -108,3 +108,57 @@ func TestClusterVersionCheck(t *testing.T) {
 		t.Errorf("zot: %+v", r)
 	}
 }
+
+func TestLabRegistryCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		st   *RegistryState
+		want Status
+		text string
+	}{
+		{"ready", &RegistryState{}, OK, "push 127.0.0.1:5000/lab"},
+		{"no Zot yet", &RegistryState{Missing: true}, Skip, "not there yet"},
+		{"mirror file to write", &RegistryState{Pending: "hosts.toml is missing"}, Warn, "hosts.toml is missing"},
+		{"on the LAN", &RegistryState{Err: errors.New("lab-zot publishes 5000 on 0.0.0.0:5000")}, Fail, "0.0.0.0:5000"},
+		{"not wired", nil, Skip, "not checked"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sys System
+			if tt.st != nil {
+				st := *tt.st
+				sys.LabRegistry = func(context.Context) RegistryState { return st }
+			}
+			r := checkLabRegistry(context.Background(), sys, Options{})
+			if r.Status != tt.want || !strings.Contains(r.Detail, tt.text) {
+				t.Errorf("got %s %q, want %s %q", r.Status, r.Detail, tt.want, tt.text)
+			}
+		})
+	}
+}
+
+func TestK8sSupportCheck(t *testing.T) {
+	tests := []struct {
+		name   string
+		opts   Options
+		want   Status
+		detail string
+	}{
+		{"policy on 1.36: tested, not stated", Options{K8sVersion: "1.36", Stacks: []string{"cluster", "gitops", "policy"}}, Warn,
+			"Kyverno v1.19.2 is tested on 1.36 by its CI, but states support only up to 1.35"},
+		{"no policy stack", Options{K8sVersion: "1.36", Stacks: []string{"cluster", "gitops"}}, OK, "states support for Kubernetes 1.36"},
+		{"policy on 1.35", Options{K8sVersion: "1.35", Stacks: []string{"policy"}}, OK, "1.35"},
+		{"no pin", Options{}, Skip, "no k8sVersion"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := checkK8sSupport(context.Background(), System{}, tt.opts)
+			if r.Status != tt.want || !strings.Contains(r.Detail, tt.detail) {
+				t.Errorf("got %s %q, want %s %q", r.Status, r.Detail, tt.want, tt.detail)
+			}
+			if r.Status == Warn && Failed([]Result{r}) {
+				t.Error("tested-not-stated failed lab doctor")
+			}
+		})
+	}
+}

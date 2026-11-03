@@ -1,0 +1,18 @@
+# Local mode (kind): small requests, so the stack fits the memory profiles.
+admissionController:
+  container:
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 384Mi}
+backgroundController:
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {memory: 192Mi}
+cleanupController:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+reportsController:
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {memory: 192Mi}

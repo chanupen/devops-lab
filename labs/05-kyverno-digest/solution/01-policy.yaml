@@ -1,0 +1,27 @@
+# Deny: a Pod in a lab05-* namespace must name every image by digest.
+# A ValidatingPolicy is written in CEL, like Kubernetes' own
+# ValidatingAdmissionPolicy. Kyverno adds the same check for Deployments,
+# Jobs and the other Pod controllers itself (autogen), so a bad Deployment
+# fails at once too.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-image-digest
+  labels:
+    lab.devops/lab: 05-kyverno-digest
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchConditions:
+    - name: lab05-namespaces
+      expression: "has(object.metadata.namespace) && object.metadata.namespace.startsWith('lab05-')"
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, c.image.contains('@sha256:')) &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, c.image.contains('@sha256:')))
+      message: "Images must be pinned by digest (image@sha256:...), not by tag only."

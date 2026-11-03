@@ -1,0 +1,17 @@
+# A debug Pod that mounts a host directory. The baseline policy
+# disallow-host-path is in Audit mode: the Pod runs, and the PolicyReport
+# records the failure.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug
+  namespace: lab05-apps
+spec:
+  containers:
+    - name: debug
+      image: ghcr.io/stefanprodan/podinfo:6.15.0@sha256:ec73780a8425f59ea49f5bc8cdff0d598805a224fbaa1f86c67a244f250fa9da
+      volumeMounts:
+        - {name: host-tmp, mountPath: /host-tmp, readOnly: true}
+  volumes:
+    - name: host-tmp
+      hostPath: {path: /tmp, type: Directory}
