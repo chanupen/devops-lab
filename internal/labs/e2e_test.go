@@ -1,12 +1,21 @@
 //go:build e2e
 
-// The end-to-end test runs lab 1 for real: a scratch kind cluster on
-// rootless Podman, each step's verify script before and after its
-// reference solution, then reset and stop. It needs Podman, kubectl, helm,
-// jq and the argocd CLI on PATH, and network access. It takes several
-// minutes:
+// The end-to-end tests run the labs for real: each step's verify script
+// before and after its reference solution, a second verify (idempotent),
+// then reset. They need Podman, kubectl, jq and network access.
 //
-//	go test -tags e2e -run E2E -v -timeout 40m ./internal/labs/
+// Lab 1 makes its own scratch kind cluster (and needs helm and argocd):
+//
+//	go test -tags e2e -run E2ELab1 -v -timeout 40m ./internal/labs/
+//
+// Labs on the main cluster (2, 3 and 5) run only when
+// LAB_E2E_MAIN_KUBECONFIG names a running lab's kubeconfig. They work only
+// in their own lab0N-* namespaces and labelled cluster objects, and reset
+// them after; they write the lab registry's mirror file next to it, as lab
+// labs start does. Their stacks (registry, cluster, obs, sample-app,
+// policy) must be up:
+//
+//	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EMain -v -timeout 60m ./internal/labs/
 package labs_test
 
 import (
@@ -108,61 +117,7 @@ func TestE2ELab1(t *testing.T) {
 	})
 	kubeconfig := m.Kubeconfig(l)
 
-	solve := func(n int) {
-		ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-		defer cancel()
-		env := append([]string{"KUBECONFIG=" + kubeconfig, "LAB_ID=" + l.ID, "LAB_DIR=" + l.Dir, fmt.Sprintf("LAB_STEP=%d", n)}, scriptEnv...)
-		out, err := labs.ExecRunner{}.Run(ctx, l.SolveScript(n), l.Dir, env)
-		if err != nil {
-			// One retry, logged: the solutions download charts and talk to
-			// GitHub, and a network blip should not fail the lab.
-			t.Logf("solution %d failed once, retrying: %v\n%s", n, err, out)
-			if out, err = (labs.ExecRunner{}).Run(ctx, l.SolveScript(n), l.Dir, env); err != nil {
-				t.Fatalf("solution %d: %v\n%s", n, err, out)
-			}
-		}
-	}
-	// verifyUntil retries a few times: Argo CD needs a moment to report.
-	verifyUntil := func(n int, within time.Duration) labs.Result {
-		deadline := time.Now().Add(within)
-		for {
-			_, res, err := m.Verify(ctx, n)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if res.Passed || time.Now().After(deadline) {
-				return res
-			}
-			time.Sleep(3 * time.Second)
-		}
-	}
-
-	for _, s := range l.Steps {
-		_, before, err := m.Verify(ctx, s.N)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if before.Passed {
-			t.Fatalf("step %d passes before its solution ran:\n%s", s.N, before.Output)
-		}
-		t.Logf("step %d before: ✕ %s", s.N, before.Reason)
-		timed(fmt.Sprintf("step %d solution", s.N), func() { solve(s.N) })
-		var res labs.Result
-		timed(fmt.Sprintf("step %d verify (until it passes)", s.N), func() { res = verifyUntil(s.N, 2*time.Minute) })
-		if !res.Passed {
-			t.Fatalf("step %d: verify fails after the solution: %s\n%s", s.N, res.Reason, res.Output)
-		}
-		// Idempotent: a second run passes too and changes nothing.
-		if _, again, _ := m.Verify(ctx, s.N); !again.Passed {
-			t.Fatalf("step %d: second verify fails: %s", s.N, again.Reason)
-		}
-		t.Logf("step %d after: ● %s (%s)", s.N, strings.TrimSpace(lastLine(res.Output)), res.Duration.Round(100*time.Millisecond))
-	}
-	st, _ := m.Store.Load()
-	if p := st.Labs[l.ID]; labs.LabMark(l, p) != labs.Done {
-		t.Errorf("lab not done: %+v", p)
-	}
-
+	runSteps(t, m, l, kubeconfig, scriptEnv, timed, 0)
 	timed("reset", func() {
 		if _, err := m.Reset(ctx, io.Discard); err != nil {
 			t.Fatal(err)
@@ -178,4 +133,132 @@ func TestE2ELab1(t *testing.T) {
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return lines[len(lines)-1]
+}
+
+// runSteps runs each step of l: verify fails, the solution runs, verify
+// passes (retried for a while: controllers need a moment), and passes
+// again. staleFor is how long a "before" verify may still pass on data a
+// previous run left behind (a metric's rate window); 0 means it must fail
+// at once.
+func runSteps(t *testing.T, m *labs.Manager, l labs.Lab, kubeconfig string, scriptEnv []string,
+	timed func(string, func()), staleFor time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	solve := func(n int) {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+		env := append([]string{"KUBECONFIG=" + kubeconfig, "LAB_ID=" + l.ID, "LAB_DIR=" + l.Dir, fmt.Sprintf("LAB_STEP=%d", n)}, scriptEnv...)
+		out, err := labs.ExecRunner{}.Run(ctx, l.SolveScript(n), l.Dir, env)
+		if err != nil {
+			// One retry, logged: the solutions download charts and images,
+			// and a network blip should not fail the lab.
+			t.Logf("solution %d failed once, retrying: %v\n%s", n, err, out)
+			if out, err = (labs.ExecRunner{}).Run(ctx, l.SolveScript(n), l.Dir, env); err != nil {
+				t.Fatalf("solution %d: %v\n%s", n, err, out)
+			}
+		}
+	}
+	verifyUntil := func(n int, pass bool, within time.Duration) labs.Result {
+		deadline := time.Now().Add(within)
+		for {
+			_, res, err := m.Verify(ctx, n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Passed == pass || time.Now().After(deadline) {
+				return res
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}
+	for _, s := range l.Steps {
+		before := verifyUntil(s.N, false, staleFor)
+		if before.Passed {
+			t.Fatalf("step %d passes before its solution ran:\n%s", s.N, before.Output)
+		}
+		t.Logf("step %d before: ✕ %s", s.N, before.Reason)
+		timed(fmt.Sprintf("step %d solution", s.N), func() { solve(s.N) })
+		var res labs.Result
+		timed(fmt.Sprintf("step %d verify (until it passes)", s.N), func() { res = verifyUntil(s.N, true, 3*time.Minute) })
+		if !res.Passed {
+			t.Fatalf("step %d: verify fails after the solution: %s\n%s", s.N, res.Reason, res.Output)
+		}
+		// Idempotent: a second run passes too and changes nothing.
+		if _, again, _ := m.Verify(ctx, s.N); !again.Passed {
+			t.Fatalf("step %d: second verify fails: %s", s.N, again.Reason)
+		}
+		t.Logf("step %d after: ● %s (%s)", s.N, strings.TrimSpace(lastLine(res.Output)), res.Duration.Round(100*time.Millisecond))
+	}
+	st, _ := m.Store.Load()
+	if p := st.Labs[l.ID]; labs.LabMark(l, p) != labs.Done {
+		t.Errorf("lab not done: %+v", p)
+	}
+}
+
+// TestE2EMain runs the labs that use the main lab's cluster, one subtest
+// each, against the kubeconfig in LAB_E2E_MAIN_KUBECONFIG.
+func TestE2EMain(t *testing.T) {
+	kubeconfig := os.Getenv("LAB_E2E_MAIN_KUBECONFIG")
+	if kubeconfig == "" {
+		t.Skip("set LAB_E2E_MAIN_KUBECONFIG to a running lab's kubeconfig")
+	}
+	for _, tool := range []string{"kubectl", "jq", "curl", "podman"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Fatalf("needs %s on PATH", tool)
+		}
+	}
+	all, err := labs.LoadAll(filepath.Join("..", "..", "labs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		id string
+		// staleFor: lab 3's first steps read rates over 2 minutes, which
+		// still hold a previous run's traffic for a while.
+		staleFor time.Duration
+	}{{"02", 0}, {"03", 4 * time.Minute}, {"05", 0}}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			labHome := t.TempDir()
+			work := t.TempDir()
+			// The lab's own state: its stacks are up on the main lab.
+			store := state.NewStore(filepath.Join(labHome, "state.json"))
+			if err := store.Update(func(s *state.State) error {
+				for _, st := range []string{"registry", "cluster", "gitops", "core", "obs", "sample-app", "policy"} {
+					s.Stacks[st] = state.StackState{Status: state.Applied}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			scriptEnv := append(local.LabRegistryEnv(), "LAB_WORK="+work)
+			m := &labs.Manager{Labs: all, Store: store, Mode: "local", Runner: labs.ExecRunner{}, Home: labHome,
+				MainKubeconfig: kubeconfig, LookPath: exec.LookPath, Env: scriptEnv,
+				Prepare: func(labs.Lab) error { return local.EnsureLabRegistry(filepath.Dir(kubeconfig)) }}
+			ctx := context.Background()
+			var timings []string
+			timed := func(what string, f func()) {
+				start := time.Now()
+				f()
+				timings = append(timings, fmt.Sprintf("%-38s %8s", what, time.Since(start).Round(100*time.Millisecond)))
+			}
+			l, err := m.Start(ctx, tt.id, logWriter{t})
+			if err != nil {
+				t.Fatal(err)
+			}
+			total := time.Now()
+			t.Cleanup(func() {
+				start := time.Now()
+				if _, err := m.Reset(context.Background(), logWriter{t}); err != nil {
+					t.Errorf("reset: %v", err)
+				}
+				timings = append(timings, fmt.Sprintf("%-38s %8s", "reset", time.Since(start).Round(100*time.Millisecond)))
+				if _, _, err := m.Stop(context.Background(), logWriter{t}); err != nil {
+					t.Errorf("stop: %v", err)
+				}
+				t.Logf("timings:\n%s\n%-38s %8s", strings.Join(timings, "\n"), "total (steps and reset)", time.Since(total).Round(time.Second))
+			})
+			runSteps(t, m, l, m.Kubeconfig(l), scriptEnv, timed, tt.staleFor)
+		})
+	}
 }
