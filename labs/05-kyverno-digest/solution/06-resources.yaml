@@ -1,0 +1,20 @@
+# Two Pods for kyverno test: one by tag only, one by digest.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagged
+  namespace: lab05-apps
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/stefanprodan/podinfo:6.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pinned
+  namespace: lab05-apps
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/stefanprodan/podinfo:6.15.0@sha256:ec73780a8425f59ea49f5bc8cdff0d598805a224fbaa1f86c67a244f250fa9da

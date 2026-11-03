@@ -1,0 +1,38 @@
+# One named workload may keep a tag-only image: Deployment legacy and the
+# ReplicaSets and Pods it makes (their names start with legacy-). Kyverno
+# checks Deployments with the autogen rule, Pods with the rule itself.
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: legacy-tag
+  namespace: lab05-apps
+spec:
+  exceptions:
+    - policyName: require-image-digest
+      ruleNames: [images-by-digest, autogen-images-by-digest]
+  match:
+    any:
+      - resources:
+          kinds: [Deployment, ReplicaSet, Pod]
+          namespaces: [lab05-apps]
+          names: [legacy, legacy-*]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy
+  namespace: lab05-apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: legacy}
+  template:
+    metadata:
+      labels: {app: legacy}
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/stefanprodan/podinfo:6.15.0
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}
