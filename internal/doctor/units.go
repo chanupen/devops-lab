@@ -98,3 +98,28 @@ func runningResult(u Unit) Result {
 	}
 	return ok("running")
 }
+
+// RegistryState is what the lab registry check found.
+type RegistryState struct {
+	Missing bool   // Zot is not there yet
+	Pending string // a step still to run (the nodes' mirror file); a warning
+	Err     error  // anything else: a failure
+}
+
+// checkLabRegistry reports whether labs can push images from the host and
+// the cluster can pull them.
+func checkLabRegistry(ctx context.Context, sys System, _ Options) Result {
+	if sys.LabRegistry == nil {
+		return Result{Status: Skip, Detail: "not checked"}
+	}
+	st := sys.LabRegistry(ctx)
+	switch {
+	case st.Missing:
+		return Result{Status: Skip, Detail: "Zot is not there yet (lab up makes it)"}
+	case st.Err != nil:
+		return fail("lab up --stacks registry publishes Zot on 127.0.0.1:5000", "%s", firstLine(st.Err.Error()))
+	case st.Pending != "":
+		return warn("lab labs start (or lab up) writes it", "%s", st.Pending)
+	}
+	return ok("push 127.0.0.1:5000/lab from the host, pull lab-zot:5000/lab in the cluster")
+}

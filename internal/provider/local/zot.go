@@ -1,11 +1,18 @@
 package local
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // Zot runs as a rootless Podman container on the kind network, so nodes reach
@@ -137,4 +144,74 @@ func EnsureLabRegistry(home string) error {
 // LAB_REGISTRY_PUSH from the host, LAB_REGISTRY_PULL from the cluster.
 func LabRegistryEnv() []string {
 	return []string{"LAB_REGISTRY_PUSH=" + LabRegistryPush, "LAB_REGISTRY_PULL=" + LabRegistryPull}
+}
+
+// Errors from CheckLabRegistry that are a state to report, not a fault:
+// Zot is not there yet, or the nodes' mirror file is still to be written.
+var (
+	ErrNoRegistry = errors.New("the lab registry (lab-zot) is not there yet; lab up --stacks registry makes it")
+	ErrNoPullFile = errors.New("the nodes have no mirror file for the lab registry yet")
+)
+
+// CheckLabRegistry checks the host can push to the lab registry and the
+// cluster can pull from it: Zot runs and publishes its port on 127.0.0.1
+// only (never the LAN), a push to lab/ is accepted (an upload session,
+// opened and cancelled, so nothing is stored), and the nodes' mirror file
+// for lab-zot:5000 exists under home.
+// base is Zot's address from the host, http://127.0.0.1:5000.
+func CheckLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base, home string) error {
+	c, err := rt.Container(ctx, ZotContainer)
+	switch {
+	case err != nil:
+		return err
+	case !c.Exists:
+		return ErrNoRegistry
+	case !c.Running:
+		return fmt.Errorf("%s is stopped: podman start %s (or lab up)", ZotContainer, ZotContainer)
+	}
+	binds := c.HostPorts[fmt.Sprintf("%d/tcp", ZotPort)]
+	if len(binds) == 0 {
+		return fmt.Errorf("%s publishes no host port for %d; lab up --stacks registry publishes it on 127.0.0.1", ZotContainer, ZotPort)
+	}
+	for _, b := range binds {
+		if host, _, _ := net.SplitHostPort(b); host != "127.0.0.1" {
+			return fmt.Errorf("%s publishes %d on %s, not on 127.0.0.1 only; the registry must never listen on the LAN", ZotContainer, ZotPort, b)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v2/lab/doctor/blobs/uploads/", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("push to %s: %w", LabRegistryPush, err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("push to %s: Zot answered HTTP %d to an upload, want 202", LabRegistryPush, resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "" {
+		if !strings.HasPrefix(loc, "http") {
+			loc = base + loc
+		}
+		if del, err := http.NewRequestWithContext(ctx, http.MethodDelete, loc, nil); err == nil {
+			if r, err := client.Do(del); err == nil {
+				_ = r.Body.Close()
+			}
+		}
+	}
+	hosts := filepath.Join(home, "kind", "certs.d", labRegistryHost, "hosts.toml")
+	if _, err := os.Stat(hosts); err != nil {
+		return fmt.Errorf("%w: %s is missing, so the nodes cannot pull %s; lab labs start (or lab up) writes it", ErrNoPullFile, hosts, LabRegistryPull)
+	}
+	return nil
+}
+
+// HostCheckLabRegistry is CheckLabRegistry over the rootless Podman socket.
+func HostCheckLabRegistry(ctx context.Context, home string) error {
+	sock, err := PodmanSocket()
+	if err != nil {
+		return err
+	}
+	return CheckLabRegistry(ctx, NewPodman(sock), &http.Client{Timeout: 5 * time.Second}, fmt.Sprintf("http://127.0.0.1:%d", ZotPort), home)
 }

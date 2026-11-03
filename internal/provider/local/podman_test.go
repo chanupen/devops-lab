@@ -299,3 +299,22 @@ func TestPodmanExec(t *testing.T) {
 		})
 	}
 }
+
+func TestPodmanHostPorts(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"on 127.0.0.1", `{"State":{"Running":true},"NetworkSettings":{"Ports":{"5000/tcp":[{"HostIp":"127.0.0.1","HostPort":"5000"}]}}}`, []string{"127.0.0.1:5000"}},
+		{"not published", `{"State":{"Running":true},"NetworkSettings":{"Ports":{"5000/tcp":null}}}`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, _, _ := fakePodman(t, map[string]route{"GET /containers/lab-zot/json": {200, tt.body}})
+			c, err := p.Container(context.Background(), "lab-zot")
+			if got := c.HostPorts["5000/tcp"]; err != nil || strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("HostPorts = %v, %v; want %v", got, err, tt.want)
+			}
+		})
+	}
+}

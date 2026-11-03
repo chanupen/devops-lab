@@ -63,6 +63,9 @@ type System struct {
 	// Units lists the lab's containers (cluster nodes, the image cache);
 	// nil skips those checks.
 	Units func(ctx context.Context) ([]Unit, error)
+	// LabRegistry checks the host can push to the lab registry and the
+	// cluster can pull from it; nil skips the check.
+	LabRegistry func(ctx context.Context) RegistryState
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -147,6 +150,7 @@ func Checks() []Check {
 		{"lab cluster", unitCheck("cluster", "lab")},
 		{"scratch clusters", checkScratchClusters},
 		{"image cache", unitCheck("image cache", "lab-zot")},
+		{"lab registry", checkLabRegistry},
 	}
 }
 

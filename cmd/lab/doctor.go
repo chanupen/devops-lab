@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
 	"github.com/chanupen/devops-lab/internal/provider/local"
+	"github.com/chanupen/devops-lab/internal/state"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -44,6 +47,7 @@ func newDoctorCmd() *cobra.Command {
 			sys := doctor.HostSystem()
 			if mode == "local" {
 				sys.Units = doctorUnits
+				sys.LabRegistry = doctorLabRegistry
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
@@ -104,4 +108,21 @@ func clusterVersion(ctx context.Context) (version, why string) {
 		return "", err.Error()
 	}
 	return v, ""
+}
+
+// doctorLabRegistry checks the lab registry for lab doctor. The mirror
+// files are under ~/.lab, where lab writes them.
+func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
+	home, err := state.DefaultPath()
+	if err != nil {
+		return doctor.RegistryState{Err: err}
+	}
+	err = local.HostCheckLabRegistry(ctx, filepath.Dir(home))
+	switch {
+	case errors.Is(err, local.ErrNoRegistry):
+		return doctor.RegistryState{Missing: true}
+	case errors.Is(err, local.ErrNoPullFile):
+		return doctor.RegistryState{Pending: err.Error()}
+	}
+	return doctor.RegistryState{Err: err}
 }

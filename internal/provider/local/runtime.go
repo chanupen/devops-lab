@@ -76,4 +76,6 @@ type ContainerInfo struct {
 	// (zero if it never has). Lab time is counted from them.
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// HostPorts are the published ports, "5000/tcp" -> ["127.0.0.1:5000"].
+	HostPorts map[string][]string
 }

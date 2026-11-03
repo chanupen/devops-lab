@@ -108,3 +108,31 @@ func TestClusterVersionCheck(t *testing.T) {
 		t.Errorf("zot: %+v", r)
 	}
 }
+
+func TestLabRegistryCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		st   *RegistryState
+		want Status
+		text string
+	}{
+		{"ready", &RegistryState{}, OK, "push 127.0.0.1:5000/lab"},
+		{"no Zot yet", &RegistryState{Missing: true}, Skip, "not there yet"},
+		{"mirror file to write", &RegistryState{Pending: "hosts.toml is missing"}, Warn, "hosts.toml is missing"},
+		{"on the LAN", &RegistryState{Err: errors.New("lab-zot publishes 5000 on 0.0.0.0:5000")}, Fail, "0.0.0.0:5000"},
+		{"not wired", nil, Skip, "not checked"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sys System
+			if tt.st != nil {
+				st := *tt.st
+				sys.LabRegistry = func(context.Context) RegistryState { return st }
+			}
+			r := checkLabRegistry(context.Background(), sys, Options{})
+			if r.Status != tt.want || !strings.Contains(r.Detail, tt.text) {
+				t.Errorf("got %s %q, want %s %q", r.Status, r.Detail, tt.want, tt.text)
+			}
+		})
+	}
+}
