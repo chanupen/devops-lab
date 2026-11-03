@@ -1,8 +1,8 @@
 // Package local is the local-mode provider: kind on rootless Podman, with Zot
 // as a pull-through registry cache.
 //
-// LocalStack is not a stack; Secrets() and ObjectStore() will start it when a
-// stack such as secrets needs those APIs.
+// Moto, the AWS API emulator, is not a stack: the provider starts it as a
+// container on the kind network when a stack such as secrets needs it.
 package local
 
 import (

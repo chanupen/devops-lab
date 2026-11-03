@@ -8,7 +8,7 @@ Oct 30, 2026 · @Chandan Kumar
 
 Build one lab with one control center: a Go terminal app called `lab` that brings up the same DevOps platform either on the Fedora box (local mode) or on AWS (cloud mode), with the same screens, keys and lab exercises in both.
 
-- **Local mode** runs everything on the ASUS Zephyrus (Fedora 45): kind clusters on rootless Podman, LocalStack for AWS APIs, local registry, full observability. Cost is zero, so it is the default.
+- **Local mode** runs everything on the ASUS Zephyrus (Fedora 45): kind clusters on rootless Podman, Moto for AWS APIs (Secrets Manager), local registry, full observability. Cost is zero, so it is the default.
 - **Cloud mode** runs on real AWS (EKS, ECR, Secrets Manager, Karpenter) in ap-south-1, built with Terraform, with hard cost guardrails: every environment has a TTL and is destroyed automatically.
 - **The control center** is a k9s-style TUI built with Go and Bubble Tea. It never blocks on a command, watches the cluster instead of polling it, and opens in well under a second. Every TUI action is also a CLI command, so labs can be scripted and run in CI.
 
@@ -42,21 +42,31 @@ The lab exists to practise the Senior/Staff platform stack on real systems, rehe
 
 ## Lab modes
 
-Both modes provide the same capabilities; only the provider behind each one changes. LocalStack sits inside local mode, which matches the devops-roadmap decision to offer every cloud lab on LocalStack and on real AWS.
+Both modes provide the same capabilities; only the provider behind each one changes. Moto, an AWS API emulator, sits inside local mode, so a lab that uses an AWS API runs the same commands locally and on real AWS; only the endpoint differs.
 
 | Capability | Local mode (Fedora) | Cloud mode (AWS, ap-south-1) |
 | --- | --- | --- |
 | Kubernetes | kind, 1 control plane + 2 workers, on rootless Podman | EKS, managed node group + Karpenter (spot) |
-| Infrastructure as code | Terraform against LocalStack | Terraform against AWS, state in S3 with lock |
+| Infrastructure as code | Terraform against Moto (where it emulates the APIs) | Terraform against AWS, state in S3 with lock |
 | Container registry | Zot (light) or Harbor (optional module) | ECR |
-| Secrets | External Secrets Operator + LocalStack Secrets Manager | External Secrets Operator + AWS Secrets Manager via EKS Pod Identity |
+| Secrets | External Secrets Operator + Secrets Manager emulated by Moto | External Secrets Operator + AWS Secrets Manager via EKS Pod Identity |
 | Ingress and DNS | Gateway API (Envoy Gateway) on `127.0.0.1:8080/8443` of the Fedora box only; apps are `https://<app>.localtest.me:8443`, reached from the Mac through `ssh -N fedora-lab` | Gateway API + AWS Load Balancer Controller, Route 53 sub-zone (optional) |
-| Object storage | LocalStack S3 (or MinIO) | S3 |
+| Object storage | Moto S3 (or MinIO) | S3 |
 | Load and AI | Ollama on the G14 GPU, small models | GPU spot node via Karpenter, only when a lab asks for it |
 | Cost | Zero | Pay per hour; TTL and budget enforced (see guardrails) |
 | Typical spin-up | About 2 to 4 minutes | About 15 to 20 minutes (EKS control plane) |
 
 Spin-up times are estimates to confirm in phase 1 and phase 3. **When to use which:** local mode for daily practice, module development and break/fix drills; cloud mode for IAM, Karpenter, load balancers, spot behaviour and anything that needs real AWS, usually a few hours at a time before an interview or a demo.
+
+### Decision: Moto instead of LocalStack (2026-11-03)
+
+Local mode emulates AWS APIs with Moto (`motoserver/moto` 5.2.5, Apache-2.0), pinned by digest, not LocalStack:
+
+- Since 2026-03-23 the `localstack/localstack` image needs an auth token to start (the 2026.x releases).
+- The free Hobby plan needs a LocalStack account per user and is for non-commercial use only, which does not fit a repo that may become public and be used by others.
+- The last image that runs without a token, 4.14, gets no fixes or security patches.
+
+Moto speaks the Secrets Manager API that ESO's AWS provider uses, so the provider and the lab commands are the same as on AWS; only the endpoint differs. It keeps no state across restarts, so `lab up` re-seeds it from the Kubernetes Secrets ESO keeps.
 
 ### Memory budget on the Fedora box
 
@@ -67,7 +77,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
 | minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
 | minimal + obs + policy | the default plus `policy` (Kyverno and the baseline Pod Security policies) | 0.8 GiB more than the default (5.0 to 5.9 GiB, `podman stats` on the `lab-*` containers, median of three); Kyverno's own four pods use about 210 MiB, the rest is the API server and etcd carrying its CRDs, webhooks and reports |
-| standard | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
+| standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 
 Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
@@ -190,7 +200,7 @@ Keys follow k9s habits so there is nothing new to learn.
 
 ## Lab catalog
 
-The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. LocalStack is not a stack: the local provider starts it when a stack such as secrets needs its APIs. `lab up` applies the profile plus `lab.yaml`'s `extraStacks`; deployed stacks outside it are removed only with `lab up --prune`. A stack the mode's provider cannot run yet, and any stack that needs one, is shown in the plan as `- <stack>  skip: not supported by the local provider yet` with one warning, and the rest is applied; `lab up` never reports a stack as "to apply" and then fails on it.
+The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. Moto is not a stack: the local provider starts it when a stack such as secrets needs an AWS API. `lab up` applies the profile plus `lab.yaml`'s `extraStacks`; deployed stacks outside it are removed only with `lab up --prune`. A stack the mode's provider cannot run yet, and any stack that needs one, is shown in the plan as `- <stack>  skip: not supported by the local provider yet` with one warning, and the rest is applied; `lab up` never reports a stack as "to apply" and then fails on it.
 
 Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/overlays/local/<stack>/`; multi-source Argo CD apps take the chart from its Helm repo and both value files from this repo. Grafana's admin login is a Secret the obs stack generates in the cluster (`monitoring/grafana-admin`, never in Git); read it with `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
 
@@ -201,7 +211,7 @@ Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/o
 | gitops | Argo CD (app-of-apps) via the Helm SDK; Flux as the second option, chosen per lab | cluster | GitOps, promotion between environments |
 | core | metrics-server, Envoy Gateway (Gateway API), cert-manager, as Argo CD apps | gitops | Cluster add-ons, ingress, TLS |
 | ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
-| secrets | External Secrets Operator, LocalStack or AWS Secrets Manager | gitops | Secret sync, rotation, Pod Identity |
+| secrets | External Secrets Operator; Secrets Manager from Moto locally, AWS in cloud | gitops | Secret sync, rotation, Pod Identity |
 | obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
 | policy | Kyverno 1.19 (chart 3.9.2, one replica per controller, policy exceptions on) and the Pod Security Standards "baseline" policies in Audit mode: they report, never block. Labs add Enforce policies scoped to their own namespaces. Not in the minimal profile: `extraStacks: [obs, policy]` or `lab up --stacks policy` | gitops | Admission control, policy as code |
 | scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
@@ -272,7 +282,7 @@ profiles:
     host: asuszephyrus
     runtime: podman        # rootless, always; KIND_EXPERIMENTAL_PROVIDER=podman
     cluster: { provider: kind, workers: 2, k8sVersion: "1.36" }
-    awsEndpoint: http://localhost.localstack.cloud:4566
+    awsEndpoint: http://127.0.0.1:4566   # Moto
     registry: zot
     memoryLimitGiB: 14     # lab doctor warns above this
   cloud:
@@ -316,13 +326,13 @@ devops-lab/
 │   ├── tui/                # Bubble Tea models, one per screen
 │   ├── engine/             # plan, apply, destroy, dependency order
 │   ├── provider/
-│   │   ├── local/          # kind, Podman, LocalStack, Zot
+│   │   ├── local/          # kind, Podman, Moto, Zot
 │   │   └── aws/            # Terraform runner, EKS, ECR, cost, TTL
 │   ├── kube/               # client-go informers, health
 │   ├── state/              # ~/.lab/state.json, ops history
 │   └── drills/             # fault injection and timers
 ├── infra/terraform/
-│   ├── local/              # LocalStack resources
+│   ├── local/              # Moto resources
 │   └── aws/                # VPC, EKS, ECR, IAM, budgets, TTL reaper
 ├── gitops/
 │   ├── bootstrap/          # Argo CD app-of-apps
@@ -467,7 +477,7 @@ The biggest risk is spending the time on TUI polish instead of labs; build the C
 | G14 memory runs out with every stack on | Pods evicted, slow cluster | Stack profiles `minimal`, `standard`, `full`; the default minimal + obs measured 4.6 GiB; standard fits in about 12 GiB of the 22 GiB |
 | kind on rootless Podman (experimental in kind) | Clusters fail to start | Delegate cgroup v2 controllers to the user, raise inotify limits, load the iptables modules, enable the user podman.socket, map ports above 1024; all checked by `lab doctor` |
 | NVIDIA driver on Fedora 45 | Ollama falls back to CPU | Keep the ai stack optional; follow the GPU setup section; lab doctor checks the driver and CDI |
-| LocalStack free tier gaps or licence changes | Some local AWS labs stop working | Check current LocalStack terms before phase 2; MinIO as the S3 fallback |
+| Moto is a test emulator, not a service | Some AWS behaviour is missing (no IAM enforcement, no persistence) | Labs use only the APIs Moto covers; `lab up` re-seeds it after a restart; the real behaviour is checked in cloud mode |
 | Forgotten cloud environment | Unexpected AWS bill | TTL tags, server-side reaper, budget action |
 
 **Decisions taken (30 Oct 2026)**

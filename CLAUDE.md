@@ -27,7 +27,7 @@ Design doc: "DevOps Lab Control Center — Plan and Design" (Claude Docs). Expor
   - Stacks a provider cannot run yet are skipped at plan time (`- <stack>  skip: …`, one warning), never failed at run time.
   - Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml` (on Fedora a symlink to the repo's file, so `ssh -t fedora lab` gets the real config).
 - Providers implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`.
-  - `local`: kind on rootless Podman, LocalStack, Zot registry, Ollama on the host.
+  - `local`: kind on rootless Podman, Moto (the AWS emulator, for Secrets Manager), Zot registry, Ollama on the host.
   - `aws`: Terraform via terraform-exec, AWS SDK v2, EKS + Karpenter (spot), ECR, Secrets Manager, EKS Pod Identity.
 - After bootstrap, GitOps owns everything: **Argo CD by default, Flux as the second option** (`gitops: argocd | flux`). Never run both except in the comparison lab.
 - Mode differences live only in `gitops/overlays/` and `internal/provider/`. If supporting one mode needs changes anywhere else, the design is leaking.
@@ -71,7 +71,7 @@ Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~1
 cmd/lab/                 main.go, Cobra commands
 internal/tui/            Bubble Tea models, one per screen
 internal/engine/         plan, apply, destroy, dependency order
-internal/provider/local  kind, Podman, LocalStack, Zot
+internal/provider/local  kind, Podman, Moto, Zot
 internal/provider/aws    Terraform runner, EKS, ECR, cost, TTL
 internal/kube/           client-go informers, health, waits (nodes, Argo CD apps)
 internal/gitops/         Argo CD install (Helm SDK), app-of-apps, in-cluster stacks
