@@ -76,6 +76,7 @@ Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux 
 A reboot leaves the lab's containers (`lab-*`: the kind nodes and `lab-zot`) in place but stopped. Every lab container's name starts with `lab-`, so lab finds them through the Podman API:
 
 - `lab up` checks the Kubernetes pin first (see Kubernetes version), then starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
+- `lab down` starts the main cluster's nodes and `lab-zot` first too, so destroying the in-cluster stacks can reach the API server.
 - `lab labs start` starts `lab-zot` and the scratch cluster's node when they are there but stopped. Without Zot it says images come straight from the registries.
 - `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
 - The TUI's Home screen shows `○ stopped` and the command for a stopped cluster or `lab-zot`, in the header too. It lists the containers in the background: at start, every five file checks, and when the cluster goes down or comes back.
@@ -224,6 +225,7 @@ A lab says where it runs. `needs: scratch` gives it its own single-node kind clu
 - **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears the lab's progress, steps and time, because the work went with the cluster; the next start begins at step 1. A lab on the main cluster keeps its steps and starts its time from zero.
 - **`list`** shows the current step: `step 1/6, 0m, started` right after a start, `done, 6/6 steps, 42m` at the end.
 - **`start` output** is a few progress lines (image cache, creating the cluster, kubeconfig, nodes ready) and then the step. kind's own output and node diagnostics go to the op log only; `-v`/`--verbose` on `start` and `stop` streams them too.
+- **client-go messages** (a watch that fails while a new cluster's RBAC comes up) go to the op log, never the terminal: every wait gives its informer a logger that writes to the step's log (for `lab labs start`, the op log's detail). The informer retries on its own.
 
 `go test -tags e2e ./internal/labs/` runs a lab for real: each step's verify fails before its solution and passes after it, then reset and stop.
 
@@ -290,6 +292,8 @@ Versions and the budget figure are placeholders; pin them when phase 1 starts.
 Both modes check their Kubernetes version against one compatibility table, `internal/compat`: for each pinned component, the range its upstream states for the release lab installs, and the modes that install it. Argo CD 3.5 (tested on 1.33 to 1.36) is in both modes, Karpenter and the Load Balancer Controller in cloud mode, and the kind v0.33.0 node images (1.34 to 1.37) in local mode. Today that holds both labs at 1.36.
 
 - **Local:** `lab.yaml` `k8sVersion` (default 1.36) picks the kind node image, by digest from kind's release notes, for the main cluster and the scratch clusters. `lab up` refuses a pin outside the table and says which component does not support it and which versions work. It also refuses when the main cluster runs another version than the pin: a kind cluster cannot change version in place, so `lab down`, then `lab up` makes it again (the image cache volume is kept).
+- **The running version comes from the node:** `/kind/version` in the control-plane container, read through the Podman exec API. The node's image name cannot be used: kind's Podman provider pulls by digest, so the name has no tag. A stopped node cannot be exec'd, so `lab up` checks the pin against the table first, then starts stopped containers, then reads the version. A version it cannot read refuses, like a mismatch; it never passes. `lab labs start` does the same for an existing scratch cluster (fix: `lab labs stop`, then `lab labs start`).
+- **Shown live:** `lab status` (a `version` line), the TUI's Home screen (a `version` row) and `lab doctor` (the `lab cluster` check) show the node's version: ● on the pin, ✕ with `lab down, then lab up` when it differs. An unreadable version is ✕ in status and Home and a warning in doctor.
 - **Cloud:** lab picks the newest EKS version in standard support that the table's cloud rows all support, or `cloud.k8sVersion`; a running cluster keeps its version.
 
 ### GitOps revision
@@ -298,7 +302,7 @@ The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo 
 
 - **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
 - **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
-- **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
+- **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). The header's Kubernetes version is the `lab.yaml` pin. Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, in local mode the node's Kubernetes version (✕ with the fix when it is not the pin), Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
 
 ### Repository layout
 
@@ -327,7 +331,7 @@ devops-lab/
 └── Makefile                # make install; build-all for linux/amd64 and darwin/amd64
 ```
 
-**Build and install:** `make install` builds `bin/lab` and installs it as `$(BINDIR)/lab`, with `BINDIR` defaulting to `~/.local/bin` (`make install BINDIR=/some/dir` for another place; no sudo). It prints the installed path and `lab version`. It warns, without failing, when `BINDIR` is not on `PATH`, or when `command -v lab` finds another copy that runs instead, and prints that copy's path. `make uninstall` removes `$(BINDIR)/lab` only. `make build` alone leaves the binary in `bin/lab`, so an older `lab` on `PATH` keeps running.
+**Build and install:** `make install` builds `bin/lab` and installs it as `$(BINDIR)/lab`, with `BINDIR` defaulting to `~/.local/bin` (`make install BINDIR=/some/dir` for another place; no sudo). It prints the installed path and `lab version`. It warns, without failing, when `BINDIR` is not on `PATH`, or when `command -v lab` finds another copy that runs instead, and prints that copy's path. `make uninstall` removes `$(BINDIR)/lab` only. `make help` lists the targets. `make build` alone leaves the binary in `bin/lab`, so an older `lab` on `PATH` keeps running.
 
 Mode differences live only in `gitops/overlays/` and `internal/provider/`. If supporting one mode needs edits anywhere else, the design is leaking and should be fixed.
 
