@@ -66,6 +66,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | --- | --- | --- |
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
 | minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
+| minimal + obs + policy | the default plus `policy` (Kyverno and the baseline Pod Security policies) | 0.8 GiB more than the default (5.0 to 5.9 GiB, `podman stats` on the `lab-*` containers, median of three); Kyverno's own four pods use about 210 MiB, the rest is the API server and etcd carrying its CRDs, webhooks and reports |
 | standard | minimal + secrets (with LocalStack), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 
@@ -202,7 +203,7 @@ Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/o
 | ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
 | secrets | External Secrets Operator, LocalStack or AWS Secrets Manager | gitops | Secret sync, rotation, Pod Identity |
 | obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
-| policy | Kyverno with baseline policies | gitops | Admission control, policy as code |
+| policy | Kyverno 1.19 (chart 3.9.2, one replica per controller, policy exceptions on) and the Pod Security Standards "baseline" policies in Audit mode: they report, never block. Labs add Enforce policies scoped to their own namespaces. Not in the minimal profile: `extraStacks: [obs, policy]` or `lab up --stacks policy` | gitops | Admission control, policy as code |
 | scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
 | chaos | Chaos Mesh | obs | Fault injection for drills |
 | ai | Ollama locally (G14 GPU), small model on a GPU spot node in cloud; Langfuse | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
@@ -220,6 +221,8 @@ Each lab is a directory, `labs/NN-name/`, in a generic format that can be copied
 
 A lab says where it runs. `needs: scratch` gives it its own single-node kind cluster, `lab-scratch-<id>`, on rootless Podman. It sits on the kind network and pulls through the Zot cache when that runs, but has no host ports and its own kubeconfig, so it never touches the main lab or `~/.kube/config`. `lab labs stop` deletes it. `needs: lab` runs on the main lab's cluster and lists the stacks it needs.
 
+A lab on the main cluster works only in its own namespaces, `labNN-*`, and labels any cluster-scoped object it creates `lab.devops/lab=<id>`; its `reset.sh` removes exactly those. Images a lab builds go to the lab registry: a writable namespace in the main lab's Zot, `lab/`, apart from the pull-through cache (whose repositories are all under an upstream's name). The host pushes to `127.0.0.1:5000/lab` (Zot's port is published on 127.0.0.1 only, never the LAN) and the cluster pulls `lab-zot:5000/lab` over plain HTTP, through a `hosts.toml` beside the mirror files that `lab labs start` (and `lab up`) writes; the nodes read it on every pull, so it applies to a running cluster. `lab doctor` checks that a push is accepted and the cluster can pull. The scripts read the addresses from `LAB_REGISTRY_PUSH` and `LAB_REGISTRY_PULL`, so cloud mode needs only an overlay (ECR). Tools a lab needs beyond kubectl, jq and curl (Trivy, Skopeo, Sloth, the kyverno CLI) run as images pinned by digest through rootless Podman, so nothing is installed on the host.
+
 `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent. Only one lab is started at a time.
 
 - **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears the lab's progress, steps and time, because the work went with the cluster; the next start begins at step 1. A lab on the main cluster keeps its steps and starts its time from zero.
@@ -227,15 +230,15 @@ A lab says where it runs. `needs: scratch` gives it its own single-node kind clu
 - **`start` output** is a few progress lines (image cache, creating the cluster, kubeconfig, nodes ready) and then the step. kind's own output and node diagnostics go to the op log only; `-v`/`--verbose` on `start` and `stop` streams them too.
 - **client-go messages** (a watch that fails while a new cluster's RBAC comes up) go to the op log, never the terminal: every wait gives its informer a logger that writes to the step's log (for `lab labs start`, the op log's detail). The informer retries on its own.
 
-`go test -tags e2e ./internal/labs/` runs a lab for real: each step's verify fails before its solution and passes after it, then reset and stop.
+`go test -tags e2e ./internal/labs/` runs the labs for real: each step's verify fails before its solution and passes after it (twice), then reset. Lab 1 runs on its own scratch cluster. The labs on the main cluster run only with `LAB_E2E_MAIN_KUBECONFIG` set to a running lab's kubeconfig, and only touch their own namespaces and labelled objects.
 
 The first set:
 
 1. Bootstrap Argo CD from scratch (scratch cluster, about 45 minutes): install with Helm, log in through a port-forward, deploy podinfo from Git, turn on auto-sync, watch self-heal undo drift, then an app of apps.
-2. Build, scan and promote an image from dev to prod by retagging.
-3. Add an SLO and a burn-rate alert for the sample app.
+2. Build, scan and promote an image by retagging (main cluster, about 40 minutes): build with rootless Podman on an alpine base with known CVEs, push to the lab registry as dev, scan with Trivy and move to a patched base, deploy to `lab02-dev` by digest, promote to `lab02-prod` by copying the digest with Skopeo (no rebuild), and record the scanned digest both environments run.
+3. SLO and burn-rate alerts for the sample app (main cluster, about 45 minutes): pick podinfo-frontend's 5xx share as the SLI, record it, set a 99.5%/30d SLO, write the workbook's fast (14.4) and slow (6) multiwindow alerts as a PrometheusRule, inject errors with a Job, watch the page fire in Alertmanager and silence it, then compare with Sloth's rules. The lab windows are shorter (10m/2m and 1h/10m), so the page fires in about two minutes; the README says how that differs from production.
 4. Rotate a database secret without restarting the app.
-5. Write a Kyverno policy that blocks images without a digest.
+5. A Kyverno policy that blocks images without a digest (main cluster, needs `policy`, about 35 minutes): a ClusterPolicy in Enforce mode scoped to `lab05-*`, a tag-only Pod denied in a server-side dry run, a digest Pod allowed, a PolicyException for one named Deployment, the baseline policies' Audit results in PolicyReports, and `kyverno test` offline.
 6. Cloud only: Karpenter consolidation and spot interruption.
 
 ### Drills
@@ -289,7 +292,7 @@ Versions and the budget figure are placeholders; pin them when phase 1 starts.
 
 ### Kubernetes version
 
-Both modes check their Kubernetes version against one compatibility table, `internal/compat`: for each pinned component, the range its upstream states for the release lab installs, and the modes that install it. Argo CD 3.5 (tested on 1.33 to 1.36) is in both modes, Karpenter and the Load Balancer Controller in cloud mode, and the kind v0.33.0 node images (1.34 to 1.37) in local mode. Today that holds both labs at 1.36.
+Both modes check their Kubernetes version against one compatibility table, `internal/compat`: for each pinned component, the range its upstream states for the release lab installs, and the modes that install it. Argo CD 3.5 (tested on 1.33 to 1.36) and Kyverno 1.19 are in both modes, Karpenter and the Load Balancer Controller in cloud mode, and the kind v0.33.0 node images (1.34 to 1.37) in local mode. Today that holds both labs at 1.36. Kyverno's releases page lists 1.33 to 1.35 as supported, but its release-1.19 conformance tests run 1.33 to 1.36; the row uses the tested range and cites both.
 
 - **Local:** `lab.yaml` `k8sVersion` (default 1.36) picks the kind node image, by digest from kind's release notes, for the main cluster and the scratch clusters. `lab up` refuses a pin outside the table and says which component does not support it and which versions work. It also refuses when the main cluster runs another version than the pin: a kind cluster cannot change version in place, so `lab down`, then `lab up` makes it again (the image cache volume is kept).
 - **The running version comes from the node:** `/kind/version` in the control-plane container, read through the Podman exec API. The node's image name cannot be used: kind's Podman provider pulls by digest, so the name has no tag. A stopped node cannot be exec'd, so `lab up` checks the pin against the table first, then starts stopped containers, then reads the version. A version it cannot read refuses, like a mismatch; it never passes. `lab labs start` does the same for an existing scratch cluster (fix: `lab labs stop`, then `lab labs start`).
