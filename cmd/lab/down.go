@@ -24,7 +24,8 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 		Short: "Destroy every deployed stack, dependents first",
 		Long: "Destroys every stack recorded in ~/.lab/state.json in reverse dependency order. With\n" +
 			"--stacks, destroys only those stacks and the deployed stacks that need them. In local\n" +
-			"mode the registry's image cache volume is kept unless --purge is given. In cloud mode,\n" +
+			"mode it first starts the main cluster's nodes and lab-zot when a reboot stopped them, and\n" +
+			"the registry's image cache volume is kept unless --purge is given. In cloud mode,\n" +
 			"lab down then lists anything still tagged lab=true outside the baseline.",
 		Example: "  lab down\n  lab down --stacks sample-app",
 		Args:    cobra.NoArgs,
@@ -54,6 +55,11 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			}
 			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Purge: purge, Timeout: timeout}))
 			if err != nil {
+				return err
+			}
+			// Destroying in-cluster stacks needs the API server: after a
+			// reboot, start the main cluster and the cache first, as up does.
+			if err := startStopped(cmd, prov); err != nil {
 				return err
 			}
 			if err := run(cmd, prov, g, store, p, command); err != nil {
