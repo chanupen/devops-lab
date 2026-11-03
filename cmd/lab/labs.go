@@ -54,7 +54,11 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	}
 	home := filepath.Dir(path)
 	m := &labs.Manager{Labs: all, Store: state.NewStore(path), Mode: "local", Runner: labs.ExecRunner{}, Home: home,
-		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath}
+		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath,
+		// The lab registry, from the host and from the cluster. A cloud
+		// overlay sets ECR here; the lab scripts read only these.
+		Env:     local.LabRegistryEnv(),
+		Prepare: func(labs.Lab) error { return local.EnsureLabRegistry(home) }}
 	// Scratch clusters run lab.yaml's k8sVersion, like the main lab.
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

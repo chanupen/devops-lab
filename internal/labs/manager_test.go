@@ -525,3 +525,39 @@ func TestStopProgress(t *testing.T) {
 		})
 	}
 }
+
+// Start runs Prepare for the lab before it records anything; a failing
+// Prepare leaves no progress.
+func TestStartPrepares(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		lab     string
+		err     error
+		started bool
+	}{
+		{"scratch lab", "1", nil, true},
+		{"lab on the main cluster", "2", nil, true},
+		{"prepare fails", "2", errors.New("mirror files: permission denied"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _, _, _ := testManager(t)
+			if err := m.Store.Update(func(s *state.State) error {
+				s.Stacks["core"] = state.StackState{Status: state.Applied}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var prepared []string
+			m.Prepare = func(l Lab) error { prepared = append(prepared, l.ID); return tt.err }
+			l, err := m.Start(ctx, tt.lab, io.Discard)
+			if (err == nil) != tt.started || !slices.Equal(prepared, []string{l.ID}) {
+				t.Fatalf("start: %v, prepared %v", err, prepared)
+			}
+			if st, _ := m.Store.Load(); (st.ActiveLab == l.ID) != tt.started {
+				t.Errorf("active lab %q, want started=%v", st.ActiveLab, tt.started)
+			}
+		})
+	}
+}

@@ -101,6 +101,10 @@ type Manager struct {
 	// Env is added to every script's environment, after lab's own
 	// variables (the e2e test gives the scripts a throwaway HOME this way).
 	Env []string
+	// Prepare readies the host for a lab before it is recorded as started
+	// (local mode: the mirror files that let the cluster pull from the lab
+	// registry). Nil does nothing.
+	Prepare func(Lab) error
 	// ScratchName names a scratch lab's cluster; nil is ClusterName. The
 	// e2e test uses its own names, so it never meets a learner's cluster.
 	ScratchName func(Lab) string
@@ -228,6 +232,11 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		}
 		if !ok {
 			return l, m.undoCreate(ctx, name, l, exists, fmt.Errorf("scratch cluster %s is not there after create", name), log)
+		}
+	}
+	if m.Prepare != nil {
+		if err := m.Prepare(l); err != nil {
+			return l, fmt.Errorf("lab %s: %w", l.ID, err)
 		}
 	}
 	// Only now, with the cluster up and every check passed, is the lab

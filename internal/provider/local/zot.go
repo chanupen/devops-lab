@@ -132,3 +132,9 @@ func writeMirrorFiles(certsDir string) error {
 func EnsureLabRegistry(home string) error {
 	return writeMirrorFiles(filepath.Join(home, "kind", "certs.d"))
 }
+
+// LabRegistryEnv is the lab registry as the lab scripts see it:
+// LAB_REGISTRY_PUSH from the host, LAB_REGISTRY_PULL from the cluster.
+func LabRegistryEnv() []string {
+	return []string{"LAB_REGISTRY_PUSH=" + LabRegistryPush, "LAB_REGISTRY_PULL=" + LabRegistryPull}
+}
