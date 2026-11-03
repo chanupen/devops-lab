@@ -31,6 +31,8 @@ type fakeRuntime struct {
 	// exec answers Exec by "container cmd args..."; execErr fails it.
 	exec    map[string]string
 	execErr map[string]error
+	built   []string
+	pushed  []string
 }
 
 func newFakeRuntime() *fakeRuntime {
@@ -88,6 +90,22 @@ func (f *fakeRuntime) Exec(_ context.Context, name string, cmd []string) (string
 		return "", err
 	}
 	return f.exec[key], nil
+}
+
+func (f *fakeRuntime) BuildImage(_ context.Context, _, _, tag string, _ io.Writer) error {
+	if err := f.call("BuildImage"); err != nil {
+		return err
+	}
+	f.built = append(f.built, tag)
+	return nil
+}
+
+func (f *fakeRuntime) PushImage(_ context.Context, name string, _ bool, _ io.Writer) error {
+	if err := f.call("PushImage"); err != nil {
+		return err
+	}
+	f.pushed = append(f.pushed, name)
+	return nil
 }
 
 func (f *fakeRuntime) CreateContainer(_ context.Context, c ContainerSpec) error {

@@ -32,10 +32,10 @@ func TestPlanCmd(t *testing.T) {
 			// lab plan checks what the local provider supports: the rest is
 			// skipped at plan time rather than failing lab up later.
 			want: []string{"local mode, standard profile, Kubernetes 1.36", "+ cluster", "+ core", "+ sample-app", "+ obs",
-				"- secrets     skip: not supported by the local provider yet",
+				"+ secrets     not deployed",
 				"+ policy      not deployed",
-				"7 to apply, 0 to destroy, 0 unchanged, 2 skipped",
-				"warning: 2 stacks skipped, not supported by the local provider yet: secrets, scaling"},
+				"8 to apply, 0 to destroy, 0 unchanged, 1 skipped",
+				"warning: 1 stack skipped, not supported by the local provider yet: scaling"},
 		},
 		{
 			name:   "default profile is minimal plus obs, all supported",

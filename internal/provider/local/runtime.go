@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -23,6 +24,12 @@ type Runtime interface {
 	Exec(ctx context.Context, name string, cmd []string) (string, error)
 	// RemoveContainer force-removes the container; a missing one is not an error.
 	RemoveContainer(ctx context.Context, name string) error
+	// BuildImage builds dir/containerfile as tag, with timestamps set to 0
+	// so the same sources make the same image.
+	BuildImage(ctx context.Context, dir, containerfile, tag string, log io.Writer) error
+	// PushImage pushes a local image to the registry its name says; tls
+	// false allows a plain-HTTP registry (the lab's Zot on 127.0.0.1).
+	PushImage(ctx context.Context, name string, tls bool, log io.Writer) error
 	// RemoveVolume removes a named volume; a missing one is not an error.
 	RemoveVolume(ctx context.Context, name string) error
 }

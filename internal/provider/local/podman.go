@@ -1,12 +1,14 @@
 package local
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -347,6 +349,111 @@ func demux(r io.Reader) (stdout, stderr string, err error) {
 			return out.String(), errb.String(), fmt.Errorf("read stream: %w", err)
 		}
 	}
+}
+
+// BuildImage implements Runtime with libpod's build API: the context goes
+// up as a tar, the build log streams back as JSON lines.
+func (p *Podman) BuildImage(ctx context.Context, dir, containerfile, tag string, log io.Writer) error {
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(tarDir(dir, pw)) }()
+	q := url.Values{"dockerfile": {containerfile}, "t": {tag}, "timestamp": {"0"}, "layers": {"true"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.base+apiPrefix+"/build?"+q.Encode(), pr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("podman API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("build %s: HTTP %d: %s", tag, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return streamLog(resp.Body, "build "+tag, log)
+}
+
+// PushImage implements Runtime.
+func (p *Podman) PushImage(ctx context.Context, name string, tls bool, log io.Writer) error {
+	q := url.Values{"tlsVerify": {fmt.Sprint(tls)}}
+	resp, err := p.do(ctx, http.MethodPost, "/images/"+url.PathEscape(name)+"/push?"+q.Encode(), nil, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return streamLog(resp.Body, "push "+name, log)
+}
+
+// streamLog copies a libpod JSON stream's "stream" lines to log and fails
+// on an "error" (or "errorDetail") line.
+func streamLog(r io.Reader, what string, log io.Writer) error {
+	dec := json.NewDecoder(r)
+	for {
+		var msg struct {
+			Stream string `json:"stream"`
+			Error  string `json:"error"`
+			Detail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if err := dec.Decode(&msg); errors.Is(err, io.EOF) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		if msg.Stream != "" {
+			_, _ = io.WriteString(log, msg.Stream)
+		}
+		if e := msg.Error; e != "" || msg.Detail.Message != "" {
+			if e == "" {
+				e = msg.Detail.Message
+			}
+			return fmt.Errorf("%s: %s", what, strings.TrimSpace(e))
+		}
+	}
+}
+
+// tarDir writes dir's regular files (not hidden ones) as a tar to w.
+func tarDir(dir string, w io.Writer) error {
+	tw := tar.NewWriter(w)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		hdr := &tar.Header{Name: filepath.ToSlash(rel), Mode: int64(info.Mode().Perm()), Size: info.Size(), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		_, err = io.Copy(tw, f)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return tw.Close()
 }
 
 // RemoveContainer implements Runtime.
