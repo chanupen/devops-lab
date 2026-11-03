@@ -122,8 +122,8 @@ func newLabsCmd() *cobra.Command {
 		Use:   "labs",
 		Short: "Hands-on labs: list, start, verify each step, stop",
 		Long: "Labs live in labs/ next to lab.yaml. A scratch lab gets its own single-node kind cluster,\n" +
-			"lab-scratch-<id>, which lab labs stop deletes; the main lab is not touched. Progress is kept\n" +
-			"in ~/.lab/state.json.",
+			"lab-scratch-<id>, which lab labs stop deletes with the lab's progress; the main lab is not\n" +
+			"touched. Progress is kept in ~/.lab/state.json.",
 		Args: cobra.NoArgs,
 	}
 	start, stop, reset := newLabsStartCmd(), newLabsStopCmd(), newLabsResetCmd()
@@ -459,13 +459,30 @@ func newLabsResetCmd() *cobra.Command {
 	return cmd
 }
 
+// stopMessage says how far the lab got: "lab 01-x stopped at step 4/6
+// after 32m", then what the next start does.
+func stopMessage(l labs.Lab, p state.LabProgress) string {
+	n := len(l.Steps)
+	msg := fmt.Sprintf("lab %s stopped at step %d/%d after %s", l.ID, min(p.Step, n), n, shortDuration(p.Spent))
+	if p.Step > n {
+		msg = fmt.Sprintf("lab %s stopped with all %d steps done after %s", l.ID, n, shortDuration(p.Spent))
+	}
+	if l.Needs == labs.NeedsScratch {
+		return msg + fmt.Sprintf("; its cluster is deleted, so lab labs start %s begins at step 1", l.Number())
+	}
+	return msg + fmt.Sprintf("; lab labs start %s picks up at step %d", l.Number(), min(p.Step, n))
+}
+
 func newLabsStopCmd() *cobra.Command {
 	var f labsFlags
 	var verbose bool
 	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the started lab, delete its scratch cluster and reset its time; steps done are kept",
-		Args:  cobra.NoArgs,
+		Short: "Stop the started lab; a scratch lab's cluster and progress are deleted",
+		Long: "Deletes a scratch lab's cluster, and with it the lab's steps and time: the next start\n" +
+			"begins at step 1 on a new cluster. A lab on the main cluster keeps its steps; its time\n" +
+			"starts from zero.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m, err := f.manager(true)
 			if err != nil {
@@ -478,17 +495,15 @@ func newLabsStopCmd() *cobra.Command {
 			if !ok {
 				return errors.New("no lab is started: lab labs start <id>")
 			}
-			var spent time.Duration
+			var reached state.LabProgress
 			if err := labOp(cmd, m, "lab labs stop", l.ID, "stop", verbose, func(w io.Writer) error {
 				var err error
-				_, spent, err = m.Stop(cmd.Context(), w)
+				_, reached, err = m.Stop(cmd.Context(), w)
 				return err
 			}); err != nil {
 				return err
 			}
-			st, _ := m.Store.Load()
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "lab %s stopped after %s; lab labs start %s picks up at step %d, with the time from zero\n",
-				l.ID, shortDuration(spent), l.Number(), min(st.Labs[l.ID].Step, len(l.Steps)))
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), stopMessage(l, reached))
 			return err
 		},
 	}

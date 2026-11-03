@@ -147,3 +147,28 @@ func TestOpLog(t *testing.T) {
 		})
 	}
 }
+
+func TestStopMessage(t *testing.T) {
+	scratch := labs.Lab{ID: "01-argocd-bootstrap", Needs: labs.NeedsScratch, Steps: make([]labs.Step, 6)}
+	onMain := labs.Lab{ID: "02-promote", Needs: labs.NeedsLab, Steps: make([]labs.Step, 6)}
+	tests := []struct {
+		name string
+		l    labs.Lab
+		p    state.LabProgress
+		want string
+	}{
+		{"scratch lab at step 4", scratch, state.LabProgress{Step: 4, Spent: 32 * time.Minute},
+			"lab 01-argocd-bootstrap stopped at step 4/6 after 32m; its cluster is deleted, so lab labs start 01 begins at step 1"},
+		{"scratch lab done", scratch, state.LabProgress{Step: 7, Spent: 41 * time.Minute},
+			"lab 01-argocd-bootstrap stopped with all 6 steps done after 41m; its cluster is deleted, so lab labs start 01 begins at step 1"},
+		{"main-cluster lab keeps its step", onMain, state.LabProgress{Step: 3, Spent: 5 * time.Minute},
+			"lab 02-promote stopped at step 3/6 after 5m; lab labs start 02 picks up at step 3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stopMessage(tt.l, tt.p); got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}

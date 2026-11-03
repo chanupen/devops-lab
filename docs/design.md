@@ -221,7 +221,7 @@ A lab says where it runs. `needs: scratch` gives it its own single-node kind clu
 
 `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent. Only one lab is started at a time.
 
-- **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` deletes the cluster and resets the time to zero; the steps done are kept.
+- **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears the lab's progress, steps and time, because the work went with the cluster; the next start begins at step 1. A lab on the main cluster keeps its steps and starts its time from zero.
 - **`list`** shows the current step: `step 1/6, 0m, started` right after a start, `done, 6/6 steps, 42m` at the end.
 - **`start` output** is a few progress lines (image cache, creating the cluster, kubeconfig, nodes ready) and then the step. kind's own output and node diagnostics go to the op log only; `-v`/`--verbose` on `start` and `stop` streams them too.
 

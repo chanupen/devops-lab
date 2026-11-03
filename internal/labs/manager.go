@@ -294,17 +294,19 @@ func (m *Manager) toolsError(l Lab, missing []string) error {
 	return errors.New(b.String())
 }
 
-// Stop ends the active lab's session, deletes its scratch cluster and
-// resets its time spent, which it returns. Steps done are kept: starting
-// the lab again picks up at the same step, with the time from zero.
-func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, time.Duration, error) {
+// Stop ends the active lab's session and deletes its scratch cluster. It
+// returns the progress the lab reached, with its time spent. A scratch
+// lab's progress is then cleared, steps and time: the cluster that held
+// the work is gone, so the next start begins at step 1. A lab on the main
+// cluster keeps its steps and starts its time from zero.
+func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, state.LabProgress, error) {
 	l, p, err := m.active()
 	if err != nil {
-		return l, 0, err
+		return l, p, err
 	}
-	spent := m.TimeSpent(l, p)
+	p.Spent, p.Session = m.TimeSpent(l, p), time.Time{}
 	l, err = m.stop(ctx, l, log)
-	return l, spent, err
+	return l, p, err
 }
 
 func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
@@ -328,9 +330,14 @@ func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
 		}
 	}
 	return l, m.Store.Update(func(s *state.State) error {
+		s.ActiveLab = ""
+		if l.Needs == NeedsScratch {
+			delete(s.Labs, l.ID)
+			return nil
+		}
 		p := s.Labs[l.ID]
 		p.Spent, p.Session = 0, time.Time{}
-		s.Labs[l.ID], s.ActiveLab = p, ""
+		s.Labs[l.ID] = p
 		return nil
 	})
 }
