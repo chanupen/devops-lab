@@ -26,8 +26,9 @@ type labsFlags struct {
 }
 
 // manager builds the labs manager. Labs run in local mode; progress is in
-// the local state file (~/.lab/state.json). Scratch clusters need Podman,
-// so they are wired only when scratch is set.
+// the local state file (~/.lab/state.json). Commands that make or delete
+// scratch clusters pass scratch and need Podman; the others wire it when it
+// is there, only to read how long a lab's cluster has run.
 func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	cfgPath, err := f.configPath()
 	if err != nil {
@@ -53,12 +54,12 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	home := filepath.Dir(path)
 	m := &labs.Manager{Labs: all, Store: state.NewStore(path), Mode: "local", Runner: labs.ExecRunner{}, Home: home,
 		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath}
-	if scratch {
-		s, err := local.NewScratch(home)
-		if err != nil {
-			return nil, err
-		}
+	s, err := local.NewScratch(home)
+	switch {
+	case err == nil:
 		m.Clusters = s
+	case scratch:
+		return nil, err
 	}
 	return m, nil
 }
@@ -124,20 +125,23 @@ func newLabsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeLabList(cmd.OutOrStdout(), m.Labs, st, time.Now())
+			return writeLabList(cmd.OutOrStdout(), m.Labs, st, m.TimeSpent)
 		},
 	}
 	f.register(cmd)
 	return cmd
 }
 
-func writeLabList(w io.Writer, all []labs.Lab, st state.State, now time.Time) error {
+// spentFunc is a lab's time spent; Manager.TimeSpent asks its cluster.
+type spentFunc func(labs.Lab, state.LabProgress) time.Duration
+
+func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tTIME\tLEVEL\tNEEDS\tPROGRESS")
 	for _, l := range all {
 		p := st.Labs[l.ID]
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", labs.LabMark(l, p).Symbol(), l.ID, l.Title, l.Time, l.Level, l.Needs,
-			progressText(l, p, st.ActiveLab == l.ID, now))
+			progressText(l, p, st.ActiveLab == l.ID, spent(l, p)))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -146,11 +150,11 @@ func writeLabList(w io.Writer, all []labs.Lab, st state.State, now time.Time) er
 	return err
 }
 
-func progressText(l labs.Lab, p state.LabProgress, active bool, now time.Time) string {
+func progressText(l labs.Lab, p state.LabProgress, active bool, spent time.Duration) string {
 	if p.Step == 0 {
 		return "not started"
 	}
-	s := fmt.Sprintf("%d/%d steps, %s", labs.DoneSteps(l, p), len(l.Steps), shortDuration(p.TimeSpent(now)))
+	s := fmt.Sprintf("%d/%d steps, %s", labs.DoneSteps(l, p), len(l.Steps), shortDuration(spent))
 	switch {
 	case active:
 		s += ", started"
@@ -190,7 +194,7 @@ func newLabsStartCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			return writeLabStatus(cmd.OutOrStdout(), m, time.Now())
+			return writeLabStatus(cmd.OutOrStdout(), m)
 		},
 	}
 	f.register(cmd)
@@ -208,14 +212,14 @@ func newLabsStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeLabStatus(cmd.OutOrStdout(), m, time.Now())
+			return writeLabStatus(cmd.OutOrStdout(), m)
 		},
 	}
 	f.register(cmd)
 	return cmd
 }
 
-func writeLabStatus(w io.Writer, m *labs.Manager, now time.Time) error {
+func writeLabStatus(w io.Writer, m *labs.Manager) error {
 	l, p, ok, err := m.Active()
 	if err != nil {
 		return err
@@ -232,7 +236,7 @@ func writeLabStatus(w io.Writer, m *labs.Manager, now time.Time) error {
 		b.WriteString("cluster: the main lab\n")
 	}
 	fmt.Fprintf(&b, "kubectl: export KUBECONFIG=%s\n", m.Kubeconfig(l))
-	fmt.Fprintf(&b, "time spent: %s of about %s\n\n", shortDuration(p.TimeSpent(now)), l.Time)
+	fmt.Fprintf(&b, "time spent: %s of about %s\n\n", shortDuration(m.TimeSpent(l, p)), l.Time)
 	for _, s := range l.Steps {
 		fmt.Fprintf(&b, "  %s %d  %s%s\n", labs.StepMark(p, s.N).Symbol(), s.N, s.Title, stepNotes(p, s.N))
 	}
@@ -316,7 +320,7 @@ func newLabsVerifyCmd() *cobra.Command {
 			if next, ok := l.Step(p.Step); ok {
 				_, _ = fmt.Fprintf(out, "next: step %d, %s (lab labs status shows the task)\n", next.N, next.Title)
 			} else if res.Step == len(l.Steps) {
-				_, _ = fmt.Fprintf(out, "Lab %s is done in %s. lab labs stop deletes its cluster.\n", l.Number(), shortDuration(p.TimeSpent(time.Now())))
+				_, _ = fmt.Fprintf(out, "Lab %s is done in %s. lab labs stop deletes its cluster.\n", l.Number(), shortDuration(m.TimeSpent(l, p)))
 			}
 			return nil
 		},
@@ -418,7 +422,7 @@ func newLabsResetCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			return writeLabStatus(cmd.OutOrStdout(), m, time.Now())
+			return writeLabStatus(cmd.OutOrStdout(), m)
 		},
 	}
 	f.register(cmd)
@@ -430,7 +434,7 @@ func newLabsStopCmd() *cobra.Command {
 	var f labsFlags
 	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the started lab and delete its scratch cluster; progress is kept",
+		Short: "Stop the started lab, delete its scratch cluster and reset its time; steps done are kept",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m, err := f.manager(true)
@@ -444,15 +448,17 @@ func newLabsStopCmd() *cobra.Command {
 			if !ok {
 				return errors.New("no lab is started: lab labs start <id>")
 			}
+			var spent time.Duration
 			if err := labOp(cmd, m, "lab labs stop", l.ID, "stop", func(w io.Writer) error {
-				_, err := m.Stop(cmd.Context(), w)
+				var err error
+				_, spent, err = m.Stop(cmd.Context(), w)
 				return err
 			}); err != nil {
 				return err
 			}
 			st, _ := m.Store.Load()
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "lab %s stopped after %s; lab labs start %s picks up at step %d\n",
-				l.ID, shortDuration(st.Labs[l.ID].Spent), l.Number(), min(st.Labs[l.ID].Step, len(l.Steps)))
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "lab %s stopped after %s; lab labs start %s picks up at step %d, with the time from zero\n",
+				l.ID, shortDuration(spent), l.Number(), min(st.Labs[l.ID].Step, len(l.Steps)))
 			return err
 		},
 	}

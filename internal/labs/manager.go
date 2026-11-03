@@ -28,6 +28,57 @@ type Clusters interface {
 	// Create makes the cluster if it is missing and writes its kubeconfig.
 	Create(ctx context.Context, name, kubeconfig string, log io.Writer) error
 	Delete(ctx context.Context, name, kubeconfig string, log io.Writer) error
+	// Uptime says whether the cluster's node runs, and since when.
+	Uptime(name string) (Uptime, error)
+}
+
+// Uptime is when a scratch cluster's node last started and stopped.
+type Uptime struct {
+	Exists  bool
+	Running bool
+	Started time.Time
+	Stopped time.Time // the last stop; zero if it never stopped
+}
+
+// TimeSpent is p's time: the sessions before this one, and the open session
+// only while the lab's cluster ran. A node that stopped (a reboot) or is gone
+// adds nothing after that; once it starts again, time counts from then. up
+// nil means the uptime is unknown (a lab on the main cluster) and the whole
+// session counts.
+func TimeSpent(p state.LabProgress, up *Uptime, now time.Time) time.Duration {
+	if p.Session.IsZero() || up == nil {
+		return p.TimeSpent(now)
+	}
+	if !up.Exists {
+		return p.Spent
+	}
+	from, to := p.Session, now
+	if up.Started.After(from) {
+		from = up.Started
+	}
+	if !up.Running {
+		to = up.Stopped
+	}
+	if !to.After(from) {
+		return p.Spent
+	}
+	return p.Spent + to.Sub(from)
+}
+
+// TimeSpent is lab l's time spent, asking the cluster for its uptime.
+// With no cluster to ask (Podman unreachable) a scratch lab's open session
+// adds nothing: its cluster cannot be running.
+func (m *Manager) TimeSpent(l Lab, p state.LabProgress) time.Duration {
+	if l.Needs != NeedsScratch || p.Session.IsZero() {
+		return TimeSpent(p, nil, m.now())
+	}
+	up := &Uptime{}
+	if m.Clusters != nil {
+		if u, err := m.Clusters.Uptime(m.Scratch(l)); err == nil {
+			up = &u
+		}
+	}
+	return TimeSpent(p, up, m.now())
 }
 
 // Manager starts, verifies and stops labs, and keeps their progress in
@@ -136,6 +187,9 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 	if missing := m.missingTools(l); len(missing) > 0 {
 		return l, m.toolsError(l, missing)
 	}
+	// Before the cluster is touched: a node that was stopped (a reboot)
+	// counts only up to when it stopped.
+	spent := m.TimeSpent(l, st.Labs[l.ID])
 	switch l.Needs {
 	case NeedsLab:
 		var down []string
@@ -187,9 +241,8 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		if p.Step == 0 {
 			p.Step, p.Started = 1, now
 		}
-		if p.Session.IsZero() {
-			p.Session = now
-		}
+		// The session so far is folded into Spent; a new one counts from now.
+		p.Spent, p.Session = spent, now
 		s.Labs[l.ID], s.ActiveLab = p, l.ID
 		return nil
 	})
@@ -241,13 +294,20 @@ func (m *Manager) toolsError(l Lab, missing []string) error {
 	return errors.New(b.String())
 }
 
-// Stop ends the active lab's session and deletes its scratch cluster.
-// Progress is kept: starting the lab again picks up at the same step.
-func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, error) {
-	l, _, err := m.active()
+// Stop ends the active lab's session, deletes its scratch cluster and
+// resets its time spent, which it returns. Steps done are kept: starting
+// the lab again picks up at the same step, with the time from zero.
+func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, time.Duration, error) {
+	l, p, err := m.active()
 	if err != nil {
-		return l, err
+		return l, 0, err
 	}
+	spent := m.TimeSpent(l, p)
+	l, err = m.stop(ctx, l, log)
+	return l, spent, err
+}
+
+func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
 	if l.Needs == NeedsScratch && m.Clusters != nil {
 		name := m.Scratch(l)
 		exists, err := m.Clusters.Exists(name)
@@ -267,10 +327,9 @@ func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, error) {
 			}
 		}
 	}
-	now := m.now()
 	return l, m.Store.Update(func(s *state.State) error {
 		p := s.Labs[l.ID]
-		p.Spent, p.Session = p.TimeSpent(now), time.Time{}
+		p.Spent, p.Session = 0, time.Time{}
 		s.Labs[l.ID], s.ActiveLab = p, ""
 		return nil
 	})

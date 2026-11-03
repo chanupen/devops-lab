@@ -1,6 +1,9 @@
 package local
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Runtime is the container engine surface the local provider uses. Podman's
 // REST API implements it; tests use a fake.
@@ -10,6 +13,9 @@ type Runtime interface {
 	PullImage(ctx context.Context, ref string) error
 	// Container returns Exists=false, not an error, when there is no such container.
 	Container(ctx context.Context, name string) (ContainerInfo, error)
+	// Containers lists every container, running or not, whose name starts
+	// with prefix, sorted by name.
+	Containers(ctx context.Context, prefix string) ([]ContainerInfo, error)
 	CreateContainer(ctx context.Context, c ContainerSpec) error
 	StartContainer(ctx context.Context, name string) error
 	// RemoveContainer force-removes the container; a missing one is not an error.
@@ -58,8 +64,13 @@ type Bind struct {
 
 // ContainerInfo is the part of a container's state the provider checks.
 type ContainerInfo struct {
+	Name    string
 	Exists  bool
 	Running bool
 	Image   string
 	Labels  map[string]string
+	// StartedAt is when it last started; FinishedAt when it last stopped
+	// (zero if it never has). Lab time is counted from them.
+	StartedAt  time.Time
+	FinishedAt time.Time
 }

@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/chanupen/devops-lab/internal/labs"
 )
 
 func testScratch(t *testing.T, rt *fakeRuntime, kc *fakeClusters) (*Scratch, *[]string) {
@@ -134,5 +137,34 @@ func TestScratchRetriesCreateOnce(t *testing.T) {
 	s, _ = testScratch(t, newFakeRuntime(), kc)
 	if err := s.Create(context.Background(), "lab-scratch-01-x", filepath.Join(s.home, "kc"), io.Discard); err == nil {
 		t.Error("two failures did not fail the start")
+	}
+}
+
+// Uptime reads the node container: running or stopped, and since when.
+func TestScratchUptime(t *testing.T) {
+	t0 := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	node := "lab-scratch-01-x-control-plane"
+	tests := []struct {
+		name string
+		c    *ContainerInfo
+		want labs.Uptime
+	}{
+		{"no node", nil, labs.Uptime{}},
+		{"running", &ContainerInfo{Exists: true, Running: true, StartedAt: t0}, labs.Uptime{Exists: true, Running: true, Started: t0}},
+		{"stopped by a reboot", &ContainerInfo{Exists: true, StartedAt: t0, FinishedAt: t0.Add(time.Hour)},
+			labs.Uptime{Exists: true, Started: t0, Stopped: t0.Add(time.Hour)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newFakeRuntime()
+			if tt.c != nil {
+				rt.containers[node] = *tt.c
+			}
+			s, _ := testScratch(t, rt, &fakeClusters{nodes: map[string]int{}})
+			got, err := s.Uptime("lab-scratch-01-x")
+			if err != nil || got != tt.want {
+				t.Errorf("Uptime = %+v, %v; want %+v", got, err, tt.want)
+			}
+		})
 	}
 }

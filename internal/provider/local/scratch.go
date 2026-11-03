@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
+
+	"github.com/chanupen/devops-lab/internal/labs"
 )
 
 // Scratch makes the single-node kind clusters scratch labs run on. They
@@ -66,6 +68,17 @@ func scratchConfig(name, certsDir string) *v1alpha4.Cluster {
 func (s *Scratch) Exists(name string) (bool, error) {
 	names, err := s.clusters(io.Discard, "", false).List()
 	return slices.Contains(names, name), err
+}
+
+// Uptime implements labs.Clusters from the node container's state.
+func (s *Scratch) Uptime(name string) (labs.Uptime, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := s.rt.Container(ctx, name+"-control-plane")
+	if err != nil {
+		return labs.Uptime{}, err
+	}
+	return labs.Uptime{Exists: c.Exists, Running: c.Running, Started: c.StartedAt, Stopped: c.FinishedAt}, nil
 }
 
 // Create implements labs.Clusters. Without a running Zot, containerd's

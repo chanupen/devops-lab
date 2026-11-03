@@ -18,6 +18,9 @@ func TestLabsCommands(t *testing.T) {
 	}
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	flags := []string{"--config", cfg, "--state", statePath}
+	// The scratch node has run for an hour; the session began 15 minutes ago.
+	fakePodmanSocket(t, map[string]fakeContainer{"lab-scratch-01-argocd-bootstrap-control-plane": {
+		Running: true, StartedAt: time.Now().Add(-time.Hour)}})
 
 	out, err := runLab(append([]string{"labs", "list"}, flags...)...)
 	if err != nil || !strings.Contains(out, "○  01-argocd-bootstrap  Bootstrap Argo CD from scratch  45m   beginner  scratch  not started") {
@@ -38,6 +41,10 @@ func TestLabsCommands(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+	out, err = runLab(append([]string{"labs", "list"}, flags...)...)
+	if err != nil || !strings.Contains(out, "◐  01-argocd-bootstrap") || !strings.Contains(out, "1/6 steps, 15m, started") {
+		t.Errorf("list while started: %v\n%s", err, out)
 	}
 	out, err = runLab(append([]string{"labs", "status"}, flags...)...)
 	for _, want := range []string{"lab 01-argocd-bootstrap: Bootstrap Argo CD from scratch", "cluster: lab-scratch-01-argocd-bootstrap",

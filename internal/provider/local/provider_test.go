@@ -58,6 +58,18 @@ func (f *fakeRuntime) Container(_ context.Context, name string) (ContainerInfo, 
 	return f.containers[name], f.call("Container")
 }
 
+func (f *fakeRuntime) Containers(_ context.Context, prefix string) ([]ContainerInfo, error) {
+	var out []ContainerInfo
+	for name, c := range f.containers {
+		if strings.HasPrefix(name, prefix) && c.Exists {
+			c.Name = name
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b ContainerInfo) int { return strings.Compare(a.Name, b.Name) })
+	return out, f.call("Containers")
+}
+
 func (f *fakeRuntime) CreateContainer(_ context.Context, c ContainerSpec) error {
 	if err := f.call("CreateContainer"); err != nil {
 		return err
