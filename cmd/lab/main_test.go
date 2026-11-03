@@ -26,3 +26,21 @@ func TestMain(m *testing.M) {
 	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
+
+func TestVersionCmd(t *testing.T) {
+	defer func(v string) { version = v }(version)
+	tests := []struct{ set, want string }{
+		{"dev", "dev\n"},
+		{"v0.4.0-12-gabc1234", "v0.4.0-12-gabc1234\n"},
+	}
+	for _, tt := range tests {
+		version = tt.set
+		out, err := runLab("version")
+		if err != nil || out != tt.want {
+			t.Errorf("lab version with %q = %q, %v; want %q", tt.set, out, err, tt.want)
+		}
+	}
+	if _, err := runLab("version", "extra"); err == nil {
+		t.Error("lab version took an argument")
+	}
+}

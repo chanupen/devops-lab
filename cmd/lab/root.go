@@ -1,6 +1,10 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
 
 func newRootCmd() *cobra.Command { return newRootCmdWith(defaultProvider) }
 
@@ -26,6 +30,20 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 	withLabLock(down)
 	withLabLock(extend)
 	// tunnel only reads the lab and forwards ports: it never takes the lock.
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd())
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newVersionCmd())
 	return root
+}
+
+// newVersionCmd prints the version set at build time (-X main.version), as
+// make install does after installing.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print lab's version",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), version)
+			return err
+		},
+	}
 }
