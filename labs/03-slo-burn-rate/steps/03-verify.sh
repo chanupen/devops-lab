@@ -9,7 +9,7 @@ o=$(query 'lab03:slo:objective_ratio')
 [ "$(awk -v o="$o" 'BEGIN { print (o == 0.995) }')" = 1 ] || fail "lab03:slo:objective_ratio is $o, want 0.995 (99.5%)"
 win=$(rule lab03:slo:objective_ratio | jq -r '.labels.slo_window // ""')
 [ "$win" = 30d ] || fail "lab03:slo:objective_ratio needs the label slo_window=\"30d\", it has '$win'"
-for w in 2m 10m 1h; do
+for w in 2m 10m 1h 12h; do
   r=$(rule "lab03:slo:burn_rate$w")
   [ -n "$r" ] || fail "no recording rule lab03:slo:burn_rate$w"
   grep -q "lab03:sli_errors:ratio_rate$w" <<<"$(jq -r .query <<<"$r")" || fail "lab03:slo:burn_rate$w does not use lab03:sli_errors:ratio_rate$w"

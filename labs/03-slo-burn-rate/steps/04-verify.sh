@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Step 4: the fast and slow burn alerts are loaded, each with a long and a
-# short window and the workbook's thresholds (14.4 and 6).
+# Step 4: the workbook's three alerts are loaded, each with a long and a
+# short window: fast burn 14.4 and slow burn 6 page, budget burn 1 is a
+# ticket.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
 need_prometheus
@@ -17,5 +18,6 @@ check() { # name threshold long short severity
   [ "$(jq -r '.labels.severity // ""' <<<"$r")" = "$5" ] || fail "$1 needs the label severity=$5"
 }
 check LabSLOFastBurn 14.4 10m 2m page
-check LabSLOSlowBurn 6 1h 10m ticket
-ok "LabSLOFastBurn (14.4 over 10m and 2m) and LabSLOSlowBurn (6 over 1h and 10m) are loaded"
+check LabSLOSlowBurn 6 1h 10m page
+check LabSLOBudgetTicket 1 12h 1h ticket
+ok "LabSLOFastBurn (14.4, 10m/2m) and LabSLOSlowBurn (6, 1h/10m) page; LabSLOBudgetTicket (1, 12h/1h) is a ticket"
