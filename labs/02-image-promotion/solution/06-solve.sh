@@ -2,6 +2,7 @@
 # Step 6: scan the digest prod runs, compare it with what both pods run, and
 # record it on the prod Deployment.
 set -euo pipefail
+# shellcheck source=SCRIPTDIR/../steps/lib.sh
 . "$(dirname "$0")/../steps/lib.sh"
 running=$(kubectl -n lab02-prod get pods -l app=hello -o jsonpath='{.items[0].status.containerStatuses[0].imageID}')
 digest=${running##*@}

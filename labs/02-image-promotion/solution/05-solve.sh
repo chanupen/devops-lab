@@ -2,6 +2,7 @@
 # Step 5: promote by copying the dev digest to the prod tag (no rebuild),
 # then deploy that digest to lab02-prod.
 set -euo pipefail
+# shellcheck source=SCRIPTDIR/../steps/lib.sh
 . "$(dirname "$0")/../steps/lib.sh"
 skopeo() { podman run --rm --network host "$SKOPEO_IMAGE" "$@"; }
 digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$PUSH/lab02-hello:dev")

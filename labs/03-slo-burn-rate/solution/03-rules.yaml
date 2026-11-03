@@ -1,0 +1,38 @@
+# Step 2's rules plus the SLO and the burn rate over each window.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: podinfo-slo
+  namespace: lab03-slo
+spec:
+  groups:
+    - name: lab03-sli
+      rules:
+        - record: lab03:sli_errors:ratio_rate2m
+          expr: |
+            (sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend",status=~"5.."}[2m])) or vector(0))
+            /
+            sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend"}[2m]))
+        - record: lab03:sli_errors:ratio_rate10m
+          expr: |
+            (sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend",status=~"5.."}[10m])) or vector(0))
+            /
+            sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend"}[10m]))
+        - record: lab03:sli_errors:ratio_rate1h
+          expr: |
+            (sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend",status=~"5.."}[1h])) or vector(0))
+            /
+            sum(rate(http_requests_total{namespace="podinfo",job="podinfo-frontend"}[1h]))
+    - name: lab03-slo
+      rules:
+        # The SLO: 99.5% of requests succeed over 30 days. Error budget 0.5%.
+        - record: lab03:slo:objective_ratio
+          expr: vector(0.995)
+          labels: {slo_window: 30d}
+        # Burn rate: how fast the budget goes. 1 spends it in exactly 30 days.
+        - record: lab03:slo:burn_rate2m
+          expr: lab03:sli_errors:ratio_rate2m / (1 - 0.995)
+        - record: lab03:slo:burn_rate10m
+          expr: lab03:sli_errors:ratio_rate10m / (1 - 0.995)
+        - record: lab03:slo:burn_rate1h
+          expr: lab03:sli_errors:ratio_rate1h / (1 - 0.995)

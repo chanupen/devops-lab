@@ -2,6 +2,7 @@
 # Step 3: scan dev with Trivy, move the Dockerfile to the patched base,
 # rebuild, scan again until there is nothing HIGH or CRITICAL, push as dev.
 set -euo pipefail
+# shellcheck source=SCRIPTDIR/../steps/lib.sh
 . "$(dirname "$0")/../steps/lib.sh"
 work="${LAB_WORK:-$HOME/lab02}"
 trivy() {

@@ -1,0 +1,10 @@
+# Lab 3. The format is described in labs/README.md.
+id: 03-slo-burn-rate
+title: SLO and burn-rate alerts for the sample app
+time: 45m
+level: intermediate
+modes: [local]      # cloud needs only an overlay: the same stacks run there
+needs: lab          # the main lab's cluster, namespaces lab03-slo and lab03-load
+stacks: [obs, sample-app]
+# Sloth runs as a pinned image through rootless Podman.
+tools: [kubectl, jq, curl, podman]

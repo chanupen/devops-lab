@@ -3,6 +3,7 @@
 # in Podman or in the lab registry. The Trivy cache volume is kept, so the
 # next scan does not download the vulnerability database again.
 set -uo pipefail
+# shellcheck source=SCRIPTDIR/steps/lib.sh
 . "$(dirname "$0")/steps/lib.sh"
 kubectl delete namespace lab02-dev lab02-prod --ignore-not-found --wait --timeout=180s
 # The registry: delete each tag's manifest by digest.

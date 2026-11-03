@@ -1,10 +1,10 @@
 # shellcheck shell=bash
+# Variables here are used by the scripts that source this file.
+# shellcheck disable=SC2034
 # Shared by lab 2's verify scripts. Each script is read-only: it looks at
 # Podman, the registry and the cluster, and exits 0 when the step is done,
 # or prints why not as its last line and exits 1.
 set -uo pipefail
-# Variables here are used by the scripts that source this file.
-# shellcheck disable=SC2034
 
 fail() {
   echo "$*"
