@@ -111,9 +111,18 @@ func HostUnits(ctx context.Context) ([]Unit, error) {
 	return LabUnits(ctx, NewPodman(sock))
 }
 
-// StartStopped starts every stopped lab container, the image cache and
-// every cluster's nodes, and returns the units it started. After a reboot
-// they are all there but stopped.
+// upOwns reports whether lab up starts the unit: the main cluster or the
+// image cache.
+func (u Unit) upOwns() bool {
+	return u.Kind == "image cache" || (u.Kind == "cluster" && u.Name == ClusterName)
+}
+
+// StartStopped starts the stopped containers lab up owns, the main
+// cluster's nodes and the image cache, and returns the units it started.
+// After a reboot they are all there but stopped. Anything else stopped is
+// left as it is and reported with the command that starts it: a scratch
+// cluster belongs to lab labs start, and an unknown lab-* container is not
+// lab up's to start.
 func StartStopped(ctx context.Context, rt Runtime, log io.Writer) ([]Unit, error) {
 	units, err := LabUnits(ctx, rt)
 	if err != nil {
@@ -121,7 +130,15 @@ func StartStopped(ctx context.Context, rt Runtime, log io.Writer) ([]Unit, error
 	}
 	var started []Unit
 	for _, u := range units {
-		if u.Running() {
+		switch {
+		case u.Running():
+			continue
+		case u.Kind == "cluster" && strings.HasPrefix(u.Name, labs.ScratchPrefix):
+			logf(log, "scratch cluster %s is stopped; lab up leaves it (lab labs start %s starts it)",
+				u.Name, strings.TrimPrefix(u.Name, labs.ScratchPrefix))
+			continue
+		case !u.upOwns():
+			logf(log, "%s %s is stopped; lab up leaves it (%s)", u.Kind, u.Name, u.Fix())
 			continue
 		}
 		logf(log, "%s %s was stopped; starting %s", u.Kind, u.Name, strings.Join(u.Stopped, ", "))

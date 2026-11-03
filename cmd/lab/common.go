@@ -130,7 +130,8 @@ type labRunner struct {
 	hosts func(context.Context) ([]string, error) // nil without a GitOps runner
 	url   func(host string) string
 	hint  string
-	// start starts the mode's stopped containers; nil in cloud mode.
+	// start starts the main cluster's and the cache's stopped containers;
+	// nil in cloud mode.
 	start func(context.Context, io.Writer) ([]local.Unit, error)
 }
 

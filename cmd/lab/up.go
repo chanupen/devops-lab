@@ -27,10 +27,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Bring the lab up to the profile in lab.yaml",
-		Long: "In local mode it first starts the lab's stopped containers (lab-*: cluster nodes and the\n" +
-			"image cache), as after a reboot. Then it plans against ~/.lab/state.json and applies\n" +
-			"stacks in dependency order. Stacks already applied are kept; failed ones are retried.\n" +
-			"Deployed stacks outside the profile are kept unless --prune is given.",
+		Long: "In local mode it first starts the main cluster's nodes and the image cache when they are\n" +
+			"stopped, as after a reboot; other stopped lab-* containers are reported, not started.\n" +
+			"Then it plans against ~/.lab/state.json and applies stacks in dependency order. Stacks\n" +
+			"already applied are kept; failed ones are retried. Deployed stacks outside the profile\n" +
+			"are kept unless --prune is given.",
 		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n  lab up --mode cloud --ttl 20m",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -60,7 +61,8 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				return err
 			}
 			// After a reboot the lab's containers are there but stopped:
-			// start them before anything else looks at the cluster.
+			// start the main cluster and the cache before anything else
+			// looks at them.
 			if s, ok := prov.(stoppedStarter); ok {
 				if _, err := s.StartStopped(cmd.Context(), cmd.OutOrStdout()); err != nil {
 					return fmt.Errorf("starting the lab's stopped containers: %w", err)

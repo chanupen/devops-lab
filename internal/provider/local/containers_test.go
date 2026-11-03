@@ -57,33 +57,39 @@ func TestUnits(t *testing.T) {
 	}
 }
 
-// lab up starts every stopped lab container first, and waits for the main
-// cluster's nodes when it started them.
+// lab up starts the main cluster's nodes and the image cache, and waits
+// for the nodes when it started them. Scratch nodes and unknown lab-*
+// containers stay stopped and are reported with their command.
 func TestStartStopped(t *testing.T) {
+	all := []string{"lab-control-plane", "lab-worker", "lab-scratch-01-x-control-plane", "lab-zot", "lab-foo"}
 	tests := []struct {
 		name    string
 		stopped []string
 		failOn  string
-		started []string // StartContainer calls, in order
+		started []string // started, in order
 		waited  int      // nodes waited for; 0: no wait
+		logs    []string
 		wantErr string
 	}{
-		{"all running", nil, "", nil, 0, ""},
-		{"only the image cache", []string{"lab-zot"}, "", []string{"lab-zot"}, 0, ""},
-		{"after a reboot", []string{"lab-control-plane", "lab-worker", "lab-zot"}, "",
-			[]string{"lab-control-plane", "lab-worker", "lab-zot"}, 2, ""},
-		{"a scratch cluster: no wait for the main one", []string{"lab-scratch-01-x-control-plane"}, "",
-			[]string{"lab-scratch-01-x-control-plane"}, 0, ""},
-		{"start fails", []string{"lab-zot"}, "StartContainer", nil, 0, "start lab-zot"},
+		{"all running", nil, "", nil, 0, nil, ""},
+		{"only the image cache", []string{"lab-zot"}, "", []string{"lab-zot"}, 0,
+			[]string{"image cache lab-zot was stopped; starting lab-zot"}, ""},
+		{"after a reboot", all, "", []string{"lab-control-plane", "lab-worker", "lab-zot"}, 2, []string{
+			"cluster lab was stopped; starting lab-control-plane, lab-worker",
+			"scratch cluster lab-scratch-01-x is stopped; lab up leaves it (lab labs start 01-x starts it)",
+			"container lab-foo is stopped; lab up leaves it (podman start lab-foo)",
+		}, ""},
+		{"a stopped scratch node and lab-foo stay stopped", []string{"lab-scratch-01-x-control-plane", "lab-foo"}, "", nil, 0,
+			[]string{"lab labs start 01-x starts it", "podman start lab-foo"}, ""},
+		{"start fails", []string{"lab-zot"}, "StartContainer", nil, 0, nil, "start lab-zot"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rt := newFakeRuntime()
-			for _, n := range []string{"lab-control-plane", "lab-worker", "lab-scratch-01-x-control-plane", "lab-zot"} {
+			for _, n := range all {
 				rt.containers[n] = ContainerInfo{Exists: true, Running: !slices.Contains(tt.stopped, n)}
 			}
 			rt.failOn = tt.failOn
-			var starts []string
 			p := newProvider(rt, nil, Options{Kubeconfig: "kc"})
 			waited := 0
 			p.nodesReady = func(_ context.Context, _ string, want int, _ io.Writer) error { waited = want; return nil }
@@ -98,22 +104,29 @@ func TestStartStopped(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, n := range []string{"lab-control-plane", "lab-worker", "lab-scratch-01-x-control-plane", "lab-zot"} {
-				if slices.Contains(tt.stopped, n) {
-					starts = append(starts, n)
-					if !rt.containers[n].Running {
+			var started []string
+			for _, n := range all {
+				running := rt.containers[n].Running
+				switch {
+				case slices.Contains(tt.started, n):
+					if !running {
 						t.Errorf("%s still stopped", n)
 					}
+					started = append(started, n)
+				case slices.Contains(tt.stopped, n) && running:
+					t.Errorf("%s was started; lab up must leave it", n)
 				}
 			}
-			if !slices.Equal(starts, tt.started) || waited != tt.waited {
-				t.Errorf("started %v, waited for %d nodes; want %v, %d", starts, waited, tt.started, tt.waited)
+			if !slices.Equal(started, tt.started) || waited != tt.waited {
+				t.Errorf("started %v, waited for %d nodes; want %v, %d", started, waited, tt.started, tt.waited)
 			}
 			if n := strings.Count(rt.callList(), "StartContainer"); n != len(tt.started) {
 				t.Errorf("%d StartContainer calls, want %d", n, len(tt.started))
 			}
-			if len(tt.started) > 0 && !strings.Contains(log.String(), "was stopped; starting") {
-				t.Errorf("log: %s", log.String())
+			for _, w := range tt.logs {
+				if !strings.Contains(log.String(), w) {
+					t.Errorf("log lacks %q:\n%s", w, log.String())
+				}
 			}
 		})
 	}

@@ -75,7 +75,7 @@ Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux 
 
 A reboot leaves the lab's containers (`lab-*`: the kind nodes and `lab-zot`) in place but stopped. Every lab container's name starts with `lab-`, so lab finds them through the Podman API:
 
-- `lab up` starts every stopped `lab-*` container before anything else, then waits for the main cluster's nodes if it started them.
+- `lab up` starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
 - `lab labs start` starts `lab-zot` and the scratch cluster's node when they are there but stopped. Without Zot it says images come straight from the registries.
 - `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
 - The TUI's Home screen shows `○ stopped` and the command for a stopped cluster or `lab-zot`, in the header too. It lists the containers in the background: at start, every five file checks, and when the cluster goes down or comes back.
