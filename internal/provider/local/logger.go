@@ -51,3 +51,19 @@ func (i infoLogger) prefix() string {
 func (i infoLogger) Info(m string)            { i.l.line(i.prefix(), m) }
 func (i infoLogger) Infof(f string, a ...any) { i.l.line(i.prefix(), fmt.Sprintf(f, a...)) }
 func (i infoLogger) Enabled() bool            { return true }
+
+// Detailer is a log that keeps detail apart from progress: kind's own
+// output and node diagnostics go to Detail(), progress lines to the log
+// itself. lab labs start writes detail to the op log only, unless -v.
+type Detailer interface {
+	io.Writer
+	Detail() io.Writer
+}
+
+// detail is where w's detail goes: Detail() for a Detailer, else w.
+func detail(w io.Writer) io.Writer {
+	if d, ok := w.(Detailer); ok {
+		return d.Detail()
+	}
+	return w
+}

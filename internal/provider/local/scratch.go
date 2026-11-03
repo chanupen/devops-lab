@@ -98,7 +98,7 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 			return err
 		}
 	}
-	kc := s.clusters(log, kubeconfig, false)
+	kc := s.clusters(detail(log), kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err
@@ -126,21 +126,21 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 // Rootless Podman has failed an exec into a just-started node (exit 126).
 func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
 	logf(log, "creating kind cluster %q (one node)", name)
-	first := s.clusters(log, kubeconfig, true)
+	first := s.clusters(detail(log), kubeconfig, true)
 	err := first.Create(scratchConfig(name, s.certsDir()), NodeImage)
 	if err == nil {
 		return nil
 	}
 	logf(log, "creating %q failed: %v", name, err)
 	if s.diagnose != nil {
-		s.diagnose(ctx, name+"-control-plane", log)
+		s.diagnose(ctx, name+"-control-plane", detail(log))
 	}
 	logf(log, "removing the failed cluster %q", name)
 	if derr := first.Delete(name); derr != nil {
 		return fmt.Errorf("%w; removing the failed cluster: %w", err, derr)
 	}
 	logf(log, "trying once more")
-	return s.clusters(log, kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
+	return s.clusters(detail(log), kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
 }
 
 // diagnoseNode writes podman inspect, podman logs and the last two minutes
@@ -175,7 +175,7 @@ func (s *Scratch) Delete(_ context.Context, name, kubeconfig string, log io.Writ
 	if name == ClusterName {
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
-	kc := s.clusters(log, kubeconfig, false)
+	kc := s.clusters(detail(log), kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err

@@ -65,17 +65,18 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 }
 
 // labOp runs a lab action that changes things (start, stop, reset) the way
-// lab up runs a stack: its output goes to the terminal and to an op log
-// file, and the op is recorded in state.json, so the Ops screen and the
-// log keep what happened, including a failed cluster's diagnostics.
-func labOp(cmd *cobra.Command, m *labs.Manager, command, lab, action string, fn func(w io.Writer) error) error {
+// lab up runs a stack: its output goes to an op log file and the op is
+// recorded in state.json, so the Ops screen and the log keep what happened,
+// including a failed cluster's diagnostics. The terminal gets the progress
+// lines; kind's own output and diagnostics only with verbose.
+func labOp(cmd *cobra.Command, m *labs.Manager, command, lab, action string, verbose bool, fn func(w io.Writer) error) error {
 	started := time.Now()
 	f, path, err := m.Store.OpenStepLog(lab, "labs-"+action, started)
 	if err != nil {
 		return fn(cmd.ErrOrStderr())
 	}
 	_, _ = fmt.Fprintf(f, "$ %s\n", command)
-	runErr := fn(io.MultiWriter(cmd.ErrOrStderr(), f))
+	runErr := fn(newOpLog(cmd.ErrOrStderr(), f, verbose))
 	_ = f.Close()
 	op := state.Op{Command: command, Stack: lab, Action: "labs " + action, Status: "ok", Started: started, Finished: time.Now(), Log: path}
 	if runErr != nil {
@@ -91,6 +92,29 @@ func labOp(cmd *cobra.Command, m *labs.Manager, command, lab, action string, fn 
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "log: %s\n", path)
 	}
 	return runErr
+}
+
+// opLog writes progress to the terminal and the op log file, and detail
+// (local.Detailer) to the file alone, or to both when verbose.
+type opLog struct {
+	io.Writer
+	detail io.Writer
+}
+
+func newOpLog(terminal, file io.Writer, verbose bool) opLog {
+	both := io.MultiWriter(terminal, file)
+	if verbose {
+		return opLog{Writer: both, detail: both}
+	}
+	return opLog{Writer: both, detail: file}
+}
+
+// Detail implements local.Detailer.
+func (o opLog) Detail() io.Writer { return o.detail }
+
+// registerVerbose adds -v/--verbose to a lab action that runs kind.
+func registerVerbose(cmd *cobra.Command, v *bool) {
+	cmd.Flags().BoolVarP(v, "verbose", "v", false, "stream kind's full output too (it is always in the op log)")
 }
 
 func newLabsCmd() *cobra.Command {
@@ -177,10 +201,11 @@ func shortDuration(d time.Duration) string {
 
 func newLabsStartCmd() *cobra.Command {
 	var f labsFlags
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:     "start <id>",
 		Short:   "Start a lab: make its cluster ready and pick up at your step",
-		Example: "  lab labs start 1\n  lab labs start 01-argocd-bootstrap",
+		Example: "  lab labs start 1\n  lab labs start 01-argocd-bootstrap\n  lab labs start 1 -v   # stream kind's full output",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := f.manager(true)
@@ -191,7 +216,7 @@ func newLabsStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := labOp(cmd, m, "lab labs start "+l.Number(), l.ID, "start", func(w io.Writer) error {
+			if err := labOp(cmd, m, "lab labs start "+l.Number(), l.ID, "start", verbose, func(w io.Writer) error {
 				_, err := m.Start(cmd.Context(), l.ID, w)
 				return err
 			}); err != nil {
@@ -201,6 +226,7 @@ func newLabsStartCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	registerVerbose(cmd, &verbose)
 	return cmd
 }
 
@@ -419,7 +445,7 @@ func newLabsResetCmd() *cobra.Command {
 			if err := confirm(cmd, f.yes, fmt.Sprintf("Reset lab %s? What you built in its cluster is deleted", l.ID)); err != nil {
 				return err
 			}
-			if err := labOp(cmd, m, "lab labs reset", l.ID, "reset", func(w io.Writer) error {
+			if err := labOp(cmd, m, "lab labs reset", l.ID, "reset", true, func(w io.Writer) error {
 				_, err := m.Reset(cmd.Context(), w)
 				return err
 			}); err != nil {
@@ -435,6 +461,7 @@ func newLabsResetCmd() *cobra.Command {
 
 func newLabsStopCmd() *cobra.Command {
 	var f labsFlags
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the started lab, delete its scratch cluster and reset its time; steps done are kept",
@@ -452,7 +479,7 @@ func newLabsStopCmd() *cobra.Command {
 				return errors.New("no lab is started: lab labs start <id>")
 			}
 			var spent time.Duration
-			if err := labOp(cmd, m, "lab labs stop", l.ID, "stop", func(w io.Writer) error {
+			if err := labOp(cmd, m, "lab labs stop", l.ID, "stop", verbose, func(w io.Writer) error {
 				var err error
 				_, spent, err = m.Stop(cmd.Context(), w)
 				return err
@@ -466,5 +493,6 @@ func newLabsStopCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	registerVerbose(cmd, &verbose)
 	return cmd
 }

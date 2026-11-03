@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,6 +121,28 @@ func TestProgressText(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := progressText(l, tt.p, tt.active, tt.spent); got != tt.want {
 				t.Errorf("progressText = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// lab labs start keeps kind's output in the op log; -v streams it too.
+func TestOpLog(t *testing.T) {
+	tests := []struct {
+		verbose        bool
+		terminalDetail bool
+	}{{false, false}, {true, true}}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("verbose=%v", tt.verbose), func(t *testing.T) {
+			var terminal, file strings.Builder
+			w := newOpLog(&terminal, &file, tt.verbose)
+			_, _ = io.WriteString(w, "creating kind cluster\n")
+			_, _ = io.WriteString(w.Detail(), "kind: [v1] kubeadm config\n")
+			if file.String() != "creating kind cluster\nkind: [v1] kubeadm config\n" {
+				t.Errorf("op log = %q", file.String())
+			}
+			if got := strings.Contains(terminal.String(), "kubeadm"); got != tt.terminalDetail || !strings.Contains(terminal.String(), "creating kind cluster") {
+				t.Errorf("terminal = %q", terminal.String())
 			}
 		})
 	}
