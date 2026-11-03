@@ -46,11 +46,13 @@ build-all: ## build lab for linux/amd64 and darwin/amd64
 	GOOS=linux  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-linux-amd64 $(PKG)
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-darwin-amd64 $(PKG)
 
-test: ## run the unit tests with -race
+test: ## run the unit tests with -race (the lab and apps/sample-db)
 	go test -race ./...
+	cd apps/sample-db && go test -race ./...
 
-lint: ## run golangci-lint
+lint: ## run golangci-lint (the lab and apps/sample-db)
 	golangci-lint run
+	cd apps/sample-db && golangci-lint run --config ../../.golangci.yml
 
 fmt: ## gofmt the tree
 	gofmt -w .
