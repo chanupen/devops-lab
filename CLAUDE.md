@@ -86,7 +86,7 @@ internal/labs/           lab catalog, verify runner, progress
 drills/                  drill definitions (YAML)
 docs/                    design.md, notes
 lab.yaml
-Makefile                 builds linux/amd64 and darwin/amd64
+Makefile                 make install (to BINDIR, default ~/.local/bin); builds linux/amd64 and darwin/amd64
 ```
 
 ## Roadmap (12 weeks)
