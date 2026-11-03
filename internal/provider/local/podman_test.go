@@ -252,3 +252,50 @@ func TestPodmanContainerTimes(t *testing.T) {
 		})
 	}
 }
+
+// frame is one frame of the multiplexed exec stream.
+func frame(stream byte, s string) string {
+	n := len(s)
+	return string([]byte{stream, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}) + s
+}
+
+func TestPodmanExec(t *testing.T) {
+	create := route{201, `{"Id":"e1"}`}
+	tests := []struct {
+		name    string
+		routes  map[string]route
+		want    string
+		wantErr string
+	}{
+		{"stdout", map[string]route{"POST /containers/lab-control-plane/exec": create,
+			"POST /exec/e1/start": {200, frame(1, "v1.37.0\n")}, "GET /exec/e1/json": {200, `{"ExitCode":0}`}}, "v1.37.0\n", ""},
+		{"stdout in two frames, stderr apart", map[string]route{"POST /containers/lab-control-plane/exec": create,
+			"POST /exec/e1/start": {200, frame(1, "v1.3") + frame(2, "warn\n") + frame(1, "6.4\n")}, "GET /exec/e1/json": {200, `{"ExitCode":0}`}},
+			"v1.36.4\n", ""},
+		{"non-zero exit carries stderr", map[string]route{"POST /containers/lab-control-plane/exec": create,
+			"POST /exec/e1/start": {200, frame(2, "cat: /kind/version: No such file or directory\n")}, "GET /exec/e1/json": {200, `{"ExitCode":1}`}},
+			"", "cat /kind/version in lab-control-plane exited 1: cat: /kind/version: No such file or directory"},
+		{"container not running", map[string]route{"POST /containers/lab-control-plane/exec": {409, `{"message":"container state improper"}`}},
+			"", "container state improper"},
+		{"truncated stream", map[string]route{"POST /containers/lab-control-plane/exec": create,
+			"POST /exec/e1/start": {200, frame(1, "v1.37.0\n")[:10]}}, "", "read stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, _, bodies := fakePodman(t, tt.routes)
+			got, err := p.Exec(context.Background(), "lab-control-plane", []string{"cat", "/kind/version"})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("Exec = %q, %v; want %q", got, err, tt.want)
+			}
+			if b := string(bodies["POST /containers/lab-control-plane/exec"]); !strings.Contains(b, `"Cmd":["cat","/kind/version"]`) {
+				t.Errorf("exec create body = %s", b)
+			}
+		})
+	}
+}

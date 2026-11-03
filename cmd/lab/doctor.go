@@ -44,6 +44,10 @@ func newDoctorCmd() *cobra.Command {
 			sys := doctor.HostSystem()
 			if mode == "local" {
 				sys.Units = doctorUnits
+				opts.K8sVersion = config.K8sVersion
+				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
+					opts.K8sVersion = cfg.K8sVersion
+				}
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
@@ -83,7 +87,21 @@ func doctorUnits(ctx context.Context) ([]doctor.Unit, error) {
 	units, err := local.HostUnits(ctx)
 	out := make([]doctor.Unit, 0, len(units))
 	for _, u := range units {
-		out = append(out, doctor.Unit{Kind: u.Kind, Name: u.Name, Nodes: len(u.Containers), Running: u.Running(), Fix: u.Fix()})
+		d := doctor.Unit{Kind: u.Kind, Name: u.Name, Nodes: len(u.Containers), Running: u.Running(), Fix: u.Fix()}
+		if u.Kind == "cluster" && u.Name == local.ClusterName && d.Running {
+			d.Version, d.VersionErr = clusterVersion(ctx)
+		}
+		out = append(out, d)
 	}
 	return out, err
+}
+
+// clusterVersion reads the main cluster's version from its node, as
+// strings for a report: the version, or why it could not be read.
+func clusterVersion(ctx context.Context) (version, why string) {
+	v, err := local.HostClusterVersion(ctx)
+	if err != nil {
+		return "", err.Error()
+	}
+	return v, ""
 }

@@ -72,3 +72,39 @@ func TestWriteTableStopped(t *testing.T) {
 		t.Error("a stopped unit failed lab doctor")
 	}
 }
+
+// The main cluster's version comes from its node; lab doctor fails when it
+// is not the pin and warns when it cannot be read, each with the fix.
+func TestClusterVersionCheck(t *testing.T) {
+	main := Unit{Kind: "cluster", Name: "lab", Nodes: 3, Running: true}
+	with := func(v, why string) Unit { u := main; u.Version, u.VersionErr = v, why; return u }
+	tests := []struct {
+		name string
+		u    Unit
+		want Status
+		text string // in Detail, then Fix
+	}{
+		{"on the pin", with("v1.36.4", ""), OK, "running (3 nodes), Kubernetes v1.36.4|"},
+		{"another version than the pin", with("v1.37.0", ""), Fail,
+			"running (3 nodes), Kubernetes v1.37.0, but lab.yaml pins 1.36|lab down, then lab up (the image cache volume is kept)"},
+		{"1.3 is not 1.36", with("v1.3.0", ""), Fail, "but lab.yaml pins 1.36|"},
+		{"unreadable", with("", "read /kind/version in lab-control-plane: exited 1"), Warn,
+			"Kubernetes version unreadable: read /kind/version in lab-control-plane: exited 1|lab down, then lab up"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sys := System{Units: func(context.Context) ([]Unit, error) { return []Unit{tt.u}, nil }}
+			r := unitCheck("cluster", "lab")(context.Background(), sys, Options{K8sVersion: "1.36"})
+			detail, fix, _ := strings.Cut(tt.text, "|")
+			if r.Status != tt.want || !strings.Contains(r.Detail, detail) || !strings.Contains(r.Fix, fix) {
+				t.Errorf("got %s %q fix %q; want %s %q fix %q", r.Status, r.Detail, r.Fix, tt.want, detail, fix)
+			}
+		})
+	}
+	// The image cache has no version.
+	zot := Unit{Kind: "image cache", Name: "lab-zot", Nodes: 1, Running: true}
+	sys := System{Units: func(context.Context) ([]Unit, error) { return []Unit{zot}, nil }}
+	if r := unitCheck("image cache", "lab-zot")(context.Background(), sys, Options{K8sVersion: "1.36"}); r.Status != OK || strings.Contains(r.Detail, "Kubernetes") {
+		t.Errorf("zot: %+v", r)
+	}
+}

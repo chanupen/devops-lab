@@ -18,6 +18,9 @@ type Runtime interface {
 	Containers(ctx context.Context, prefix string) ([]ContainerInfo, error)
 	CreateContainer(ctx context.Context, c ContainerSpec) error
 	StartContainer(ctx context.Context, name string) error
+	// Exec runs cmd in a running container and returns its stdout. A
+	// non-zero exit is an error carrying stderr.
+	Exec(ctx context.Context, name string, cmd []string) (string, error)
 	// RemoveContainer force-removes the container; a missing one is not an error.
 	RemoveContainer(ctx context.Context, name string) error
 	// RemoveVolume removes a named volume; a missing one is not an error.

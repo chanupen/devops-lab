@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"sigs.k8s.io/kind/pkg/log"
+
+	"github.com/chanupen/devops-lab/internal/kube"
 )
 
 // kindLogger writes everything kind logs, at every verbosity, to the step
@@ -53,17 +55,10 @@ func (i infoLogger) Infof(f string, a ...any) { i.l.line(i.prefix(), fmt.Sprintf
 func (i infoLogger) Enabled() bool            { return true }
 
 // Detailer is a log that keeps detail apart from progress: kind's own
-// output and node diagnostics go to Detail(), progress lines to the log
-// itself. lab labs start writes detail to the op log only, unless -v.
-type Detailer interface {
-	io.Writer
-	Detail() io.Writer
-}
+// output, node diagnostics and client-go's messages go to Detail(),
+// progress lines to the log itself. lab labs start writes detail to the op
+// log only, unless -v.
+type Detailer = kube.Detailer
 
 // detail is where w's detail goes: Detail() for a Detailer, else w.
-func detail(w io.Writer) io.Writer {
-	if d, ok := w.(Detailer); ok {
-		return d.Detail()
-	}
-	return w
-}
+func detail(w io.Writer) io.Writer { return kube.DetailOf(w) }

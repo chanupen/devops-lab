@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 )
 
 // Clients bundles the typed and dynamic clients for one cluster.
@@ -57,6 +58,10 @@ func waitStore(ctx context.Context, lw cache.ListerWatcher, obj runtime.Object,
 	check func(items []any) (done bool, status string), log io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// client-go logs a failing list or watch (nodes forbidden while RBAC
+	// comes up) through klog to stderr; send it to the log's detail.
+	logger := clientGoLogger(log)
+	ctx = klog.NewContext(ctx, logger)
 	changed := make(chan struct{}, 1)
 	notify := func() {
 		select {
@@ -65,6 +70,7 @@ func waitStore(ctx context.Context, lw cache.ListerWatcher, obj runtime.Object,
 		}
 	}
 	store, ctrl := cache.NewInformerWithOptions(cache.InformerOptions{
+		Logger:        &logger,
 		ListerWatcher: lw,
 		ObjectType:    obj,
 		Handler: cache.ResourceEventHandlerFuncs{

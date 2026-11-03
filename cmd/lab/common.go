@@ -130,6 +130,9 @@ type labRunner struct {
 	// checkVersion refuses a Kubernetes pin the mode cannot run; nil when
 	// the provider checks at apply time (cloud).
 	checkVersion func(context.Context) error
+	// checkCluster refuses a running cluster on another version than the
+	// pin, or of unknown version; nil in cloud mode.
+	checkCluster func(context.Context) error
 	hosts        func(context.Context) ([]string, error) // nil without a GitOps runner
 	url          func(host string) string
 	hint         string
@@ -150,6 +153,34 @@ func (l labRunner) CheckK8sVersion(ctx context.Context) error {
 		return nil
 	}
 	return l.checkVersion(ctx)
+}
+
+// clusterVersionGate is implemented by providers that read the running
+// cluster's version and refuse one that differs from the pin. lab up calls
+// it after starting stopped containers, since a stopped node cannot be read.
+type clusterVersionGate interface {
+	CheckClusterVersion(ctx context.Context) error
+}
+
+// CheckClusterVersion implements clusterVersionGate.
+func (l labRunner) CheckClusterVersion(ctx context.Context) error {
+	if l.checkCluster == nil {
+		return nil
+	}
+	return l.checkCluster(ctx)
+}
+
+// startStopped starts the lab's stopped containers when the provider can,
+// as lab up and lab down do before anything reaches the cluster.
+func startStopped(cmd *cobra.Command, prov provider) error {
+	s, ok := prov.(stoppedStarter)
+	if !ok {
+		return nil
+	}
+	if _, err := s.StartStopped(cmd.Context(), cmd.OutOrStdout()); err != nil {
+		return fmt.Errorf("starting the lab's stopped containers: %w", err)
+	}
+	return nil
 }
 
 // stoppedStarter is implemented by providers whose lab can be stopped
@@ -213,7 +244,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
-		l.url, l.hint, l.start, l.checkVersion = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion
+		l.url, l.hint, l.start, l.checkVersion, l.checkCluster = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion, p.CheckClusterVersion
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)
 		if err != nil {

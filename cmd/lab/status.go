@@ -50,7 +50,14 @@ func newStatusCmd(newProvider providerFactory) *cobra.Command {
 				if err != nil && cfg.Mode == "local" {
 					stopped = stoppedFix(cmd.Context())
 				}
-				if err := writeLive(out, r, h, err, stopped); err != nil {
+				// In local mode the version comes from the node itself, so
+				// a cluster left on another version than the pin shows.
+				var ver liveVersion
+				if err == nil && cfg.Mode == "local" {
+					ver.pin = cfg.K8sVersion
+					ver.live, ver.err = clusterVersion(cmd.Context())
+				}
+				if err := writeLive(out, r, h, err, stopped, ver); err != nil {
 					return err
 				}
 			}
@@ -82,7 +89,11 @@ func writeStatus(w io.Writer, r *lipgloss.Renderer, cfg config.Config, st state.
 	if mode == "" {
 		mode = cfg.Mode
 	}
-	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n", mode, engine.ProfileName(cfg), cfg.ClusterK8sVersion())
+	k8s := cfg.ClusterK8sVersion()
+	if mode == "local" {
+		k8s += " (lab.yaml pin)"
+	}
+	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n", mode, engine.ProfileName(cfg), k8s)
 	warn := r.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	switch {
 	case !st.IsApplied(engine.RevisionStack):
@@ -167,7 +178,13 @@ func stoppedFix(ctx context.Context) string {
 
 // writeLive prints what the cluster says now: nodes, then the Argo CD apps,
 // each one that is not Synced and Healthy on its own line.
-func writeLive(w io.Writer, r *lipgloss.Renderer, h kube.Health, err error, stoppedFix string) error {
+// liveVersion is the main cluster's version from its node and the pin it
+// must match; a zero value (cloud mode) prints no version line.
+type liveVersion struct {
+	live, err, pin string
+}
+
+func writeLive(w io.Writer, r *lipgloss.Renderer, h kube.Health, err error, stoppedFix string, ver liveVersion) error {
 	sym := func(s, col string) string { return r.NewStyle().Foreground(lipgloss.Color(col)).Render(s) }
 	var b strings.Builder
 	b.WriteString("\nlive:\n")
@@ -182,6 +199,15 @@ func writeLive(w io.Writer, r *lipgloss.Renderer, h kube.Health, err error, stop
 			s = sym("◐", "3")
 		}
 		fmt.Fprintf(&b, "  nodes    %s %d/%d Ready\n", s, h.Ready, h.Nodes)
+		switch {
+		case ver.pin == "":
+		case ver.err != "":
+			fmt.Fprintf(&b, "  version  %s unreadable (%s); fix: lab down, then lab up\n", sym("✕", "1"), firstLine(ver.err))
+		case !strings.HasPrefix(ver.live, "v"+ver.pin+"."):
+			fmt.Fprintf(&b, "  version  %s %s, but lab.yaml pins %s; fix: lab down, then lab up\n", sym("✕", "1"), ver.live, ver.pin)
+		default:
+			fmt.Fprintf(&b, "  version  %s %s\n", sym("●", "2"), ver.live)
+		}
 		writeLiveApps(&b, sym, h.Apps)
 	}
 	_, err = io.WriteString(w, b.String())

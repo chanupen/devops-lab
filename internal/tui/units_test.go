@@ -159,3 +159,37 @@ func drain(cmd tea.Cmd) []tea.Msg {
 	}
 	return []tea.Msg{msg}
 }
+
+// Home shows the main cluster's version from its node, and ✕ with the fix
+// when it is not lab.yaml's pin or cannot be read.
+func TestHomeVersion(t *testing.T) {
+	main := func(v, why string) []Unit {
+		return []Unit{{Kind: UnitCluster, Name: "lab", Running: true, Version: v, VersionErr: why}}
+	}
+	tests := []struct {
+		name   string
+		units  []Unit
+		want   string
+		absent string
+	}{
+		{"on the pin", main("v1.36.4", ""), "version    ● v1.36.4", "lab.yaml pins"},
+		{"another version", main("v1.37.0", ""), "version    ✕ v1.37.0, lab.yaml pins 1.36 $ lab down, then lab up", ""},
+		{"unreadable", main("", "exec failed"), "version    ✕ unreadable (exec failed) $ lab down, then lab up", ""},
+		{"not listed yet", nil, "nodes      ●", "version    "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel(labState(1))
+			m.d.cfg.K8sVersion = "1.36"
+			m.d.live, m.d.units, m.d.unitsKnown = upCluster, tt.units, tt.units != nil
+			next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 30})
+			view := plain(next.(Model))
+			if !strings.Contains(view, tt.want) {
+				t.Errorf("view lacks %q:\n%s", tt.want, view)
+			}
+			if tt.absent != "" && strings.Contains(view, tt.absent) {
+				t.Errorf("view has %q:\n%s", tt.absent, view)
+			}
+		})
+	}
+}

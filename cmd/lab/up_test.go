@@ -28,6 +28,8 @@ type fakeProvider struct {
 	stopped []string // lab containers a reboot stopped
 	// versionErr is what CheckK8sVersion says about the pin.
 	versionErr error
+	// clusterErr is what CheckClusterVersion says about the running cluster.
+	clusterErr error
 }
 
 // StartStopped implements stoppedStarter: it starts f.stopped, recording each.
@@ -44,6 +46,16 @@ func (f *fakeProvider) StartStopped(_ context.Context, log io.Writer) ([]local.U
 
 // CheckK8sVersion implements versionGate.
 func (f *fakeProvider) CheckK8sVersion(context.Context) error { return f.versionErr }
+
+// CheckClusterVersion implements clusterVersionGate; it records the call,
+// so a test sees it ran after the stopped containers started.
+func (f *fakeProvider) CheckClusterVersion(context.Context) error {
+	if f.clusterErr == nil {
+		return nil
+	}
+	f.calls = append(f.calls, "check cluster version")
+	return f.clusterErr
+}
 
 func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.urls, f.urlsErr }
 
@@ -87,7 +99,27 @@ func TestUpDown(t *testing.T) {
 		wantOp     string   // command of the last op
 		stopped    []string // containers stopped before the run
 		versionErr error    // the provider refuses the k8sVersion pin
+		clusterErr error    // the provider refuses the running cluster's version
 	}{
+		{
+			name:       "up starts the stopped cluster, then refuses it on another version",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			stopped:    []string{"lab-control-plane"},
+			clusterErr: errors.New("kind cluster lab runs Kubernetes v1.37.0, but lab.yaml pins 1.36"),
+			wantCalls:  []string{"start lab-control-plane", "check cluster version"},
+			wantErr:    "runs Kubernetes v1.37.0, but lab.yaml pins 1.36",
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
+			name:       "up refuses a cluster of unknown version",
+			state:      deployedClusterRegistry,
+			args:       []string{"up"},
+			clusterErr: errors.New("cannot read the Kubernetes version of kind cluster lab"),
+			wantCalls:  []string{"check cluster version"},
+			wantErr:    "cannot read the Kubernetes version",
+			wantStacks: []string{"cluster", "registry"},
+		},
 		{
 			name:       "up refuses a pin outside the compatibility table before doing anything",
 			args:       []string{"up", "--stacks", "cluster"},
@@ -200,6 +232,25 @@ func TestUpDown(t *testing.T) {
 			wantStacks: []string{"cluster", "registry"},
 		},
 		{
+			name:      "down after a reboot starts the stopped cluster and cache, then destroys",
+			state:     deployedClusterRegistry,
+			args:      []string{"down", "--yes"},
+			stopped:   []string{"lab-control-plane", "lab-worker", "lab-zot"},
+			wantCalls: []string{"start lab-control-plane", "start lab-worker", "start lab-zot", "destroy cluster", "destroy registry"},
+			wantOut:   []string{"lab-control-plane was stopped; starting it", "● cluster: destroyed in"},
+			wantOp:    "lab down",
+		},
+		{
+			name:       "down stops when a stopped container will not start",
+			state:      deployedClusterRegistry,
+			args:       []string{"down", "--yes"},
+			stopped:    []string{"lab-zot"},
+			fail:       map[string]bool{"start lab-zot": true},
+			wantCalls:  []string{"start lab-zot"},
+			wantErr:    "starting the lab's stopped containers: boom",
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
 			name:      "down destroys dependents first and keeps the cache",
 			state:     deployedClusterRegistry,
 			args:      []string{"down", "--yes"},
@@ -255,7 +306,7 @@ func TestUpDown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped, versionErr: tt.versionErr}
+			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped, versionErr: tt.versionErr, clusterErr: tt.clusterErr}
 			var gotPurge, built bool
 			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
 				built, gotPurge = true, opts.Purge

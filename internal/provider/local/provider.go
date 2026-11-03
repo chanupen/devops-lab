@@ -210,25 +210,19 @@ func (p *Provider) destroyRegistry(ctx context.Context, log io.Writer) error {
 }
 
 // CheckK8sVersion refuses a k8sVersion pin outside the compatibility
-// table, and a running main cluster on another version: a kind cluster
-// cannot change version in place, so it has to be made again.
-func (p *Provider) CheckK8sVersion(ctx context.Context) error {
-	if _, err := NodeImage(p.opts.K8sVersion); err != nil {
-		return err
-	}
-	node, err := p.rt.Container(ctx, ClusterName+"-control-plane")
-	if err != nil || !node.Exists {
-		return err
-	}
-	running, err := imageMinor(node.Image)
-	if err != nil {
-		return nil // an image without a version tag: nothing to compare
-	}
-	if running != p.opts.K8sVersion {
-		return fmt.Errorf("the main cluster runs Kubernetes %s, but lab.yaml pins %s; a kind cluster cannot change version, "+
-			"so make it again: lab down, then lab up (the image cache volume is kept)", running, p.opts.K8sVersion)
-	}
-	return nil
+// table. It reads nothing from the cluster, so lab up runs it first.
+func (p *Provider) CheckK8sVersion(context.Context) error {
+	_, err := NodeImage(p.opts.K8sVersion)
+	return err
+}
+
+// CheckClusterVersion refuses a main cluster that runs another Kubernetes
+// version than the pin, or whose version cannot be read: it is read from
+// the node (/kind/version), so the node must run. lab up calls it after
+// StartStopped. No cluster yet passes.
+func (p *Provider) CheckClusterVersion(ctx context.Context) error {
+	return checkClusterVersion(ctx, p.rt, ClusterName, p.opts.K8sVersion,
+		"lab down, then lab up (the image cache volume is kept)")
 }
 
 // applyCluster writes the containerd mirror files, creates the kind cluster

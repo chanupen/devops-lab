@@ -54,6 +54,9 @@ func (homeModel) view(d *data) (left, right string) {
 			s = statusProgressing
 		}
 		row("nodes", fmt.Sprintf("%s %d/%d Ready", s.symbol(), c.nodesReady, c.nodes))
+		if v, ok := versionRow(d); ok {
+			row("version", v)
+		}
 		row("apps", appSummary(c))
 	}
 	row("stacks", stackSummary(d))
@@ -144,4 +147,24 @@ func opsNewestFirst(ops []state.Op, n int) []state.Op {
 		out = append(out, ops[i])
 	}
 	return out
+}
+
+// remakeHint makes the cluster again at the pinned version.
+const remakeHint = "lab down, then lab up"
+
+// versionRow is the main cluster's Kubernetes version from its node: ✕
+// with the fix when it is not lab.yaml's pin or cannot be read.
+func versionRow(d *data) (string, bool) {
+	u, ok := d.unit(UnitCluster, "")
+	if !ok || !u.Running {
+		return "", false
+	}
+	pin := d.cfg.K8sVersion
+	switch {
+	case u.VersionErr != "":
+		return statusFailed.symbol() + " unreadable " + faint.Render("("+u.VersionErr+") $ "+remakeHint), true
+	case pin != "" && !strings.HasPrefix(u.Version, "v"+pin+"."):
+		return fmt.Sprintf("%s %s, lab.yaml pins %s %s", statusFailed.symbol(), u.Version, pin, faint.Render("$ "+remakeHint)), true
+	}
+	return statusHealthy.symbol() + " " + u.Version, true
 }

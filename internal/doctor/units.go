@@ -16,7 +16,7 @@ func stopped(fix, format string, a ...any) Result {
 // unitCheck reports one lab unit: running, stopped (with the command that
 // starts it) or not created yet.
 func unitCheck(kind, name string) func(context.Context, System, Options) Result {
-	return func(ctx context.Context, sys System, _ Options) Result {
+	return func(ctx context.Context, sys System, opts Options) Result {
 		units, r, listed := listUnits(ctx, sys)
 		if !listed {
 			return r
@@ -28,7 +28,7 @@ func unitCheck(kind, name string) func(context.Context, System, Options) Result 
 			if !u.Running {
 				return stopped(u.Fix+" (or lab up)", "stopped")
 			}
-			return runningResult(u)
+			return versionResult(u, opts.K8sVersion)
 		}
 		return Result{Status: Skip, Detail: "not created (lab up makes it)"}
 	}
@@ -71,6 +71,25 @@ func listUnits(ctx context.Context, sys System) ([]Unit, Result, bool) {
 		return nil, Result{Status: Skip, Detail: "podman API unavailable: " + firstLine(err.Error())}, false
 	}
 	return units, Result{}, true
+}
+
+// remakeFix makes a kind cluster again at the pinned version.
+const remakeFix = "lab down, then lab up (the image cache volume is kept)"
+
+// versionResult adds a running cluster's version: ✕ when it is not the
+// pin, ◐ when it cannot be read. Other units have no version.
+func versionResult(u Unit, pin string) Result {
+	r := runningResult(u)
+	switch {
+	case u.Kind != "cluster":
+		return r
+	case u.VersionErr != "":
+		return warn(remakeFix, "%s; Kubernetes version unreadable: %s", r.Detail, u.VersionErr)
+	case pin != "" && !strings.HasPrefix(u.Version, "v"+pin+"."):
+		return fail(remakeFix, "%s, Kubernetes %s, but lab.yaml pins %s", r.Detail, u.Version, pin)
+	}
+	r.Detail += ", Kubernetes " + u.Version
+	return r
 }
 
 func runningResult(u Unit) Result {

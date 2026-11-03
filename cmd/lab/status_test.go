@@ -26,7 +26,7 @@ func TestStatusCmd(t *testing.T) {
 		wantNot []string
 	}{
 		{"nothing deployed", "",
-			[]string{"gitops revision: - (gitops not deployed)", "○ registry", "not deployed", "○ sample-app"},
+			[]string{"local mode, minimal profile, Kubernetes 1.36 (lab.yaml pin)\n", "gitops revision: - (gitops not deployed)", "○ registry", "not deployed", "○ sample-app"},
 			[]string{"Apps:", "live:"}},
 		{"on main with core lists apps",
 			`{"version":1,"mode":"local","revision":"main","stacks":{"registry":{"status":"applied","updatedAt":"2026-10-31T00:30:00Z"},
@@ -163,26 +163,34 @@ func TestWriteLive(t *testing.T) {
 		h       kube.Health
 		err     error
 		stopped string
+		ver     liveVersion
 		want    []string
 		wantNot []string
 	}{
-		{"all healthy", kube.Health{Nodes: 3, Ready: 3, Apps: []kube.App{healthy, {Name: "grafana", Sync: "Synced", Health: "Healthy", Current: true}}}, nil, "",
+		{"local, on the pin", kube.Health{Nodes: 3, Ready: 3}, nil, "", liveVersion{live: "v1.36.4", pin: "1.36"},
+			[]string{"  version  ● v1.36.4\n"}, []string{"✕"}},
+		{"local, the node runs another version than the pin", kube.Health{Nodes: 3, Ready: 3}, nil, "", liveVersion{live: "v1.37.0", pin: "1.36"},
+			[]string{"  version  ✕ v1.37.0, but lab.yaml pins 1.36; fix: lab down, then lab up\n"}, nil},
+		{"local, version unreadable", kube.Health{Nodes: 3, Ready: 3}, nil, "", liveVersion{err: "read /kind/version in lab-control-plane: exited 1", pin: "1.36"},
+			[]string{"  version  ✕ unreadable (read /kind/version in lab-control-plane: exited 1); fix: lab down, then lab up"}, nil},
+		{"cloud: no version line", kube.Health{Nodes: 2, Ready: 2}, nil, "", liveVersion{}, nil, []string{"version"}},
+		{"all healthy", kube.Health{Nodes: 3, Ready: 3, Apps: []kube.App{healthy, {Name: "grafana", Sync: "Synced", Health: "Healthy", Current: true}}}, nil, "", liveVersion{},
 			[]string{"live:\n", "  nodes    ● 3/3 Ready\n", "  apps     ● 2/2 Synced and Healthy\n"}, []string{"◐", "✕"}},
 		{"a node not ready and two apps not", kube.Health{Nodes: 2, Ready: 1, Apps: []kube.App{healthy,
 			{Name: "loki", Sync: "OutOfSync", Health: "Progressing"},
-			{Name: "tempo", Sync: "Synced", Health: "Degraded", Problems: []string{"SyncError: one or more objects failed"}}}}, nil, "",
+			{Name: "tempo", Sync: "Synced", Health: "Degraded", Problems: []string{"SyncError: one or more objects failed"}}}}, nil, "", liveVersion{},
 			[]string{"  nodes    ◐ 1/2 Ready", "  apps     ◐ 1/3 Synced and Healthy", "◐ loki  OutOfSync  Progressing",
 				"✕ tempo  Synced  Degraded  (SyncError: one or more objects failed)"}, []string{"podinfo"}},
-		{"before Argo CD", kube.Health{Nodes: 1, Ready: 1}, nil, "", []string{"● 1/1 Ready", "apps     ○ Argo CD is not installed"}, nil},
-		{"cluster down", kube.Health{}, errors.New("list nodes: dial tcp 127.0.0.1:6443: connect: connection refused\nmore"), "",
+		{"before Argo CD", kube.Health{Nodes: 1, Ready: 1}, nil, "", liveVersion{}, []string{"● 1/1 Ready", "apps     ○ Argo CD is not installed"}, nil},
+		{"cluster down", kube.Health{}, errors.New("list nodes: dial tcp 127.0.0.1:6443: connect: connection refused\nmore"), "", liveVersion{},
 			[]string{"  cluster  ○ off (list nodes: dial tcp 127.0.0.1:6443: connect: connection refused)\n"}, []string{"more", "Ready"}},
-		{"cluster stopped by a reboot", kube.Health{}, errors.New("refused"), "podman start lab-control-plane lab-worker",
+		{"cluster stopped by a reboot", kube.Health{}, errors.New("refused"), "podman start lab-control-plane lab-worker", liveVersion{},
 			[]string{"  cluster  ○ stopped; lab up starts it (or podman start lab-control-plane lab-worker)"}, []string{"off"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := writeLive(&out, lipgloss.NewRenderer(&out), tt.h, tt.err, tt.stopped); err != nil {
+			if err := writeLive(&out, lipgloss.NewRenderer(&out), tt.h, tt.err, tt.stopped, tt.ver); err != nil {
 				t.Fatal(err)
 			}
 			for _, w := range tt.want {
