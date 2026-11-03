@@ -11,4 +11,5 @@ charts:
 stacks:
   core: false
   obs: false
+  policy: false
   sample-app: false

@@ -1,0 +1,41 @@
+{{- if .Values.stacks.policy }}
+# policy: Kyverno (admission, background, cleanup and reports controllers),
+# then the Pod Security Standards "baseline" policies in Audit mode: they
+# report, they never block. Labs add their own Enforce policies, scoped to
+# their namespaces.
+# Charts come from their OCI registry; values from this repo, base then overlay.
+{{- $repo := .Values.repo }}
+{{- $mode := .Values.mode }}
+{{- range $app := list
+      (dict "name" "kyverno" "chart" "kyverno" "wave" "0" "version" "3.9.2")
+      (dict "name" "kyverno-policies" "chart" "kyverno-policies" "wave" "1" "version" "3.9.2") }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list $ $app.name "policy" $app.wave) | nindent 2 }}
+spec:
+  project: default
+  sources:
+    - repoURL: {{ include "lab.ociRepo" (list $ "ghcr.io/kyverno/charts") }}
+      chart: {{ $app.chart }}
+      targetRevision: {{ $app.version }}
+      helm:
+        releaseName: {{ $app.name }}
+        ignoreMissingValueFiles: true # an overlay may have nothing to add
+        valueFiles:
+          - $values/gitops/stacks/policy/{{ $app.name }}/values.yaml
+          - $values/gitops/overlays/{{ $mode }}/policy/{{ $app.name }}/values.yaml
+    - repoURL: {{ required "repo.url is required" $repo.url }}
+      targetRevision: {{ $repo.revision }}
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    {{- include "lab.syncPolicy" $ | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # Kyverno's CRDs exceed the client-side apply limit
+{{- end }}
+{{- end }}

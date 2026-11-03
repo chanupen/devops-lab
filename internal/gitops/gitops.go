@@ -48,13 +48,14 @@ const (
 )
 
 // appStacks are the stacks rendered by the bootstrap chart.
-var appStacks = []string{"core", "obs", "sample-app"}
+var appStacks = []string{"core", "obs", "policy", "sample-app"}
 
 // stackNamespaces are created by a stack's apps (CreateNamespace) and are not
 // removed by Argo CD, so destroying the stack deletes them.
 var stackNamespaces = map[string][]string{
 	"core":       {"cert-manager", "envoy-gateway-system"},
 	"obs":        {ObsNamespace},
+	"policy":     {"kyverno"},
 	"sample-app": {"podinfo"},
 }
 

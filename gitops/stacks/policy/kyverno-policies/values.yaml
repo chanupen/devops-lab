@@ -1,0 +1,7 @@
+# The Pod Security Standards "baseline" policies, in Audit mode only: they
+# write PolicyReports and never block a Pod. The chart's default policy type,
+# ValidatingPolicy (CEL), which Kyverno recommends over the legacy
+# ClusterPolicy kind.
+podSecurityStandard: baseline
+validationFailureAction: Audit
+background: true

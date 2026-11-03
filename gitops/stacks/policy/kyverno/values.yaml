@@ -1,0 +1,15 @@
+# Kyverno for the lab: one replica of each controller. Policy exceptions are
+# on, so a lab can grant one for a named workload; in a shared cluster,
+# limit them to one namespace that only admins write to.
+features:
+  policyExceptions:
+    enabled: true
+    namespace: "*"
+admissionController:
+  replicas: 1
+backgroundController:
+  replicas: 1
+cleanupController:
+  replicas: 1
+reportsController:
+  replicas: 1

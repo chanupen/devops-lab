@@ -52,6 +52,7 @@ func (f *fakeHelm) Uninstall(_ context.Context, name, ns string, _ io.Writer) er
 var childApps = map[string][]string{
 	"core":       {"cert-manager", "core-gateway", "envoy-gateway", "metrics-server"},
 	"obs":        {"kube-prometheus-stack", "loki", "obs-routes", "otel-collector"},
+	"policy":     {"kyverno", "kyverno-policies"},
 	"sample-app": {"podinfo-backend", "podinfo-frontend", "sample-app-routes"},
 }
 
@@ -484,7 +485,7 @@ func TestExpand(t *testing.T) {
 
 func TestSupports(t *testing.T) {
 	r := newRunner(Options{}, nil, nil)
-	for stack, want := range map[string]bool{"gitops": true, "core": true, "obs": true, "sample-app": true, "cluster": false, "secrets": false} {
+	for stack, want := range map[string]bool{"gitops": true, "core": true, "obs": true, "policy": true, "sample-app": true, "cluster": false, "secrets": false} {
 		if r.Supports(stack) != want {
 			t.Errorf("Supports(%s) != %v", stack, want)
 		}
@@ -622,6 +623,7 @@ func TestDestroyDeletesStackNamespaces(t *testing.T) {
 	}{
 		{"core", []string{"cert-manager", "envoy-gateway-system"}},
 		{"sample-app", []string{"podinfo"}},
+		{"policy", []string{"kyverno"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.stack, func(t *testing.T) {
