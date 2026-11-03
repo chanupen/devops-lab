@@ -4,44 +4,148 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ["v*"]
 
 permissions:
   contents: read
+
+# A new push to a PR cancels its older run; main and tags always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Go caches: setup-go would give every job the same key, so only the first job
+# to finish saves and the cache never refreshes. Each job keys its own cache on
+# the job, the Go version and go.sum, with the run ID last so main saves a fresh
+# entry every run; restore-keys pick the newest one. PRs and tags only restore
+# (PRs can read main's caches); push to main saves.
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - id: go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-
       - run: go test -race ./...
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # A PR checks out its merge commit; HEAD^1 is the base it merges into.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+      - id: go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - run: make build-all
-      - run: make reaper
+          cache: false
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-
+      # PRs build linux/amd64 only; main and tags build every release target.
+      - if: github.event_name == 'pull_request'
+        run: make build
+      - if: github.event_name != 'pull_request'
+        run: make build-all
+      # The reaper is a third full compile (linux/arm64). On a PR, build it only
+      # when the reaper, a module package it imports, the baseline module or
+      # the build inputs changed.
+      - id: reaper
+        name: Reaper changed?
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          root=$(pwd)
+          dirs=$(go list -deps -f '{{with .Module}}{{if .Main}}{{$.Dir}}{{end}}{{end}}' ./cmd/reaper | sed "s#^$root/##")
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          build=false
+          while IFS= read -r f; do
+            case "$f" in
+              infra/terraform/aws/baseline/*|go.mod|go.sum|Makefile) build=true ;;
+            esac
+            for d in $dirs; do
+              case "$f" in "$d"/*) build=true ;; esac
+            done
+          done <<< "$changed"
+          echo "reaper packages: $(echo $dirs)"
+          echo "build=$build" | tee -a "$GITHUB_OUTPUT"
+      - if: steps.reaper.outputs.build == 'true'
+        run: make reaper
       # Exec and page-in of the binary are a large part of a cold first frame.
       - name: Binary size
         run: |
-          file bin/lab-*
-          ls -l bin/lab-* | awk '{printf "%s %d bytes (%.1f MiB)\n", $9, $5, $5/1048576}' | tee -a "$GITHUB_STEP_SUMMARY"
+          file bin/lab*
+          ls -l bin/lab* | awk '{printf "%s %d bytes (%.1f MiB)\n", $9, $5, $5/1048576}' | tee -a "$GITHUB_STEP_SUMMARY"
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - id: go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v8
+          cache: false
+      # Also holds golangci-lint's analysis cache; the action's own cache is off.
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-
+      - uses: golangci/golangci-lint-action@25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128 # v8.0.0
         with:
           version: v2.15.0
           # Build with the module's Go version; release binaries may be built with an older one.
           install-mode: goinstall
+          skip-cache: true
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: ${{ steps.cache.outputs.cache-primary-key }}
