@@ -324,8 +324,10 @@ devops-lab/
 ├── labs/                   # NN-name/: lab.yaml, README.md, steps/, reset.sh, solution/
 ├── drills/                 # drill definitions (YAML)
 ├── lab.yaml
-└── Makefile                # build for linux/amd64 and darwin/amd64
+└── Makefile                # make install; build-all for linux/amd64 and darwin/amd64
 ```
+
+**Build and install:** `make install` builds `bin/lab` and installs it as `$(BINDIR)/lab`, with `BINDIR` defaulting to `~/.local/bin` (`make install BINDIR=/some/dir` for another place; no sudo). It prints the installed path and `lab version`. It warns, without failing, when `BINDIR` is not on `PATH`, or when `command -v lab` finds another copy that runs instead, and prints that copy's path. `make uninstall` removes `$(BINDIR)/lab` only. `make build` alone leaves the binary in `bin/lab`, so an older `lab` on `PATH` keeps running.
 
 Mode differences live only in `gitops/overlays/` and `internal/provider/`. If supporting one mode needs edits anywhere else, the design is leaking and should be fixed.
 
