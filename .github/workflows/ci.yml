@@ -41,7 +41,7 @@ jobs:
             go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-
             go-${{ runner.os }}-${{ github.job }}-${{ steps.go.outputs.go-version }}-
       - run: go test -race ./...
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'chore/ci-build-speed'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -106,7 +106,7 @@ jobs:
         run: |
           file bin/lab*
           ls -l bin/lab* | awk '{printf "%s %d bytes (%.1f MiB)\n", $9, $5, $5/1048576}' | tee -a "$GITHUB_STEP_SUMMARY"
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'chore/ci-build-speed'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -141,7 +141,7 @@ jobs:
           # Build with the module's Go version; release binaries may be built with an older one.
           install-mode: goinstall
           skip-cache: true
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'chore/ci-build-speed'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
