@@ -11,8 +11,9 @@ import (
 // Component is a row of the shared compatibility table.
 type Component = compat.Component
 
-// Compatibility is the table's cloud rows: why the cloud lab runs the
-// Kubernetes version it does (internal/compat has the sources).
+// Compatibility is all of the table's cloud rows (internal/compat has the
+// sources). Choosing a version uses only the active stacks' rows:
+// compat.ForStacks("cloud", stacks).
 var Compatibility = compat.For("cloud")
 
 // Unsupported names the components that do not state support for v.

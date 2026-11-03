@@ -102,6 +102,24 @@ func For(mode string) []Component {
 	return out
 }
 
+// ForStacks is For(mode) without the rows of stacks that are not active: a
+// row with a Stack limits the version only while that stack is deployed,
+// in the profile or asked for. Rows without a Stack always count. active
+// nil keeps every row (nothing is known about the lab yet).
+func ForStacks(mode string, active []string) []Component {
+	rows := For(mode)
+	if active == nil {
+		return rows
+	}
+	var out []Component
+	for _, c := range rows {
+		if c.Stack == "" || slices.Contains(active, c.Stack) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Supports reports whether the component's stated range includes v.
 func (c Component) Supports(v string) bool {
 	if c.MinK8s != "" && Less(v, c.MinK8s) {

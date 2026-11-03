@@ -78,6 +78,7 @@ func newCloudProvider(cfg config.Config, home string, opts runOptions) (*labaws.
 		TTL:        time.Duration(cfg.Cloud.TTL),
 		K8sVersion: cfg.Cloud.K8sVersion,
 		Timeout:    opts.Timeout,
+		Stacks:     activeStacks(cfg, home, opts.Stacks),
 	})
 }
 

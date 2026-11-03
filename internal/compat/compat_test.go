@@ -107,3 +107,34 @@ func TestTestedNotStated(t *testing.T) {
 		t.Errorf("1.36 unsupported: %v", bad)
 	}
 }
+
+// A row with a Stack counts only while the stack is active.
+func TestForStacks(t *testing.T) {
+	names := func(cs []Component) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+	tests := []struct {
+		mode   string
+		active []string
+		want   []string
+	}{
+		{"local", nil, []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"local", []string{"cluster", "gitops"}, []string{"Argo CD", "kind node images"}},
+		{"local", []string{"cluster", "gitops", "policy"}, []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"cloud", []string{"cluster"}, []string{"Karpenter", "AWS Load Balancer Controller"}},
+	}
+	for _, tt := range tests {
+		if got := names(ForStacks(tt.mode, tt.active)); !slices.Equal(got, tt.want) {
+			t.Errorf("ForStacks(%s, %v) = %v, want %v", tt.mode, tt.active, got, tt.want)
+		}
+	}
+	for _, c := range Table {
+		if c.Stack == "" {
+			t.Errorf("%s has no Stack", c.Name)
+		}
+	}
+}

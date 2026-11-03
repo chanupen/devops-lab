@@ -225,6 +225,35 @@ type runOptions struct {
 	// MFAPrompt asks for the MFA code when the cloud session needs one;
 	// nil never asks (the cached AWS CLI session must be valid).
 	MFAPrompt func(serial string) (string, error)
+	// Stacks are the stacks lab up --stacks asks for; they count as active
+	// for the compatibility table (activeStacks).
+	Stacks []string
+}
+
+// activeStacks are the stacks whose compatibility rows limit the
+// Kubernetes version: the profile and extraStacks, those asked for, those
+// the state file records as applied, and everything they depend on.
+func activeStacks(cfg config.Config, home string, asked []string) []string {
+	names := append(append([]string{}, cfg.ExtraStacks...), asked...)
+	if p, err := engine.ProfileStacks(cfg.Profile); err == nil {
+		names = append(names, p...)
+	}
+	if st, err := state.NewStore(filepath.Join(home, "state.json")).Load(); err == nil {
+		for s := range st.Stacks {
+			if st.IsApplied(s) {
+				names = append(names, s)
+			}
+		}
+	}
+	g, err := engine.NewGraph(engine.Catalog())
+	if err != nil {
+		return nil
+	}
+	order, err := g.Order(names...)
+	if err != nil {
+		return nil // an unknown stack: apply every row
+	}
+	return order
 }
 
 // providerFactory builds the runner for cfg.Mode. home is the directory
@@ -241,7 +270,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	switch cfg.Mode {
 	case "local":
 		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: opts.Purge,
-			RepoRoot: opts.RepoRoot})
+			RepoRoot: opts.RepoRoot, Stacks: activeStacks(cfg, home, opts.Stacks)})
 		if err != nil {
 			return nil, err
 		}

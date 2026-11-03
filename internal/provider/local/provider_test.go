@@ -17,6 +17,7 @@ import (
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 
+	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/config"
 )
 
@@ -527,13 +528,13 @@ func TestNodeImage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.v, func(t *testing.T) {
-			got, err := NodeImage(tt.v)
+			got, err := NodeImage(tt.v, compat.For("local"))
 			if got != tt.want || (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
 				t.Errorf("NodeImage(%s) = %q, %v; want %q, %q", tt.v, got, err, tt.want, tt.wantErr)
 			}
 		})
 	}
-	if vs := SupportedVersions(); vs[len(vs)-1] != config.K8sVersion {
+	if vs := SupportedVersions(compat.For("local")); vs[len(vs)-1] != config.K8sVersion {
 		t.Errorf("supported %v: the default pin %s is not the newest", vs, config.K8sVersion)
 	}
 }
@@ -668,3 +669,31 @@ func TestAppAccess(t *testing.T) {
 }
 
 func (f *fakeRuntime) callList() string { return strings.Join(f.calls, " ") }
+
+// Only the active stacks' rows limit k8sVersion: without gitops (Argo CD
+// 3.5, up to 1.36), 1.37 has a node image and is allowed.
+func TestNodeImageByStacks(t *testing.T) {
+	tests := []struct {
+		name    string
+		v       string
+		stacks  []string
+		wantErr string
+	}{
+		{"every row (nothing known)", "1.37", nil, "Argo CD v3.5.5 (1.33–1.36)"},
+		{"the minimal profile has gitops", "1.37", []string{"registry", "cluster", "gitops", "core", "sample-app"}, "Argo CD"},
+		{"cluster only", "1.37", []string{"registry", "cluster"}, ""},
+		{"policy on 1.36", "1.36", []string{"registry", "cluster", "gitops", "policy"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NodeImage(tt.v, compat.ForStacks("local", tt.stacks))
+			if (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("NodeImage(%s) err = %v, want %q", tt.v, err, tt.wantErr)
+			}
+		})
+	}
+	p := newProvider(newFakeRuntime(), nil, Options{K8sVersion: "1.37", Stacks: []string{"registry", "cluster"}})
+	if err := p.CheckK8sVersion(context.Background()); err != nil {
+		t.Errorf("CheckK8sVersion with only cluster: %v", err)
+	}
+}
