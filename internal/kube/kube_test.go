@@ -3,18 +3,21 @@ package kube
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // syncBuffer is a bytes.Buffer safe for the informer goroutine.
@@ -234,5 +237,59 @@ func TestAppFromMultiSource(t *testing.T) {
 		if got := AppFrom(tt.u); got.Current != tt.want || got.Ready() != tt.want {
 			t.Errorf("%s: current = %v, ready = %v; want %v", tt.name, got.Current, got.Ready(), tt.want)
 		}
+	}
+}
+
+func TestReadHealth(t *testing.T) {
+	src := map[string]any{"path": "p"}
+	tests := []struct {
+		name      string
+		nodes     []runtime.Object
+		apps      []runtime.Object
+		noArgo    bool
+		wantNodes [2]int // nodes, ready
+		wantApps  []string
+	}{
+		{"healthy", []runtime.Object{node("cp", "True"), node("w1", "True")},
+			[]runtime.Object{app("podinfo", nil, "Synced", "Healthy", src, src), app("cert-manager", nil, "Synced", "Healthy", src, src)},
+			false, [2]int{2, 2}, []string{"cert-manager Synced Healthy", "podinfo Synced Healthy"}},
+		{"a node not ready, an app degraded", []runtime.Object{node("cp", "True"), node("w1", "False")},
+			[]runtime.Object{app("loki", nil, "OutOfSync", "Degraded", src, nil)},
+			false, [2]int{2, 1}, []string{"loki OutOfSync Degraded"}},
+		{"no Argo CD", []runtime.Object{node("cp", "True")}, nil, true, [2]int{1, 1}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := fake.NewClientset()
+			for _, n := range tt.nodes {
+				if _, err := cs.CoreV1().Nodes().Create(context.Background(), n.(*corev1.Node), metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			kinds := map[schema.GroupVersionResource]string{AppGVR: "ApplicationList"}
+			var dyn *dynamicfake.FakeDynamicClient
+			if tt.noArgo {
+				dyn = dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), kinds)
+				dyn.PrependReactor("list", "applications", func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "argoproj.io", Resource: "applications"}, "")
+				})
+			} else {
+				dyn = dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), kinds, tt.apps...)
+			}
+			h, err := ReadHealth(context.Background(), &Clients{Core: cs, Dynamic: dyn}, "argocd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.Nodes != tt.wantNodes[0] || h.Ready != tt.wantNodes[1] {
+				t.Errorf("nodes %d/%d, want %v", h.Ready, h.Nodes, tt.wantNodes)
+			}
+			var got []string
+			for _, a := range h.Apps {
+				got = append(got, a.Name+" "+a.Sync+" "+a.Health)
+			}
+			if !slices.Equal(got, tt.wantApps) || (tt.noArgo != (h.Apps == nil)) {
+				t.Errorf("apps %v, want %v", got, tt.wantApps)
+			}
+		})
 	}
 }

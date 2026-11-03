@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
+
+	"github.com/chanupen/devops-lab/internal/labs"
 )
 
 // Scratch makes the single-node kind clusters scratch labs run on. They
@@ -68,30 +70,39 @@ func (s *Scratch) Exists(name string) (bool, error) {
 	return slices.Contains(names, name), err
 }
 
-// Create implements labs.Clusters. Without a running Zot, containerd's
-// mirror files fall back to the upstream registries, so the cluster still
-// works, only slower; it says so.
+// Uptime implements labs.Clusters from the node container's state.
+func (s *Scratch) Uptime(name string) (labs.Uptime, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := s.rt.Container(ctx, name+"-control-plane")
+	if err != nil {
+		return labs.Uptime{}, err
+	}
+	return labs.Uptime{Exists: c.Exists, Running: c.Running, Started: c.StartedAt, Stopped: c.FinishedAt}, nil
+}
+
+// Create implements labs.Clusters. It starts the image cache and an
+// existing cluster's node when they are stopped (after a reboot).
 func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
 	if name == ClusterName {
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
-	if zot, err := s.rt.Container(ctx, ZotContainer); err != nil || !zot.Running {
-		logf(log, "image cache %s is not running: images come straight from the registries (lab up --stacks registry starts it)", ZotContainer)
-	} else {
-		logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
-	}
+	s.startZot(ctx, log)
 	for _, u := range upstreams() {
 		if err := writeFile(filepath.Join(s.certsDir(), u.Name, "hosts.toml"), []byte(hostsTOML(u))); err != nil {
 			return err
 		}
 	}
-	kc := s.clusters(log, kubeconfig, false)
+	kc := s.clusters(detail(log), kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err
 	}
 	if slices.Contains(names, name) {
 		logf(log, "kind cluster %q exists", name)
+		if err := s.startNode(ctx, name, log); err != nil {
+			return err
+		}
 	} else if err := s.create(ctx, name, kubeconfig, log); err != nil {
 		return err
 	}
@@ -107,27 +118,64 @@ func (s *Scratch) Create(ctx context.Context, name, kubeconfig string, log io.Wr
 	return s.ready(ctx, kubeconfig, 1, log)
 }
 
+// startZot starts the image cache when it is there but stopped (after a
+// reboot). Without it, containerd's mirror files fall back to the upstream
+// registries: the cluster still works, only slower, and it says so.
+func (s *Scratch) startZot(ctx context.Context, log io.Writer) {
+	zot, err := s.rt.Container(ctx, ZotContainer)
+	switch {
+	case err == nil && zot.Running:
+		logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
+		return
+	case err == nil && zot.Exists:
+		logf(log, "image cache %s was stopped; starting it", ZotContainer)
+		if err = s.rt.StartContainer(ctx, ZotContainer); err == nil {
+			logf(log, "image cache: %s (shared with the main lab)", ZotContainer)
+			return
+		}
+		logf(log, "image cache %s did not start (%v): images come straight from the registries", ZotContainer, err)
+	case err == nil:
+		logf(log, "image cache %s is not there: images come straight from the registries (lab up --stacks registry makes it)", ZotContainer)
+	default:
+		logf(log, "image cache %s: %v; images come straight from the registries", ZotContainer, err)
+	}
+}
+
+// startNode starts the cluster's node when it is there but stopped.
+func (s *Scratch) startNode(ctx context.Context, name string, log io.Writer) error {
+	node := name + "-control-plane"
+	c, err := s.rt.Container(ctx, node)
+	if err != nil || !c.Exists || c.Running {
+		return err
+	}
+	logf(log, "its node %s was stopped; starting it", node)
+	if err := s.rt.StartContainer(ctx, node); err != nil {
+		return fmt.Errorf("start %s: %w", node, err)
+	}
+	return nil
+}
+
 // create makes the cluster, trying twice. The first try keeps the nodes
 // if it fails (kind --retain), so what Podman and the node's systemd said
 // goes into the log before they are deleted; the second is a plain create.
 // Rootless Podman has failed an exec into a just-started node (exit 126).
 func (s *Scratch) create(ctx context.Context, name, kubeconfig string, log io.Writer) error {
 	logf(log, "creating kind cluster %q (one node)", name)
-	first := s.clusters(log, kubeconfig, true)
+	first := s.clusters(detail(log), kubeconfig, true)
 	err := first.Create(scratchConfig(name, s.certsDir()), NodeImage)
 	if err == nil {
 		return nil
 	}
 	logf(log, "creating %q failed: %v", name, err)
 	if s.diagnose != nil {
-		s.diagnose(ctx, name+"-control-plane", log)
+		s.diagnose(ctx, name+"-control-plane", detail(log))
 	}
 	logf(log, "removing the failed cluster %q", name)
 	if derr := first.Delete(name); derr != nil {
 		return fmt.Errorf("%w; removing the failed cluster: %w", err, derr)
 	}
 	logf(log, "trying once more")
-	return s.clusters(log, kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
+	return s.clusters(detail(log), kubeconfig, false).Create(scratchConfig(name, s.certsDir()), NodeImage)
 }
 
 // diagnoseNode writes podman inspect, podman logs and the last two minutes
@@ -162,7 +210,7 @@ func (s *Scratch) Delete(_ context.Context, name, kubeconfig string, log io.Writ
 	if name == ClusterName {
 		return fmt.Errorf("%q is the main lab's cluster", name)
 	}
-	kc := s.clusters(log, kubeconfig, false)
+	kc := s.clusters(detail(log), kubeconfig, false)
 	names, err := kc.List()
 	if err != nil {
 		return err

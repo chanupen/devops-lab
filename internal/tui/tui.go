@@ -63,6 +63,10 @@ type Options struct {
 	ReadOnly string
 	Release  func()
 	Claim    func() (release func(), err error)
+	// Units lists the lab's containers (cluster nodes, the image cache),
+	// so Home can say a cluster is stopped rather than off. Nil leaves
+	// them out. It runs in the background, at start and every few polls.
+	Units func(ctx context.Context) ([]Unit, error)
 	// Labs are the labs in labs/, loaded before New. LabVerify and LabHint
 	// verify a step of the started lab and show its next hint; nil turns
 	// v and h into hints for the CLI.
@@ -103,6 +107,54 @@ type data struct {
 	// revision. Maps, so copies of the model share them.
 	branchChecked map[string]bool
 	branchGone    map[string]bool
+	// units are the lab's containers, once a Units call has answered.
+	units      []Unit
+	unitsKnown bool
+}
+
+// Unit is a part of the lab made of containers, as Home shows it.
+type Unit struct {
+	Kind    string // UnitCluster, UnitScratch or UnitCache
+	Name    string
+	Running bool   // every container of it
+	Fix     string // the command that starts the stopped ones
+	Uptime  labs.Uptime
+}
+
+// Unit kinds.
+const (
+	UnitCluster = "cluster"     // the main lab's cluster
+	UnitScratch = "scratch"     // a scratch lab's cluster
+	UnitCache   = "image cache" // the pull-through registry
+)
+
+// unit returns the unit of this kind and name.
+func (d *data) unit(kind, name string) (Unit, bool) {
+	for _, u := range d.units {
+		if u.Kind == kind && (name == "" || u.Name == name) {
+			return u, true
+		}
+	}
+	return Unit{}, false
+}
+
+// clusterStopped reports whether the main cluster's nodes are there but
+// stopped, as after a reboot.
+func (d *data) clusterStopped() bool {
+	u, ok := d.unit(UnitCluster, "")
+	return ok && !u.Running
+}
+
+// labUptime is the uptime of scratch lab l's cluster: nil while unknown,
+// zero (gone) when the list has no such cluster.
+func (d *data) labUptime(l labs.Lab) *labs.Uptime {
+	if !d.unitsKnown || l.Needs != labs.NeedsScratch {
+		return nil
+	}
+	if u, ok := d.unit(UnitScratch, labs.ClusterName(l)); ok {
+		return &u.Uptime
+	}
+	return &labs.Uptime{}
 }
 
 // revisionGone reports whether the recorded revision's branch was deleted.
@@ -148,6 +200,7 @@ type Model struct {
 	kubeMod  time.Time
 	kubeSeen bool
 	stateMod time.Time
+	ticks    int // file polls so far
 }
 
 // New builds the model. It does no I/O, so the first View is as fast as
@@ -248,13 +301,34 @@ type (
 		st  state.State
 		err error
 	}
+	unitsMsg struct {
+		units []Unit
+		err   error
+	}
 	tickMsg struct{}
 )
 
 // Init starts the cluster connection, the watcher listener, the file check
 // and, for a branch revision, the deleted-branch check.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.connect(m.gen), m.listen(), m.tick(), m.checkBranch())
+	return tea.Batch(m.connect(m.gen), m.listen(), m.tick(), m.checkBranch(), m.checkUnits())
+}
+
+// unitsEvery is how many file polls pass between container checks.
+const unitsEvery = 5
+
+// checkUnits lists the lab's containers off the key loop.
+func (m Model) checkUnits() tea.Cmd {
+	list := m.opts.Units
+	if list == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		units, err := list(ctx)
+		return unitsMsg{units: units, err: err}
+	}
 }
 
 func (m Model) listen() tea.Cmd {
@@ -326,10 +400,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.key(msg)
 	case liveMsg:
+		var units tea.Cmd
 		if msg.gen == m.gen {
+			// The cluster went down or came back: was it stopped?
+			if msg.c.up != m.d.live.up {
+				units = m.checkUnits()
+			}
 			m.d.live = msg.c
 		}
-		return m, m.listen()
+		return m, tea.Batch(m.listen(), units)
+	case unitsMsg:
+		m.d.units, m.d.unitsKnown = msg.units, msg.err == nil
+		return m, nil
 	case connectedMsg:
 		if msg.gen != m.gen {
 			if msg.cancel != nil {
@@ -349,7 +431,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if c != nil {
 			m.claiming = true
 		}
-		return m, tea.Batch(m.checkFiles(), c)
+		m.ticks++
+		var units tea.Cmd
+		if m.ticks%unitsEvery == 0 {
+			units = m.checkUnits()
+		}
+		return m, tea.Batch(m.checkFiles(), c, units)
 	case claimMsg:
 		m.claiming = false
 		var busy *state.BusyError
@@ -662,6 +749,8 @@ func health(d *data) string {
 		return statusOff.symbol() + " off"
 	case !c.known:
 		return statusProgressing.symbol() + " connecting"
+	case !c.up && d.clusterStopped():
+		return statusOff.symbol() + " stopped"
 	case !c.up:
 		return statusOff.symbol() + " off"
 	case len(c.apps) == 0:

@@ -3,6 +3,7 @@ package labs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -46,6 +47,16 @@ type fakeClusters struct {
 	// Create report success without the cluster being there.
 	createErr error
 	vanish    bool
+	// up overrides a cluster's uptime; without an entry an existing
+	// cluster has been running all along.
+	up map[string]Uptime
+}
+
+func (f *fakeClusters) Uptime(name string) (Uptime, error) {
+	if u, ok := f.up[name]; ok {
+		return u, nil
+	}
+	return Uptime{Exists: f.have[name], Running: f.have[name]}, nil
 }
 
 func (f *fakeClusters) Exists(name string) (bool, error) { return f.have[name], nil }
@@ -156,29 +167,31 @@ func TestLabFlow(t *testing.T) {
 		t.Errorf("solution: %q %v %v", sol, err, progress(t, m, l.ID).Solutions)
 	}
 
-	// Stop keeps progress, adds the session's time and deletes the cluster.
+	// Stop deletes the cluster, reports how far the lab got and clears its
+	// progress: the work went with the cluster.
 	clk.t = clk.t.Add(25 * time.Minute)
-	if _, err := m.Stop(ctx, io.Discard); err != nil {
-		t.Fatal(err)
+	_, reached, err := m.Stop(ctx, io.Discard)
+	if err != nil || reached.Step != 2 || reached.Spent != 25*time.Minute {
+		t.Fatalf("stop: reached %+v, %v", reached, err)
 	}
 	p := progress(t, m, l.ID)
-	if p.Step != 2 || p.Spent != 25*time.Minute || !p.Session.IsZero() || !slices.Equal(c.deleted, []string{"lab-scratch-01-scratch"}) {
+	if p.Step != 0 || p.Spent != 0 || p.Attempts != nil || !slices.Equal(c.deleted, []string{"lab-scratch-01-scratch"}) {
 		t.Errorf("after stop: %+v deleted %v", p, c.deleted)
 	}
 	if _, _, err := m.Verify(ctx, 0); err == nil || !strings.Contains(err.Error(), "no lab is started") {
 		t.Errorf("verify while stopped: %v", err)
 	}
 
-	// Starting again picks up at step 2; the time adds up across sessions.
+	// Starting again begins at step 1, with the time from zero.
 	if _, err := m.Start(ctx, "01-scratch", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	clk.t = clk.t.Add(10 * time.Minute)
-	if p := progress(t, m, l.ID); p.Step != 2 || p.TimeSpent(clk.t) != 35*time.Minute {
+	if p := progress(t, m, l.ID); p.Step != 1 || p.TimeSpent(clk.t) != 10*time.Minute {
 		t.Errorf("second session: %+v, spent %s", p, p.TimeSpent(clk.t))
 	}
 	r.pass["02-verify.sh"], r.pass["03-verify.sh"] = true, true
-	for range 2 {
+	for range 3 {
 		if _, res, err := m.Verify(ctx, 0); err != nil || !res.Passed {
 			t.Fatalf("verify: %+v %v", res, err)
 		}
@@ -194,7 +207,7 @@ func TestLabFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	p = progress(t, m, l.ID)
-	if p.Step != 1 || !p.Completed.IsZero() || p.Hints != nil || p.TimeSpent(clk.t) != 35*time.Minute {
+	if p.Step != 1 || !p.Completed.IsZero() || p.Hints != nil || p.TimeSpent(clk.t) != 10*time.Minute {
 		t.Errorf("after reset: %+v", p)
 	}
 	if !slices.Contains(r.runs, "reset.sh") {
@@ -263,7 +276,7 @@ func TestStartChecks(t *testing.T) {
 	if err != nil || len(c.created) != 0 || m.Kubeconfig(l) != m.MainKubeconfig {
 		t.Errorf("on the main lab: %v, created %v, kubeconfig %s", err, c.created, m.Kubeconfig(l))
 	}
-	if _, err := m.Stop(ctx, io.Discard); err != nil || len(c.deleted) != 0 {
+	if _, _, err := m.Stop(ctx, io.Discard); err != nil || len(c.deleted) != 0 {
 		t.Errorf("stopping a needs: lab lab deleted %v (%v)", c.deleted, err)
 	}
 }
@@ -372,8 +385,8 @@ func TestFailedStartLeavesNothing(t *testing.T) {
 	}
 }
 
-// Stop succeeds when the scratch cluster is already gone: it says so,
-// clears the lab's state and keeps its progress.
+// Stop succeeds when the scratch cluster is already gone: it says so and
+// clears the lab's state and progress.
 func TestStopWhenTheClusterIsGone(t *testing.T) {
 	ctx := context.Background()
 	m, r, c, clk := testManager(t)
@@ -387,7 +400,7 @@ func TestStopWhenTheClusterIsGone(t *testing.T) {
 	delete(c.have, "lab-scratch-01-scratch") // deleted by hand, or by someone else
 	clk.t = clk.t.Add(7 * time.Minute)
 	var log strings.Builder
-	l, err := m.Stop(ctx, &log)
+	l, _, err := m.Stop(ctx, &log)
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -395,7 +408,120 @@ func TestStopWhenTheClusterIsGone(t *testing.T) {
 		t.Errorf("log %q, deleted %v", log.String(), c.deleted)
 	}
 	st, _ := m.Store.Load()
-	if p := st.Labs[l.ID]; st.ActiveLab != "" || p.Step != 2 || p.Spent != 7*time.Minute || !p.Session.IsZero() {
-		t.Errorf("after stop: active %q, %+v", st.ActiveLab, p)
+	if _, kept := st.Labs[l.ID]; st.ActiveLab != "" || kept {
+		t.Errorf("after stop: active %q, labs %+v", st.ActiveLab, st.Labs)
+	}
+}
+
+// Time counts only while the lab is started and its cluster's node runs.
+func TestTimeSpent(t *testing.T) {
+	t0 := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
+	open := state.LabProgress{Step: 1, Session: at(0), Spent: 5 * time.Minute}
+	now := at(60)
+	tests := []struct {
+		name string
+		p    state.LabProgress
+		up   *Uptime
+		want time.Duration
+	}{
+		{"stopped lab: only the sessions before", state.LabProgress{Step: 2, Spent: 7 * time.Minute}, &Uptime{}, 7 * time.Minute},
+		{"uptime unknown (main-cluster lab): the whole session", open, nil, 65 * time.Minute},
+		{"node running since before the session", open, &Uptime{Exists: true, Running: true, Started: at(-30)}, 65 * time.Minute},
+		{"node stopped at 20m (a reboot), not started again", open,
+			&Uptime{Exists: true, Started: at(-30), Stopped: at(20)}, 25 * time.Minute},
+		{"node started again at 50m after a reboot", open,
+			&Uptime{Exists: true, Running: true, Started: at(50), Stopped: at(20)}, 15 * time.Minute},
+		{"node stopped before the session began", open,
+			&Uptime{Exists: true, Started: at(-60), Stopped: at(-30)}, 5 * time.Minute},
+		{"cluster gone", open, &Uptime{}, 5 * time.Minute},
+		{"the 15h case: a session open all night, node down since 0:40", state.LabProgress{Step: 1, Session: at(0)},
+			&Uptime{Exists: true, Started: at(0), Stopped: at(40)}, 40 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := TimeSpent(tt.p, tt.up, now); got != tt.want {
+				t.Errorf("TimeSpent = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// Start folds a session that outlived its node into Spent and counts the
+// new session from the start; with no cluster to ask, a session adds nothing.
+func TestStartAndListTime(t *testing.T) {
+	ctx := context.Background()
+	m, _, c, clk := testManager(t)
+	l, err := m.Start(ctx, "1", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := m.Scratch(l)
+	t0 := clk.t
+	// The node ran 30 minutes, then the host rebooted; 15 hours pass.
+	c.up = map[string]Uptime{name: {Exists: true, Started: t0, Stopped: t0.Add(30 * time.Minute)}}
+	clk.t = t0.Add(15 * time.Hour)
+	if got := m.TimeSpent(l, progress(t, m, l.ID)); got != 30*time.Minute {
+		t.Errorf("after a reboot: %s, want 30m", got)
+	}
+	if _, err := m.Start(ctx, "1", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	c.up = nil // the node runs again
+	clk.t = clk.t.Add(10 * time.Minute)
+	if got := m.TimeSpent(l, progress(t, m, l.ID)); got != 40*time.Minute {
+		t.Errorf("after starting again: %s, want 40m", got)
+	}
+	m.Clusters = nil
+	if got := m.TimeSpent(l, progress(t, m, l.ID)); got != 30*time.Minute {
+		t.Errorf("no cluster to ask: %s, want 30m", got)
+	}
+}
+
+// Stop clears a scratch lab's steps and time, since its cluster is
+// deleted; a lab on the main cluster keeps its steps. Both report where
+// they got to.
+func TestStopProgress(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name     string
+		lab      string
+		steps    int // verified before stop
+		wantStep int // reached
+		kept     int // Step in state afterwards; 0: cleared
+	}{
+		{"scratch lab at step 3", "1", 2, 3, 0},
+		{"scratch lab done", "1", 3, 4, 0},
+		{"main-cluster lab keeps its steps", "2", 1, 2, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, r, _, clk := testManager(t)
+			if err := m.Store.Update(func(s *state.State) error {
+				s.Stacks["core"] = state.StackState{Status: state.Applied}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			l, err := m.Start(ctx, tt.lab, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for n := 1; n <= tt.steps; n++ {
+				r.pass[fmt.Sprintf("%02d-verify.sh", n)] = true
+				if _, res, err := m.Verify(ctx, 0); err != nil || !res.Passed {
+					t.Fatalf("verify %d: %+v %v", n, res, err)
+				}
+			}
+			clk.t = clk.t.Add(32 * time.Minute)
+			_, reached, err := m.Stop(ctx, io.Discard)
+			if err != nil || reached.Step != tt.wantStep || reached.Spent != 32*time.Minute {
+				t.Fatalf("reached %+v, %v", reached, err)
+			}
+			p := progress(t, m, l.ID)
+			if p.Step != tt.kept || p.Spent != 0 || !p.Session.IsZero() {
+				t.Errorf("after stop: %+v, want step %d and no time", p, tt.kept)
+			}
+		})
 	}
 }

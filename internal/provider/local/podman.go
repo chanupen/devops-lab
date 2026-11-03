@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 )
 
 // apiPrefix is the libpod API version path. Podman 5 and 6 both serve it.
@@ -160,7 +162,9 @@ func (p *Podman) Container(ctx context.Context, name string) (ContainerInfo, err
 	var d struct {
 		ImageName string `json:"ImageName"`
 		State     struct {
-			Running bool `json:"Running"`
+			Running    bool      `json:"Running"`
+			StartedAt  time.Time `json:"StartedAt"`
+			FinishedAt time.Time `json:"FinishedAt"`
 		} `json:"State"`
 		Config struct {
 			Labels map[string]string `json:"Labels"`
@@ -169,7 +173,46 @@ func (p *Podman) Container(ctx context.Context, name string) (ContainerInfo, err
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
 		return ContainerInfo{}, fmt.Errorf("inspect %s: %w", name, err)
 	}
-	return ContainerInfo{Exists: true, Running: d.State.Running, Image: d.ImageName, Labels: d.Config.Labels}, nil
+	return ContainerInfo{Name: name, Exists: true, Running: d.State.Running, Image: d.ImageName, Labels: d.Config.Labels,
+		StartedAt: d.State.StartedAt, FinishedAt: d.State.FinishedAt}, nil
+}
+
+// Containers implements Runtime. libpod's list gives the times as Unix
+// seconds; 0 (or less) means never.
+func (p *Podman) Containers(ctx context.Context, prefix string) ([]ContainerInfo, error) {
+	q := url.Values{"all": {"true"}}
+	resp, err := p.do(ctx, http.MethodGet, "/containers/json?"+q.Encode(), nil, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var list []struct {
+		Names     []string          `json:"Names"`
+		Image     string            `json:"Image"`
+		State     string            `json:"State"`
+		Labels    map[string]string `json:"Labels"`
+		StartedAt int64             `json:"StartedAt"`
+		ExitedAt  int64             `json:"ExitedAt"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	unix := func(s int64) time.Time {
+		if s <= 0 {
+			return time.Time{}
+		}
+		return time.Unix(s, 0)
+	}
+	var out []ContainerInfo
+	for _, c := range list {
+		if len(c.Names) == 0 || !strings.HasPrefix(c.Names[0], prefix) {
+			continue
+		}
+		out = append(out, ContainerInfo{Name: c.Names[0], Exists: true, Running: c.State == "running", Image: c.Image,
+			Labels: c.Labels, StartedAt: unix(c.StartedAt), FinishedAt: unix(c.ExitedAt)})
+	}
+	slices.SortFunc(out, func(a, b ContainerInfo) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 // createBody maps a ContainerSpec to libpod's SpecGenerator JSON.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -23,6 +25,19 @@ type fakeProvider struct {
 	fail    map[string]bool
 	urls    []string
 	urlsErr error
+	stopped []string // lab containers a reboot stopped
+}
+
+// StartStopped implements stoppedStarter: it starts f.stopped, recording each.
+func (f *fakeProvider) StartStopped(_ context.Context, log io.Writer) ([]local.Unit, error) {
+	for _, c := range f.stopped {
+		_, _ = fmt.Fprintf(log, "%s was stopped; starting it\n", c)
+		if err := f.do("start " + c); err != nil {
+			return nil, err
+		}
+	}
+	f.stopped = nil
+	return nil, nil
 }
 
 func (f *fakeProvider) AppURLs(context.Context) ([]string, error) { return f.urls, f.urlsErr }
@@ -65,7 +80,34 @@ func TestUpDown(t *testing.T) {
 		wantErr    string
 		wantStacks []string // applied stacks afterwards
 		wantOp     string   // command of the last op
+		stopped    []string // containers stopped before the run
 	}{
+		{
+			name:       "up starts stopped containers before anything else",
+			state:      deployedClusterRegistry,
+			args:       []string{"up", "--stacks", "cluster"},
+			stopped:    []string{"lab-control-plane", "lab-zot"},
+			wantCalls:  []string{"start lab-control-plane", "start lab-zot"},
+			wantOut:    []string{"lab-control-plane was stopped; starting it", "lab-zot was stopped; starting it", "nothing to do"},
+			wantStacks: []string{"cluster", "registry"},
+		},
+		{
+			name:       "starting them first, then applying",
+			args:       []string{"up", "--stacks", "registry"},
+			stopped:    []string{"lab-zot"},
+			wantCalls:  []string{"start lab-zot", "apply registry"},
+			wantOut:    []string{"lab-zot was stopped; starting it", "● registry: applied in"},
+			wantStacks: []string{"registry"},
+			wantOp:     "lab up --stacks registry",
+		},
+		{
+			name:      "a container that will not start stops lab up",
+			args:      []string{"up", "--stacks", "registry"},
+			stopped:   []string{"lab-zot"},
+			fail:      map[string]bool{"start lab-zot": true},
+			wantCalls: []string{"start lab-zot"},
+			wantErr:   "starting the lab's stopped containers: boom",
+		},
 		{
 			name:      "up cluster and registry",
 			args:      []string{"up", "--stacks", "cluster,registry"},
@@ -184,7 +226,7 @@ func TestUpDown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fp := &fakeProvider{fail: tt.fail}
+			fp := &fakeProvider{fail: tt.fail, stopped: tt.stopped}
 			var gotPurge, built bool
 			factory := func(_ config.Config, home string, opts runOptions) (provider, error) {
 				built, gotPurge = true, opts.Purge

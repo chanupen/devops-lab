@@ -86,12 +86,12 @@ func TestE2ELab1(t *testing.T) {
 			}
 		}
 		start := time.Now()
-		if _, err := m.Stop(context.Background(), log); err != nil {
+		if _, _, err := m.Stop(context.Background(), log); err != nil {
 			// Once, a podman --version run by kind exited 1 here; a second
 			// try keeps a one-off from leaving the cluster behind.
 			t.Logf("stop failed, trying once more: %v", err)
 			time.Sleep(5 * time.Second)
-			if _, err := m.Stop(context.Background(), log); err != nil {
+			if _, _, err := m.Stop(context.Background(), log); err != nil {
 				t.Errorf("stop: %v", err)
 			}
 		}

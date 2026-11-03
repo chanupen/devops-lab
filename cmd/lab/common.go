@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -129,6 +130,23 @@ type labRunner struct {
 	hosts func(context.Context) ([]string, error) // nil without a GitOps runner
 	url   func(host string) string
 	hint  string
+	// start starts the main cluster's and the cache's stopped containers;
+	// nil in cloud mode.
+	start func(context.Context, io.Writer) ([]local.Unit, error)
+}
+
+// stoppedStarter is implemented by providers whose lab can be stopped
+// under them, as a reboot stops local containers.
+type stoppedStarter interface {
+	StartStopped(ctx context.Context, log io.Writer) ([]local.Unit, error)
+}
+
+// StartStopped implements stoppedStarter.
+func (l labRunner) StartStopped(ctx context.Context, log io.Writer) ([]local.Unit, error) {
+	if l.start == nil {
+		return nil, nil
+	}
+	return l.start(ctx, log)
 }
 
 // AppURLs implements appAccess.
@@ -178,7 +196,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
-		l.url, l.hint = p.AppURL, p.AccessHint()
+		l.url, l.hint, l.start = p.AppURL, p.AccessHint(), p.StartStopped
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)
 		if err != nil {
