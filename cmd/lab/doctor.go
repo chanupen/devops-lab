@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
+	"github.com/chanupen/devops-lab/internal/provider/local"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -39,7 +41,11 @@ func newDoctorCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("--mode %q: want local or cloud", mode)
 			}
-			results := doctor.Run(cmd.Context(), doctor.HostSystem(), opts, checks)
+			sys := doctor.HostSystem()
+			if mode == "local" {
+				sys.Units = doctorUnits
+			}
+			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
 			var err error
 			if asJSON {
@@ -70,4 +76,14 @@ func requireLinux(goos string, stderr io.Writer) error {
 	}
 	_, _ = fmt.Fprintln(stderr, "lab doctor checks the Linux host. Run it there: ssh -t fedora lab doctor")
 	return exitError{code: 2}
+}
+
+// doctorUnits lists the lab's containers over the Podman API for lab doctor.
+func doctorUnits(ctx context.Context) ([]doctor.Unit, error) {
+	units, err := local.HostUnits(ctx)
+	out := make([]doctor.Unit, 0, len(units))
+	for _, u := range units {
+		out = append(out, doctor.Unit{Kind: u.Kind, Name: u.Name, Nodes: len(u.Containers), Running: u.Running(), Fix: u.Fix()})
+	}
+	return out, err
 }

@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	symbol = map[Status]string{OK: "●", Warn: "◐", Fail: "✕", Skip: "○"}
-	colour = map[Status]lipgloss.Color{OK: "2", Warn: "3", Fail: "1", Skip: "8"}
+	symbol = map[Status]string{OK: "●", Warn: "◐", Fail: "✕", Skip: "○", Stopped: "○"}
+	colour = map[Status]lipgloss.Color{OK: "2", Warn: "3", Fail: "1", Skip: "8", Stopped: "8"}
 )
 
 // Report is the --json document.
@@ -41,11 +41,14 @@ func WriteTable(w io.Writer, r *lipgloss.Renderer, results []Result) error {
 		counts[res.Status]++
 		st := r.NewStyle().Foreground(colour[res.Status])
 		fmt.Fprintf(&b, "%s %-*s  %s\n", st.Render(symbol[res.Status]), width, res.Name, res.Detail)
-		if res.Fix != "" && (res.Status == Fail || res.Status == Warn) {
+		if res.Fix != "" && (res.Status == Fail || res.Status == Warn || res.Status == Stopped) {
 			fmt.Fprintf(&b, "  %s  %s\n", strings.Repeat(" ", width), r.NewStyle().Faint(true).Render("fix: "+res.Fix))
 		}
 	}
 	summary := fmt.Sprintf("%d ok, %d warn, %d fail", counts[OK], counts[Warn], counts[Fail])
+	if counts[Stopped] > 0 {
+		summary += fmt.Sprintf(", %d stopped", counts[Stopped])
+	}
 	if counts[Skip] > 0 {
 		summary += fmt.Sprintf(", %d skipped", counts[Skip])
 	}

@@ -86,6 +86,7 @@ func tuiOptions(flags labFlags, newProvider providerFactory) (*tui.Options, erro
 	}
 	if mode == "local" {
 		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
+		opts.Units = tuiUnits
 	}
 	// The Labs screen: the labs next to lab.yaml, verified and hinted through
 	// the same manager as lab labs. Without a labs/ directory it is empty.
@@ -136,4 +137,30 @@ func claimTUI(opts *tui.Options, holder string) (release func(), readOnly string
 		return nil, h, nil
 	}
 	return release, "", err
+}
+
+// tuiUnits lists the lab's containers over the Podman API for the TUI.
+func tuiUnits(ctx context.Context) ([]tui.Unit, error) {
+	units, err := local.HostUnits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return toTUIUnits(units), nil
+}
+
+func toTUIUnits(units []local.Unit) []tui.Unit {
+	out := make([]tui.Unit, 0, len(units))
+	for _, u := range units {
+		kind := u.Kind
+		switch {
+		case u.Kind == "cluster" && u.Name == local.ClusterName:
+			kind = tui.UnitCluster
+		case u.Kind == "cluster" && strings.HasPrefix(u.Name, labs.ScratchPrefix):
+			kind = tui.UnitScratch
+		case u.Kind == "image cache":
+			kind = tui.UnitCache
+		}
+		out = append(out, tui.Unit{Kind: kind, Name: u.Name, Running: u.Running(), Fix: u.Fix(), Uptime: u.Uptime})
+	}
+	return out
 }

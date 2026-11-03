@@ -6,6 +6,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/chanupen/devops-lab/internal/labs"
 )
 
 // LabPrefix starts the name of every container lab makes: the main
@@ -23,6 +25,8 @@ type Unit struct {
 	Name       string   // the kind cluster's name, or the container's
 	Containers []string // sorted
 	Stopped    []string // the ones not running
+	// Uptime is the first container's: a cluster's control-plane node.
+	Uptime labs.Uptime
 }
 
 // Running reports whether every container of the unit runs.
@@ -63,6 +67,9 @@ func Units(cs []ContainerInfo) []Unit {
 		default:
 			others = append(others, Unit{Kind: "container", Name: c.Name})
 			u = &others[len(others)-1]
+		}
+		if len(u.Containers) == 0 {
+			u.Uptime = labs.Uptime{Exists: true, Running: c.Running, Started: c.StartedAt, Stopped: c.FinishedAt}
 		}
 		u.Containers = append(u.Containers, c.Name)
 		if !c.Running {

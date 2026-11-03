@@ -238,13 +238,19 @@ func (lm labsModel) labText(d *data, l labs.Lab, p state.LabProgress, now time.T
 		needs = "the main lab (" + strings.Join(l.Stacks, ", ") + ")"
 	}
 	fmt.Fprintf(&b, " %s · about %s · %s · runs on %s\n", l.ID, l.Time, l.Level, needs)
+	spent := labs.TimeSpent(p, d.labUptime(l), now)
 	switch {
 	case d.st.ActiveLab == l.ID:
-		fmt.Fprintf(&b, " %s started · %s spent\n", statusProgressing.symbol(), shortSpent(p.TimeSpent(now)))
+		if u, ok := d.unit(UnitScratch, labs.ClusterName(l)); ok && !u.Running {
+			fmt.Fprintf(&b, " %s started · cluster %s stopped · %s spent · %s\n", statusProgressing.symbol(), statusOff.symbol(),
+				shortSpent(spent), faint.Render("$ "+u.Fix))
+			break
+		}
+		fmt.Fprintf(&b, " %s started · %s spent\n", statusProgressing.symbol(), shortSpent(spent))
 	case !p.Completed.IsZero():
-		fmt.Fprintf(&b, " %s done · %s spent\n", statusHealthy.symbol(), shortSpent(p.TimeSpent(now)))
+		fmt.Fprintf(&b, " %s done · %s spent\n", statusHealthy.symbol(), shortSpent(spent))
 	case p.Step > 0:
-		fmt.Fprintf(&b, " %s stopped at step %d · %s spent · %s\n", statusOff.symbol(), p.Step, shortSpent(p.TimeSpent(now)),
+		fmt.Fprintf(&b, " %s stopped at step %d · %s spent · %s\n", statusOff.symbol(), p.Step, shortSpent(spent),
 			faint.Render("$ lab labs start "+l.Number()))
 	default:
 		fmt.Fprintf(&b, " %s not started · %s\n", statusOff.symbol(), faint.Render("$ lab labs start "+l.Number()))
