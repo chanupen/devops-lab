@@ -32,6 +32,15 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kyverno
+  {{- if eq $app.name "kyverno" }}
+  # The chart's policies.kyverno.io CRDs carry empty annotations and labels
+  # ({}), which the API server drops, so a server-side diff would report
+  # them OutOfSync forever.
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers: [/metadata/annotations, /metadata/labels]
+  {{- end }}
   syncPolicy:
     {{- include "lab.syncPolicy" $ | nindent 4 }}
     syncOptions:

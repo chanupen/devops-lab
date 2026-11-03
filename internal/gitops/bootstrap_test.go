@@ -338,6 +338,11 @@ func TestBootstrapChartPolicy(t *testing.T) {
 		if !slices.Contains(opts, any("ServerSideApply=true")) {
 			t.Errorf("%s syncOptions = %v", tt.app, opts)
 		}
+		// Only kyverno ships the CRDs with empty metadata maps.
+		ign, _ := field(o, "spec", "ignoreDifferences").([]any)
+		if (tt.app == "kyverno") != (len(ign) == 1) {
+			t.Errorf("%s ignoreDifferences = %v", tt.app, ign)
+		}
 	}
 	for name := range renderStacks(t, map[string]any{"policy": false}) {
 		if strings.Contains(name, "kyverno") && !strings.HasPrefix(name, "Secret/") {
