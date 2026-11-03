@@ -150,16 +150,19 @@ func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc) 
 	return err
 }
 
+// progressText is "step 2/6, 15m, started", or "done, 6/6 steps, 42m".
 func progressText(l labs.Lab, p state.LabProgress, active bool, spent time.Duration) string {
 	if p.Step == 0 {
 		return "not started"
 	}
-	s := fmt.Sprintf("%d/%d steps, %s", labs.DoneSteps(l, p), len(l.Steps), shortDuration(spent))
-	switch {
-	case active:
+	var s string
+	if p.Step > len(l.Steps) {
+		s = fmt.Sprintf("done, %d/%d steps, %s", len(l.Steps), len(l.Steps), shortDuration(spent))
+	} else {
+		s = fmt.Sprintf("step %d/%d, %s", p.Step, len(l.Steps), shortDuration(spent))
+	}
+	if active {
 		s += ", started"
-	case !p.Completed.IsZero():
-		s += ", done"
 	}
 	return s
 }

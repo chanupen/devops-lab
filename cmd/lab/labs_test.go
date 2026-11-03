@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -43,7 +44,7 @@ func TestLabsCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = runLab(append([]string{"labs", "list"}, flags...)...)
-	if err != nil || !strings.Contains(out, "◐  01-argocd-bootstrap") || !strings.Contains(out, "1/6 steps, 15m, started") {
+	if err != nil || !strings.Contains(out, "◐  01-argocd-bootstrap") || !strings.Contains(out, "step 2/6, 15m, started") {
 		t.Errorf("list while started: %v\n%s", err, out)
 	}
 	out, err = runLab(append([]string{"labs", "status"}, flags...)...)
@@ -95,5 +96,30 @@ func TestLabsStartIsAnOp(t *testing.T) {
 	op := st.Ops[0]
 	if op.Command != "lab labs start 01" || op.Stack != "01-argocd-bootstrap" || op.Action != "labs start" || op.Status != "failed" || op.Log == "" {
 		t.Errorf("op = %+v", op)
+	}
+}
+
+func TestProgressText(t *testing.T) {
+	l := labs.Lab{Steps: make([]labs.Step, 6)}
+	tests := []struct {
+		name   string
+		p      state.LabProgress
+		active bool
+		spent  time.Duration
+		want   string
+	}{
+		{"never started", state.LabProgress{}, false, 0, "not started"},
+		{"just started: the current step, not 0/6", state.LabProgress{Step: 1}, true, 0, "step 1/6, 0m, started"},
+		{"stopped at step 3", state.LabProgress{Step: 3}, false, 0, "step 3/6, 0m"},
+		{"on the last step", state.LabProgress{Step: 6}, true, 95 * time.Minute, "step 6/6, 1h35m, started"},
+		{"done, still started", state.LabProgress{Step: 7}, true, 42 * time.Minute, "done, 6/6 steps, 42m, started"},
+		{"done and stopped", state.LabProgress{Step: 7}, false, 0, "done, 6/6 steps, 0m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := progressText(l, tt.p, tt.active, tt.spent); got != tt.want {
+				t.Errorf("progressText = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
