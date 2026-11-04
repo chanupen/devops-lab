@@ -168,7 +168,17 @@ func (m *Manager) Start(ctx context.Context, id string, random bool, log io.Writ
 		if err != nil {
 			logf(log, "warning: no timer restores the lab at the time limit (%v); lab drills abort, lab up or an open TUI will", err)
 		} else {
+			// Recorded at once, so a restore after a crash during inject
+			// cancels it too.
 			run.Timer = unit
+			if err := m.Store.Update(func(s *state.State) error {
+				if s.ActiveDrill != nil && s.ActiveDrill.Run == run.Run {
+					s.ActiveDrill.Timer = unit
+				}
+				return nil
+			}); err != nil {
+				return run, err
+			}
 		}
 	}
 	logf(log, "injecting the fault")

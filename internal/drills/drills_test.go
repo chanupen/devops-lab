@@ -312,6 +312,7 @@ func TestDrillRun(t *testing.T) {
 func TestRestoreAfterCrash(t *testing.T) {
 	ctx := context.Background()
 	m, dyn, runner, _ := testSetup(t)
+	m.Timer = &fakeTimer{}
 	inject := runner.scripts["inject"]
 	runner.scripts["inject"] = func() (string, error) {
 		if _, err := inject(); err != nil {
@@ -330,15 +331,22 @@ func TestRestoreAfterCrash(t *testing.T) {
 	if st.ActiveDrill == nil || st.ActiveDrill.Phase != state.DrillInjecting || len(st.ActiveDrill.Snapshot) != 1 {
 		t.Fatalf("state after the crash: %+v", st.ActiveDrill)
 	}
+	if st.ActiveDrill.Timer != "lab-drill-"+st.ActiveDrill.Run {
+		t.Errorf("the timer is not in the state before inject: %q", st.ActiveDrill.Timer)
+	}
 	// A new process: only the state file is shared.
+	timer := &fakeTimer{}
 	m2 := &Manager{Drills: m.Drills, Store: state.NewStore(m.Store.Path()), Kube: m.Kube, Kubeconfig: "/kc",
-		Runner: &fakeRunner{}, Now: m.Now}
+		Runner: &fakeRunner{}, Now: m.Now, Timer: timer}
 	r, ok, err := m2.RestoreForUp(ctx, io.Discard)
 	if err != nil || !ok || r.Outcome != state.DrillRestoredByUp {
 		t.Fatalf("RestoreForUp = %+v, %v, %v", r, ok, err)
 	}
 	if replicas(t, dyn) != 2 {
 		t.Errorf("CoreDNS has %d replicas after restore", replicas(t, dyn))
+	}
+	if len(timer.cancelled) != 1 {
+		t.Errorf("the crashed run's timer was not cancelled: %v", timer.cancelled)
 	}
 }
 
