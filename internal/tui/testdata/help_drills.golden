@@ -1,0 +1,30 @@
+ lab   drill: oom 04:12/30:00  mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —  
+ 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops                                                      
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Keys: Drills                                                                                       
+                                                                                                    
+  j k ↑ ↓     Move between drills                                                                   
+  enter       Start the selected drill, after a prompt (lab drills start <id>)                      
+  R           Start a random drill, without saying which (lab drills start --random)                
+  a           Found it: stop the detect timer (lab drills ack)                                      
+  v           Verify the fix; a pass stops the recover timer and puts the lab back (lab drills veri…
+  h           Show the next hint (lab drills hint)                                                  
+  x           Abort: put back everything the drill changed, after a prompt (lab drills abort)       
+                                                                                                    
+  1 2 3 4 5   Home, Stacks, Labs, Drills, Ops log                                                   
+  U           Bring the whole profile up (lab up)                                                   
+  :           Command palette: up, down, status, doctor, plan                                       
+  K           Open k9s on the lab cluster; quit it to come back                                     
+  ?           This help                                                                             
+  q  ctrl+c   Quit                                                                                  
+                                                                                                    
+  Only one operation runs at a time; other action keys say busy.                                    
+  A TUI opened while another lab changes things is read-only: views and                             
+  reports work, actions do not, until the other lab is done.                                        
+  Every action shows its CLI command in the ops strip.                                              
+                                                                                                    
+  State: ● healthy  ◐ progressing  ○ off  ✕ failed                                                  
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ any key closes help  q quit                                                                        

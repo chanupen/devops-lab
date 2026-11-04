@@ -17,13 +17,13 @@ func TestDrillStatus(t *testing.T) {
 	r := state.DrillRun{Drill: "dns", Random: true, Phase: state.DrillRunning, Started: start, Deadline: start.Add(30 * time.Minute),
 		Alert: "CoreDNSDown", AlertFired: start.Add(75 * time.Second), Acked: start.Add(3 * time.Minute), Hints: 1}
 	got := drillStatus(d, r, start.Add(4*time.Minute))
-	for _, want := range []string{"a random one", "running 4m0s, 26m0s left", "alert CoreDNSDown: fired after 1m15s",
+	for _, want := range []string{"a random one", "running 4m0s, 26m0s left", "the alert: fired after 1m15s",
 		"detect: 3m0s", "hints: 1 of 2", randomPage} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "dns") || strings.Contains(got, d.Title) {
+	if strings.Contains(got, "dns") || strings.Contains(got, "CoreDNS") || strings.Contains(got, d.Title) {
 		t.Errorf("a random drill's status gives it away:\n%s", got)
 	}
 	r.Random, r.Phase, r.Error = false, state.DrillRestoring, "deployments/coredns: spec differ"

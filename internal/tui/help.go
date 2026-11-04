@@ -5,7 +5,7 @@ import "strings"
 // Key help, by screen. Every key the screen handles is listed.
 var (
 	helpGlobal = [][2]string{
-		{"1 2 3 5", "Home, Stacks, Labs, Ops log"},
+		{"1 2 3 4 5", "Home, Stacks, Labs, Drills, Ops log"},
 		{"U", "Bring the whole profile up (lab up)"},
 		{":", "Command palette: up, down, status, doctor, plan"},
 		{"K", "Open k9s on the lab cluster; quit it to come back"},
@@ -29,6 +29,15 @@ var (
 			{"v", "Verify the step shown (lab labs verify N); passing it moves you on"},
 			{"h", "Show the step's next hint (lab labs hint N)"},
 			{"esc", "Back to the lab"},
+		},
+		screenDrills: {
+			{"j k ↑ ↓", "Move between drills"},
+			{"enter", "Start the selected drill, after a prompt (lab drills start <id>)"},
+			{"R", "Start a random drill, without saying which (lab drills start --random)"},
+			{"a", "Found it: stop the detect timer (lab drills ack)"},
+			{"v", "Verify the fix; a pass stops the recover timer and puts the lab back (lab drills verify)"},
+			{"h", "Show the next hint (lab drills hint)"},
+			{"x", "Abort: put back everything the drill changed, after a prompt (lab drills abort)"},
 		},
 		screenOps: {
 			{"j k ↑ ↓", "Move"},

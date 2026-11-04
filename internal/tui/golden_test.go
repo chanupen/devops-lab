@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/kube"
 	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
@@ -61,6 +62,25 @@ func TestGolden(t *testing.T) {
 		return m
 	}
 
+	// The Drills screen renders the repo's drills: one running 4m12s with
+	// its alert fired and an ack, one random, and the list with history.
+	allDrills, err := drills.LoadAll(filepath.Join("..", "..", "drills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drilling := labState(7)
+	drilling.Stacks["obs"] = state.StackState{Status: state.Applied}
+	drilling.ActiveDrill = &state.DrillRun{Run: "r1", Drill: "oom", Phase: state.DrillRunning, Started: t0.Add(-4*time.Minute - 12*time.Second),
+		Deadline: t0.Add(26*time.Minute - 12*time.Second), Alert: "KubeContainerOOMKilled", AlertFired: t0.Add(-2 * time.Minute),
+		Acked: t0.Add(-time.Minute), Hints: 1}
+	randomDrill := labState(7)
+	randomDrill.ActiveDrill = &state.DrillRun{Run: "r2", Drill: "dns", Random: true, Phase: state.DrillRunning, Started: t0.Add(-time.Minute),
+		Deadline: t0.Add(29 * time.Minute), Alert: "CoreDNSDown"}
+	drillHistory := labState(7)
+	drillHistory.Stacks["obs"] = state.StackState{Status: state.Applied}
+	drillHistory.Drills = []state.DrillRun{{Run: "r0", Drill: "bad-deploy", Started: t0.Add(-time.Hour), Acked: t0.Add(-58 * time.Minute),
+		Recovered: t0.Add(-55 * time.Minute), Outcome: state.DrillRecovered}}
+
 	tests := []struct {
 		name  string
 		st    state.State
@@ -74,6 +94,11 @@ func TestGolden(t *testing.T) {
 		{"labs_step", onLab, upCluster, []string{"3", "enter"}, failedVerify},
 		{"labs_next_step", onLab, upCluster, []string{"3", "enter", "n"}, nil},
 		{"help_labs", onLab, upCluster, []string{"3", "?"}, nil},
+		// Cases named *drills*: the repo's drills are loaded and the clock pinned.
+		{"drills_list", drillHistory, upCluster, []string{"4"}, nil},
+		{"drills_running", drilling, upCluster, []string{"4"}, nil},
+		{"drills_random", randomDrill, upCluster, []string{"4"}, nil},
+		{"help_drills", drilling, upCluster, []string{"4", "?"}, nil},
 		{"home_empty", state.New(), cluster{known: true, reason: "no cluster"}, nil, nil},
 		{"home_down", labState(2), cluster{known: true, reason: "not reachable: connection refused"}, nil, nil},
 		{"home_up", onMain, upCluster, nil, nil},
@@ -102,6 +127,10 @@ func TestGolden(t *testing.T) {
 			m.d.cfgPath = "/home/user/devops-lab/lab.yaml"
 			if strings.Contains(tt.name, "labs") {
 				m.d.labs = lab1
+				m.opts.Now = func() time.Time { return t0 }
+			}
+			if strings.Contains(tt.name, "drills") {
+				m.d.drills = allDrills
 				m.opts.Now = func() time.Time { return t0 }
 			}
 			var next tea.Model = m

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
+	"github.com/chanupen/devops-lab/internal/tui"
 )
 
 // drillsManager builds the drills manager: the drills in drills/ next to
@@ -78,15 +80,21 @@ func drillsManager(f labFlags) (*drills.Manager, error) {
 // the op recorded in state.json. A random drill's ID stays out of it.
 // Start's output goes to the log only: it would give the fault away.
 func drillOp(cmd *cobra.Command, m *drills.Manager, command, action string, fn func(w io.Writer) error) error {
+	return recordDrillOp(cmd.ErrOrStderr(), m, command, action, fn)
+}
+
+// recordDrillOp is drillOp with the terminal as a writer: the TUI passes
+// io.Discard and shows the result itself.
+func recordDrillOp(stderr io.Writer, m *drills.Manager, command, action string, fn func(w io.Writer) error) error {
 	started := time.Now()
 	f, path, err := m.Store.OpenStepLog("drill", "drills-"+action, started)
 	if err != nil {
-		return fn(cmd.ErrOrStderr())
+		return fn(stderr)
 	}
 	_, _ = fmt.Fprintf(f, "$ %s\n", command)
 	var w io.Writer = f
 	if action != "start" {
-		w = io.MultiWriter(cmd.ErrOrStderr(), f)
+		w = io.MultiWriter(stderr, f)
 	}
 	runErr := fn(w)
 	_ = f.Close()
@@ -101,9 +109,62 @@ func drillOp(cmd *cobra.Command, m *drills.Manager, command, action string, fn f
 		return err
 	}
 	if runErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "log: %s\n", path)
+		_, _ = fmt.Fprintf(stderr, "log: %s\n", path)
 	}
 	return runErr
+}
+
+// tuiDrillActions are the Drills screen's actions: the manager's calls,
+// recorded in the ops log like the CLI's.
+func tuiDrillActions(m *drills.Manager) tui.DrillActions {
+	op := func(command, action string, fn func(io.Writer) error) error {
+		return recordDrillOp(io.Discard, m, command, action, fn)
+	}
+	return tui.DrillActions{
+		Start: func(ctx context.Context, id string, random bool) (state.DrillRun, error) {
+			command := "lab drills start " + id
+			if random {
+				command = "lab drills start --random"
+			}
+			var r state.DrillRun
+			err := op(command, "start", func(w io.Writer) error {
+				var err error
+				r, err = m.Start(ctx, id, random, w)
+				return err
+			})
+			return r, err
+		},
+		Verify: func(ctx context.Context) (drills.Result, error) {
+			var res drills.Result
+			err := op("lab drills verify", "verify", func(w io.Writer) error {
+				var err error
+				res, err = m.Verify(ctx, w)
+				return err
+			})
+			return res, err
+		},
+		Ack:  m.Ack,
+		Hint: m.Hint,
+		Abort: func(ctx context.Context) (state.DrillRun, error) {
+			var r state.DrillRun
+			err := op("lab drills abort", "abort", func(w io.Writer) error {
+				var err error
+				r, err = m.Abort(ctx, w)
+				return err
+			})
+			return r, err
+		},
+		Expire: func(ctx context.Context) (bool, error) {
+			var done bool
+			err := op("lab drills abort --expired", "expire", func(w io.Writer) error {
+				var err error
+				done, err = m.Expire(ctx, "", w)
+				return err
+			})
+			return done, err
+		},
+		CheckAlert: m.CheckAlert,
+	}
 }
 
 func newDrillsCmd() *cobra.Command {
@@ -307,10 +368,14 @@ func drillStatus(d drills.Drill, r state.DrillRun, now time.Time) string {
 		}
 	}
 	if r.Alert != "" {
+		alert := "alert " + r.Alert
+		if r.Random {
+			alert = "the alert" // its name would give the drill away
+		}
 		if r.AlertFired.IsZero() {
-			fmt.Fprintf(&b, "  alert %s: not fired yet\n", r.Alert)
+			fmt.Fprintf(&b, "  %s: not fired yet\n", alert)
 		} else {
-			fmt.Fprintf(&b, "  alert %s: fired after %s\n", r.Alert, clock(r.TimeTo(r.AlertFired)))
+			fmt.Fprintf(&b, "  %s: fired after %s\n", alert, clock(r.TimeTo(r.AlertFired)))
 		}
 	}
 	if r.Acked.IsZero() {
@@ -369,10 +434,14 @@ func newDrillsAckCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "● detected after %s. Now fix it, then lab drills verify.\n", clock(r.TimeTo(r.Acked)))
+			alert := "alert " + r.Alert
+			if r.Random {
+				alert = "the alert"
+			}
 			if r.Alert != "" && !r.AlertFired.IsZero() {
-				_, _ = fmt.Fprintf(out, "  alert %s fired after %s\n", r.Alert, clock(r.TimeTo(r.AlertFired)))
+				_, _ = fmt.Fprintf(out, "  %s fired after %s\n", alert, clock(r.TimeTo(r.AlertFired)))
 			} else if r.Alert != "" {
-				_, _ = fmt.Fprintf(out, "  alert %s has not fired yet: you were faster\n", r.Alert)
+				_, _ = fmt.Fprintf(out, "  %s has not fired yet: you were faster\n", alert)
 			}
 			return nil
 		},

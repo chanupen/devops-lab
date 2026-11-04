@@ -1,0 +1,30 @@
+ lab   drill: oom 04:12/30:00  mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —  
+ 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops                                                      
+──────────────────────────────┬─────────────────────────────────────────────────────────────────────
+ Drills                       │ A memory limit far below what the app needs  oom                    
+ ● bad-deploy  beginner       │ ◐ running 04:12 · 25:48 left · lab puts everything back at 02:50    
+ ● dns         intermediate   │ ● alert KubeContainerOOMKilled fired after 2m12s                    
+ ◐ oom         intermediate   │ ● detect: 3m12s                                                     
+                              │ hints 1/4 · verify runs 0                                           
+                              │                                                                     
+                              │ The pager goes off: the sample app's frontend at                    
+                              │ https://podinfo.localtest.me:8443 fails its calls to the backend,   
+                              │ on and off, since the backend team's latest release. They want to   
+                              │ keep that release. Find what is wrong, fix it the GitOps way, and   
+                              │ run lab drills verify.                                              
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ a found it (ack)  v verify  h hint  x abort  ? help  q quit                                        
