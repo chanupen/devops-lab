@@ -363,6 +363,51 @@ func TestPlanUpRevision(t *testing.T) {
 	}
 }
 
+// lab up --refresh-repo re-applies a deployed gitops stack, which reloads
+// the repository Secret; a gitops stack not deployed yet is applied anyway.
+func TestPlanUpRefreshRepo(t *testing.T) {
+	applied := state.Applied
+	upToCore := stateWith("local", map[string]string{"registry": applied, "cluster": applied, "gitops": applied, "core": applied})
+	g := catalogGraph(t)
+	tests := []struct {
+		name       string
+		st         state.State
+		stacks     []string
+		want       string
+		wantReason string
+		wantErr    string
+	}{
+		{name: "deployed gitops is re-applied", st: upToCore, stacks: []string{"gitops"},
+			want: "=registry =cluster +gitops =core", wantReason: "reload the repository Secret from repo.sshKeyFile"},
+		{name: "not deployed: applied as usual", st: state.New(), stacks: []string{"gitops"},
+			want: "+registry +cluster +gitops", wantReason: "not deployed"},
+		{name: "without gitops in the selection", st: upToCore, stacks: []string{"cluster"},
+			wantErr: "--refresh-repo applies to the gitops stack"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := PlanUp(g, cfgFor("local", "minimal"), tt.st, PlanOptions{Stacks: tt.stacks, RefreshRepo: true})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(p); got != tt.want {
+				t.Errorf("plan = %s, want %s", got, tt.want)
+			}
+			for _, s := range p.Steps {
+				if s.Stack == "gitops" && s.Reason != tt.wantReason {
+					t.Errorf("gitops reason = %q, want %q", s.Reason, tt.wantReason)
+				}
+			}
+		})
+	}
+}
+
 // localSupports is what the local provider and the Argo CD runner run today.
 func localSupports(s string) bool {
 	return slices.Contains([]string{"registry", "cluster", "gitops", "core", "obs", "sample-app"}, s)

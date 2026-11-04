@@ -23,6 +23,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 		timeout  time.Duration
 		revision string
 		ttl      time.Duration
+		refresh  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -32,7 +33,8 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			"Then it plans against ~/.lab/state.json and applies stacks in dependency order. Stacks\n" +
 			"already applied are kept; failed ones are retried. Deployed stacks outside the profile\n" +
 			"are kept unless --prune is given.",
-		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n  lab up --mode cloud --ttl 20m",
+		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n" +
+			"  lab up --stacks gitops --refresh-repo   # after rotating the deploy key\n  lab up --mode cloud --ttl 20m",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, store, g, err := flags.load()
@@ -48,9 +50,9 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				}
 				cfg.Cloud.TTL = config.Duration(ttl)
 			}
-			command := upCommand(stacks, prune, revision)
+			command := upCommand(stacks, prune, revision, refresh)
 			eng := engine.New(g, store, nil)
-			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision}
+			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision, RefreshRepo: refresh}
 			// Plan once without the provider so a bad request fails before
 			// one is built, then again with what it supports.
 			if _, err := eng.PlanUp(cfg, opts); err != nil {
@@ -115,6 +117,8 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks or, in cloud mode, applying to AWS")
 	cmd.Flags().StringVar(&revision, "revision", "",
 		"sync the gitops stack from this Git branch to test changes before they merge (default main)")
+	cmd.Flags().BoolVar(&refresh, "refresh-repo", false,
+		"re-apply the gitops stack so Argo CD reloads its repository Secret from repo.sshKeyFile (a rotated deploy key)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 0, "cloud mode: lifetime of a new lab (default cloud.ttl in lab.yaml, at most 8h); the reaper deletes it after that")
 	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
@@ -122,7 +126,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 }
 
 // upCommand is the CLI command recorded in the ops log.
-func upCommand(stacks []string, prune bool, revision string) string {
+func upCommand(stacks []string, prune bool, revision string, refresh bool) string {
 	c := "lab up"
 	if len(stacks) > 0 {
 		c += " --stacks " + strings.Join(stacks, ",")
@@ -132,6 +136,9 @@ func upCommand(stacks []string, prune bool, revision string) string {
 	}
 	if revision != "" {
 		c += " --revision " + revision
+	}
+	if refresh {
+		c += " --refresh-repo"
 	}
 	return c
 }

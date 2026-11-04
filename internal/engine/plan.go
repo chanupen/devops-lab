@@ -56,6 +56,9 @@ type PlanOptions struct {
 	// they merge. Empty means DefaultRevision. A deployed gitops stack on any
 	// other revision is re-applied, so a plain lab up moves it back to main.
 	Revision string
+	// RefreshRepo re-applies a deployed gitops stack, which reloads Argo
+	// CD's repository Secret from repo.sshKeyFile (a rotated deploy key).
+	RefreshRepo bool
 	// Supports reports whether the mode's provider can run a stack. Stacks it
 	// cannot run, and stacks that need them, become Skip steps with one
 	// warning instead of failing the run. Nil supports every stack.
@@ -133,6 +136,9 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	} else if !slices.Contains(desired, RevisionStack) {
 		return Plan{}, fmt.Errorf("--revision applies to the %s stack, which this selection does not include", RevisionStack)
 	}
+	if opts.RefreshRepo && !slices.Contains(desired, RevisionStack) {
+		return Plan{}, fmt.Errorf("--refresh-repo applies to the %s stack, which this selection does not include", RevisionStack)
+	}
 	all, _ := g.Order(g.Names()...) // NewGraph proved this has no cycles
 	var extra []string              // deployed but not wanted, dependency order
 	for _, s := range all {
@@ -163,6 +169,8 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 		switch {
 		case s == RevisionStack && ss.Status == state.Applied && st.Revision != rev:
 			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev)})
+		case s == RevisionStack && ss.Status == state.Applied && opts.RefreshRepo:
+			p.Steps = append(p.Steps, Step{s, Apply, "reload the repository Secret from repo.sshKeyFile"})
 		case ss.Status == state.Applied:
 			p.Steps = append(p.Steps, Step{s, Keep, "applied"})
 		case ss.Status == state.Failed:
