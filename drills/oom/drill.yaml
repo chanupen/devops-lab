@@ -1,0 +1,19 @@
+id: oom
+title: A memory limit far below what the app needs
+level: intermediate
+stacks: [sample-app, obs]
+timeLimit: 30m
+# Added by this drill to the obs stack (lab-drills rules): kube-prometheus-
+# stack has no alert for OOMKilled containers.
+alert:
+  name: KubeContainerOOMKilled
+  labels: {namespace: podinfo}
+hints:
+  - "kubectl -n podinfo get pods: which pod restarts? kubectl -n podinfo describe pod shows the Last State of its container and why it ended."
+  - "Exit code 137 with reason OOMKilled: the kernel killed the process at its cgroup's memory limit. Compare the limit (kubectl -n podinfo get deploy podinfo-backend -o yaml) with what the app needs."
+  - "How much does it need? The release loads data into memory at start (look at the container's args). kubectl top only sees a pod that lives long enough; Grafana's or Prometheus's container_memory_working_set_bytes keeps the peaks."
+  - "Fix the desired state, not the Deployment: Argo CD's self-heal undoes kubectl edit. argocd app set podinfo-backend -p resources.requests.memory=... -p resources.limits.memory=..."
+touches: [podinfo, argocd]
+snapshot:
+  - {apiVersion: argoproj.io/v1alpha1, resource: applications, namespace: argocd, name: lab-bootstrap}
+  - {apiVersion: argoproj.io/v1alpha1, resource: applications, namespace: argocd, name: podinfo-backend}
