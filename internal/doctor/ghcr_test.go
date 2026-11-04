@@ -64,3 +64,30 @@ func TestCheckGHCR(t *testing.T) {
 		t.Errorf("no probe: %v, want skip", r.Status)
 	}
 }
+
+func TestCheckDrill(t *testing.T) {
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		d     *DrillState
+		want  Status
+		match string
+	}{
+		{"none", nil, OK, "none running"},
+		{"running", &DrillState{Label: "drill dns", Phase: "running", Deadline: now.Add(time.Minute), Now: now}, Warn, "drill dns is running"},
+		{"past its limit", &DrillState{Label: "a random drill", Phase: "running", Deadline: now.Add(-time.Minute), Now: now}, Fail, "past its time limit"},
+		{"interrupted inject", &DrillState{Label: "drill oom", Phase: "injecting", Deadline: now.Add(time.Hour), Now: now}, Fail, "only partly"},
+		{"failed restore", &DrillState{Label: "drill oom", Phase: "restoring", Error: "spec differ", Deadline: now.Add(time.Hour), Now: now}, Fail, "spec differ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := checkDrill(context.Background(), System{}, Options{Drill: tt.d})
+			if r.Status != tt.want || !strings.Contains(r.Detail, tt.match) {
+				t.Errorf("got %v %q, want %v with %q", r.Status, r.Detail, tt.want, tt.match)
+			}
+			if r.Status == Fail && !strings.Contains(r.Fix, "lab drills abort") {
+				t.Errorf("fix = %q", r.Fix)
+			}
+		})
+	}
+}

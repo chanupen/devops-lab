@@ -561,3 +561,21 @@ func TestStartPrepares(t *testing.T) {
 		})
 	}
 }
+
+// Labs and drills both use the main lab, so a lab does not start while a
+// drill's fault is in it.
+func TestStartRefusedDuringDrill(t *testing.T) {
+	m, _, c, _ := testManager(t)
+	if err := m.Store.Update(func(s *state.State) error {
+		s.ActiveDrill = &state.DrillRun{Run: "r", Drill: "dns", Phase: state.DrillRunning}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "1", io.Discard); err == nil || !strings.Contains(err.Error(), "lab drills abort") {
+		t.Fatalf("start during a drill: %v", err)
+	}
+	if len(c.created) > 0 {
+		t.Errorf("created %v", c.created)
+	}
+}

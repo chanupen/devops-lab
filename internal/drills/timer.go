@@ -23,10 +23,11 @@ type Timer interface {
 // restores an expired drill itself). A timer does not survive a reboot;
 // after one, lab up restores the drill and lab doctor reports it.
 type SystemdTimer struct {
-	// Command is the lab binary and its flags (--config, --state), before
-	// "drills abort".
-	Command []string
-	Now     func() time.Time
+	// Binary is the lab binary; Flags (--config, --state) follow
+	// "drills abort --expired --run <run>".
+	Binary string
+	Flags  []string
+	Now    func() time.Time
 }
 
 // Schedule implements Timer.
@@ -37,11 +38,11 @@ func (t SystemdTimer) Schedule(ctx context.Context, run string, at time.Time) (s
 		now = t.Now
 	}
 	secs := max(int(at.Sub(now()).Seconds()), 1)
-	args := append([]string{"--user", "--unit=" + unit, "--collect",
+	args := []string{"--user", "--unit=" + unit, "--collect",
 		fmt.Sprintf("--on-active=%ds", secs), "--timer-property=AccuracySec=5s",
 		"--property=Restart=on-failure", "--property=RestartSec=60",
-		"--"}, t.Command...)
-	args = append(args, "drills", "abort", "--expired", "--run", run)
+		"--", t.Binary, "drills", "abort", "--expired", "--run", run}
+	args = append(args, t.Flags...)
 	out, err := exec.CommandContext(ctx, "systemd-run", args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("systemd-run: %w: %s", err, strings.TrimSpace(string(out)))
