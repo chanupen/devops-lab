@@ -66,6 +66,9 @@ type System struct {
 	// LabRegistry checks the host can push to the lab registry and the
 	// cluster can pull from it; nil skips the check.
 	LabRegistry func(ctx context.Context) RegistryState
+	// MotoSecrets counts the secrets Moto holds (Secrets Manager
+	// ListSecrets on 127.0.0.1:4566); nil checks only that it runs.
+	MotoSecrets func(ctx context.Context) (int, error)
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
