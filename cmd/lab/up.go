@@ -82,6 +82,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				}
 			}
 			opts.Supports = prov.Supports
+			if sr, ok := prov.(staleReporter); ok {
+				if opts.Reapply, err = sr.StaleStacks(cmd.Context()); err != nil {
+					return err
+				}
+			}
 			p, err := eng.PlanUp(cfg, opts)
 			if err != nil {
 				return err

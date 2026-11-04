@@ -59,6 +59,10 @@ type PlanOptions struct {
 	// RefreshRepo re-applies a deployed gitops stack, which reloads Argo
 	// CD's repository Secret from repo.sshKeyFile (a rotated deploy key).
 	RefreshRepo bool
+	// Reapply re-applies these deployed stacks, with the reason shown in
+	// the plan: the provider found them out of date (lab-zot made with
+	// other host overrides).
+	Reapply map[string]string
 	// Supports reports whether the mode's provider can run a stack. Stacks it
 	// cannot run, and stacks that need them, become Skip steps with one
 	// warning instead of failing the run. Nil supports every stack.
@@ -171,6 +175,8 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev)})
 		case s == RevisionStack && ss.Status == state.Applied && opts.RefreshRepo:
 			p.Steps = append(p.Steps, Step{s, Apply, "reload the repository Secret from repo.sshKeyFile"})
+		case ss.Status == state.Applied && opts.Reapply[s] != "":
+			p.Steps = append(p.Steps, Step{s, Apply, opts.Reapply[s]})
 		case ss.Status == state.Applied:
 			p.Steps = append(p.Steps, Step{s, Keep, "applied"})
 		case ss.Status == state.Failed:

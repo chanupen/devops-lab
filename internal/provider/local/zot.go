@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,6 +26,17 @@ const (
 	ZotVolume    = "lab-zot-data" // image cache; kept by lab down unless --purge
 	ZotPort      = 5000
 )
+
+// ZotImageBlob is Zot's image as a ghcr.io repository and manifest digest,
+// for lab doctor's download check.
+func ZotImageBlob() (repo, digest string) {
+	name, digest, _ := strings.Cut(ZotImage, "@")
+	name = strings.TrimPrefix(name, "ghcr.io/")
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[:i]
+	}
+	return name, digest
+}
 
 // upstream is a registry Zot caches on demand. Images are stored under
 // /<Name>/..., so docker.io/library/nginx lives at lab-zot:5000/docker.io/library/nginx.
@@ -84,6 +97,43 @@ func hostsTOML(u upstream) string {
   capabilities = ["pull", "resolve"]
   override_path = true
 `, u.URL, ZotContainer, ZotPort, u.Name)
+}
+
+// zotHostAdd turns zot.addHosts into Podman's "name:address" entries, sorted.
+func zotHostAdd(hosts map[string]string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, name := range slices.Sorted(maps.Keys(hosts)) {
+		out = append(out, name+":"+hosts[name])
+	}
+	return out
+}
+
+// zotHashInput is what the config hash covers: config.json and, only when
+// there are any, the host overrides, so a lab-zot made before overrides
+// existed keeps its hash.
+func zotHashInput(cfg []byte, hosts []string) []byte {
+	if len(hosts) == 0 {
+		return cfg
+	}
+	return append(append(append([]byte{}, cfg...), 0), strings.Join(hosts, "\n")...)
+}
+
+// ZotStale says why the lab-zot container no longer matches what
+// applyRegistry would create (image, config or host overrides), or "" when
+// it matches or does not exist. lab up re-applies the registry stack then.
+func (p *Provider) ZotStale(ctx context.Context) (string, error) {
+	cfg, err := zotConfig()
+	if err != nil {
+		return "", err
+	}
+	info, err := p.rt.Container(ctx, ZotContainer)
+	if err != nil || !info.Exists {
+		return "", err
+	}
+	if info.Labels["lab.config-hash"] != configHash(ZotImage, zotHashInput(cfg, zotHostAdd(p.opts.ZotHosts))) {
+		return ZotContainer + "'s image, config or zot.addHosts changed", nil
+	}
+	return "", nil
 }
 
 // configHash identifies the image and config a Zot container was created

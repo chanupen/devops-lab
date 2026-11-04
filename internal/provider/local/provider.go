@@ -32,6 +32,9 @@ type Options struct {
 	Purge      bool   // Destroy("registry") also removes the cache volume
 	// RepoRoot is the repo; sample-db's image is built from apps/sample-db.
 	RepoRoot string
+	// ZotHosts are lab.yaml's zot.addHosts: name -> address, in lab-zot's
+	// /etc/hosts only.
+	ZotHosts map[string]string
 	// Stacks are the lab's active stacks (profile, extraStacks, asked for,
 	// deployed): only their rows of the compatibility table limit
 	// k8sVersion. Nil applies every local row.
@@ -177,13 +180,14 @@ func (p *Provider) applyRegistry(ctx context.Context, log io.Writer) error {
 	if err := p.ensureNetwork(ctx, log); err != nil {
 		return err
 	}
-	hash := configHash(ZotImage, cfg)
+	hosts := zotHostAdd(p.opts.ZotHosts)
+	hash := configHash(ZotImage, zotHashInput(cfg, hosts))
 	info, err := p.rt.Container(ctx, ZotContainer)
 	if err != nil {
 		return err
 	}
 	if info.Exists && info.Labels["lab.config-hash"] != hash {
-		logf(log, "%s has an older image or config; replacing it (cache kept)", ZotContainer)
+		logf(log, "%s has an older image, config or host overrides; replacing it (cache kept)", ZotContainer)
 		if err := p.rt.RemoveContainer(ctx, ZotContainer); err != nil {
 			return err
 		}
@@ -203,6 +207,10 @@ func (p *Provider) applyRegistry(ctx context.Context, log io.Writer) error {
 			Binds:   []Bind{{Source: p.zotDir(), Dest: "/etc/zot", ReadOnly: true}},
 			Network: KindNetwork,
 			Aliases: []string{ZotContainer},
+			HostAdd: hosts,
+		}
+		for _, h := range hosts {
+			logf(log, "%s resolves %s (zot.addHosts in lab.yaml)", ZotContainer, h)
 		}
 		logf(log, "creating container %s", ZotContainer)
 		if err := p.rt.CreateContainer(ctx, spec); err != nil {

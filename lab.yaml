@@ -13,6 +13,10 @@ repo:                # what Argo CD syncs from
   url: git@github.com:chanupen/devops-lab.git
   sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key; loaded as a Secret, never committed
 
+# zot:                # optional: pin host names inside lab-zot only (podman --add-host), never /etc/hosts.
+#   addHosts:         # lab doctor's "ghcr.io download" check suggests an address when the CDN is slow.
+#     pkg-containers.githubusercontent.com: 185.199.109.154
+
 cloud:
   region: ap-south-1
   ttl: 2h             # lab up --mode cloud --ttl overrides; at most 8h, lab extend included

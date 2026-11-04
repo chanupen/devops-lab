@@ -408,6 +408,24 @@ func TestPlanUpRefreshRepo(t *testing.T) {
 	}
 }
 
+// A provider can ask for a deployed stack to be re-applied (lab-zot made
+// with other host overrides); stacks not deployed apply as usual.
+func TestPlanUpReapply(t *testing.T) {
+	applied := state.Applied
+	st := stateWith("local", map[string]string{"registry": applied, "cluster": applied})
+	p, err := PlanUp(catalogGraph(t), cfgFor("local", "minimal"), st,
+		PlanOptions{Stacks: []string{"cluster"}, Reapply: map[string]string{"registry": "lab-zot changed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := render(p); got != "+registry =cluster" {
+		t.Errorf("plan = %s", got)
+	}
+	if p.Steps[0].Reason != "lab-zot changed" {
+		t.Errorf("reason = %q", p.Steps[0].Reason)
+	}
+}
+
 // localSupports is what the local provider and the Argo CD runner run today.
 func localSupports(s string) bool {
 	return slices.Contains([]string{"registry", "cluster", "gitops", "core", "obs", "sample-app"}, s)

@@ -139,6 +139,23 @@ type labRunner struct {
 	// start starts the main cluster's and the cache's stopped containers;
 	// nil in cloud mode.
 	start func(context.Context, io.Writer) ([]local.Unit, error)
+	// stale lists deployed stacks to re-apply, with why; nil in cloud mode.
+	stale func(context.Context) (map[string]string, error)
+}
+
+// staleReporter is implemented by providers that can tell a deployed stack
+// no longer matches lab.yaml (lab-zot's host overrides), so lab up
+// re-applies it.
+type staleReporter interface {
+	StaleStacks(ctx context.Context) (map[string]string, error)
+}
+
+// StaleStacks implements staleReporter.
+func (l labRunner) StaleStacks(ctx context.Context) (map[string]string, error) {
+	if l.stale == nil {
+		return nil, nil
+	}
+	return l.stale(ctx)
 }
 
 // versionGate is implemented by providers that check the Kubernetes pin
@@ -270,12 +287,19 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	switch cfg.Mode {
 	case "local":
 		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: opts.Purge,
-			RepoRoot: opts.RepoRoot, Stacks: activeStacks(cfg, home, opts.Stacks)})
+			RepoRoot: opts.RepoRoot, Stacks: activeStacks(cfg, home, opts.Stacks), ZotHosts: cfg.Zot.AddHosts})
 		if err != nil {
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
 		l.url, l.hint, l.start, l.checkVersion, l.checkCluster = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion, p.CheckClusterVersion
+		l.stale = func(ctx context.Context) (map[string]string, error) {
+			why, err := p.ZotStale(ctx)
+			if why == "" || err != nil {
+				return nil, err
+			}
+			return map[string]string{"registry": why}, nil
+		}
 		lp = p
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)

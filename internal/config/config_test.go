@@ -51,6 +51,14 @@ cloud:
 				t.Errorf("extra = %v, want none", c.ExtraStacks)
 			}
 		}},
+		{name: "zot host override", yaml: "zot:\n  addHosts:\n    pkg-containers.githubusercontent.com: 185.199.111.133\n",
+			check: func(t *testing.T, c Config) {
+				if c.Zot.AddHosts["pkg-containers.githubusercontent.com"] != "185.199.111.133" {
+					t.Errorf("zot.addHosts = %v", c.Zot.AddHosts)
+				}
+			}},
+		{name: "zot host override needs a name and an IP", yaml: "zot:\n  addHosts:\n    \"not a name\": 1.2.3.4\n    ghcr.io: fast\n",
+			wantErr: []string{`zot.addHosts: "not a name" is not a host name`, `zot.addHosts.ghcr.io: "fast" is not an IP address`}},
 		{name: "blank extra stack", yaml: "extraStacks: [\"\"]\n", wantErr: []string{"extraStacks: empty stack name"}},
 		{name: "k8sVersion defaults when omitted", yaml: "mode: local\n", check: func(t *testing.T, c Config) {
 			if c.K8sVersion != "1.36" {
