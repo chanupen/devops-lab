@@ -77,6 +77,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
 | minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
 | minimal + obs + policy | the default plus `policy` (Kyverno and the baseline Pod Security policies) | 0.8 GiB more than the default (5.0 to 5.9 GiB, `podman stats` on the `lab-*` containers, median of three); Kyverno's own four pods use about 210 MiB, the rest is the API server and etcd carrying its CRDs, webhooks and reports |
+| the default + secrets + sample-db | the default plus `secrets` (ESO's controller, webhook and cert controller, and the `lab-moto` container) and `sample-db` (Postgres and its app), for lab 4 | about 0.2 GiB more: ESO about 99 MiB and Moto about 66 MiB; Postgres about 28 MiB and the app about 5 MiB, idle (`kubectl top pods` working set and `podman stats` on `lab-moto`, 2026-11-04) |
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
 

@@ -83,11 +83,11 @@ In Postgres, create the role `app_v2` with a new random password, as a member of
 ### Hints
 - Connect as the superuser over the pod's local socket: `kubectl -n lab04-app exec -it postgres-0 -- psql -U postgres -d app`.
 - `CREATE ROLE app_v2 LOGIN PASSWORD '...' IN ROLE app;`. `IN ROLE app` makes it a member, so it has the group's privileges.
-- `\du` lists the roles and their memberships.
+- `\du` lists the roles; `\drg` lists who is a member of which role (Postgres 16 moved memberships out of `\du`).
 - Keep the password in a file only you can read (`umask 077`), not in your shell history.
 
 ### Expected result
-`\du` shows `app_v2` as a member of `app`. Both `app_v1` and `app_v2` can log in, and the app still answers as `app_v1`.
+`\drg` shows `app_v1` and `app_v2` as members of `app`. Both `app_v1` and `app_v2` can log in, and the app still answers as `app_v1`.
 
 ## Step 4: Update the secret in Secrets Manager
 
