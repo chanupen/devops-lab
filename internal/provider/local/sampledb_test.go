@@ -175,3 +175,39 @@ func TestSeedSampleDB(t *testing.T) {
 		t.Errorf("secrets = %v, want 2", s.m)
 	}
 }
+
+// lab up re-applies sample-db when the image the app-of-apps deploys is not
+// the one apps/sample-db builds now: no image for the current sources, or
+// another digest (a build from a branch).
+func TestSampleDBStale(t *testing.T) {
+	repo := writeTree(t, map[string]string{"apps/sample-db/main.go": "package main"})
+	const digest = "sha256:5520475bb809c43a7210cf180ef3c0940120f0f94fc2601e49f4022838dd0392"
+	tests := []struct {
+		name     string
+		status   int
+		deployed string
+		stale    bool
+	}{
+		{"current", 200, "lab-zot:5000/lab/sample-db@" + digest, false},
+		{"built from other sources", 200, "lab-zot:5000/lab/sample-db@sha256:0000", true},
+		{"never built from these sources", 404, "lab-zot:5000/lab/sample-db@" + digest, true},
+		{"not deployed", 200, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.status == 200 {
+					w.Header().Set("Docker-Content-Digest", digest)
+				}
+				w.WriteHeader(tt.status)
+			}))
+			defer srv.Close()
+			p := testProvider(t, newFakeRuntime(), &fakeClusters{nodes: map[string]int{}}, false)
+			p.opts.RepoRoot, p.registry, p.client = repo, srv.URL, srv.Client()
+			why, err := p.SampleDBStale(context.Background(), tt.deployed)
+			if err != nil || (why != "") != tt.stale {
+				t.Errorf("SampleDBStale = %q, %v; want stale %v", why, err, tt.stale)
+			}
+		})
+	}
+}
