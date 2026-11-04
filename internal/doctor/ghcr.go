@@ -37,16 +37,23 @@ type GHCRProbe interface {
 	// Speed downloads from url through addr (an IP; "" lets DNS choose)
 	// for at most d and returns bytes per second.
 	Speed(ctx context.Context, url, addr string, d time.Duration) (float64, error)
+	// Reach opens a TCP connection to addr on port 443 within d.
+	Reach(ctx context.Context, addr string, d time.Duration) error
 }
 
 // checkGHCR reports which GitHub CDN address DNS returns and how fast a
 // ghcr.io blob comes from it. When it is slow it tries the other CDN
-// addresses and suggests the fastest as a zot.addHosts override. An
-// override in lab.yaml is measured too.
+// addresses and suggests the fastest as a zot.addHosts override. A pinned
+// address in lab.yaml's zot.addHosts is what lab-zot uses, so it is
+// measured on its own: slow or unreachable, the check warns and suggests
+// a faster address. Pins for other hosts must at least answer on 443.
 func checkGHCR(ctx context.Context, sys System, opts Options) Result {
 	p := sys.GHCR
 	if p == nil {
 		return Result{Status: Skip, Detail: "not measured"}
+	}
+	if r, bad := checkOtherPins(ctx, p, opts.ZotHosts); bad {
+		return r
 	}
 	addrs, err := p.Resolve(ctx, GHCRCDN)
 	if err != nil || len(addrs) == 0 {
@@ -56,28 +63,81 @@ func checkGHCR(ctx context.Context, sys System, opts Options) Result {
 	if err != nil {
 		return warn("check the network; Zot pulls ghcr.io images through it", "ghcr.io blob: %s", firstLine(err.Error()))
 	}
-	speed, err := p.Speed(ctx, url, addrs[0], 3*time.Second)
-	if err != nil {
-		return warn("check the network; Zot pulls ghcr.io images through it", "download from %s (%s): %s", GHCRCDN, addrs[0], firstLine(err.Error()))
-	}
+	speed, dnsErr := p.Speed(ctx, url, addrs[0], 3*time.Second)
 	detail := fmt.Sprintf("%s → %s, %s", GHCRCDN, strings.Join(addrs, " "), rate(speed))
-	override := opts.ZotHosts[GHCRCDN]
-	if override != "" {
-		ovs, err := p.Speed(ctx, url, override, 2*time.Second)
-		if err != nil {
-			return warn("remove or change zot.addHosts in lab.yaml, then lab up", "%s; lab-zot's override %s fails: %s", detail, override, firstLine(err.Error()))
-		}
-		detail += fmt.Sprintf("; lab-zot uses %s (zot.addHosts), %s", override, rate(ovs))
-		if ovs < SlowCDN {
-			return warn("pick another address for zot.addHosts in lab.yaml (or remove it), then lab up", "%s: slow", detail)
-		}
-		return ok("%s", detail)
+	if dnsErr != nil {
+		detail = fmt.Sprintf("%s → %s fails: %s", GHCRCDN, strings.Join(addrs, " "), firstLine(dnsErr.Error()))
+	}
+	if override := opts.ZotHosts[GHCRCDN]; override != "" {
+		return checkPinnedCDN(ctx, p, url, addrs, override, speed, dnsErr, detail)
+	}
+	if dnsErr != nil {
+		return warn("check the network; Zot pulls ghcr.io images through it", "download from %s (%s): %s", GHCRCDN, addrs[0], firstLine(dnsErr.Error()))
 	}
 	if speed >= SlowCDN {
 		return ok("%s", detail)
 	}
-	best, bestSpeed := "", speed
-	for _, a := range candidates(addrs) {
+	best, bestSpeed := fastest(ctx, p, url, candidates(addrs), speed)
+	if best == "" || bestSpeed < 2*speed {
+		return warn("cold pulls of ghcr.io images will be slow; no other CDN address is faster now", "%s: slow", detail)
+	}
+	return warn(fmt.Sprintf("give lab-zot the faster address in lab.yaml: zot: {addHosts: {%s: %s}}, then lab up (only lab-zot uses it; /etc/hosts is not touched)", GHCRCDN, best),
+		"%s: slow; %s gives %s", detail, best, rate(bestSpeed))
+}
+
+// checkPinnedCDN measures the address lab.yaml pins for the CDN, which is
+// the one lab-zot uses. A slow or failing pin is a warning with a better
+// choice: another CDN address, or no pin when DNS's own answer is fast.
+func checkPinnedCDN(ctx context.Context, p GHCRProbe, url string, addrs []string, pin string, dnsSpeed float64, dnsErr error, detail string) Result {
+	ovs, err := p.Speed(ctx, url, pin, 2*time.Second)
+	if err == nil && ovs >= SlowCDN {
+		return ok("%s; lab-zot uses %s (zot.addHosts), %s", detail, pin, rate(ovs))
+	}
+	what := fmt.Sprintf("lab-zot's pinned %s (zot.addHosts) is slow: %s", pin, rate(ovs))
+	if err != nil {
+		what = fmt.Sprintf("lab-zot's pinned %s (zot.addHosts) fails: %s", pin, firstLine(err.Error()))
+	}
+	var pool []string
+	for _, a := range append(append([]string{}, addrs...), githubCDN...) {
+		if a != pin && !slices.Contains(pool, a) {
+			pool = append(pool, a)
+		}
+	}
+	best, bestSpeed := fastest(ctx, p, url, pool, ovs)
+	switch {
+	case best == "":
+		return warn("no CDN address is faster now; remove zot.addHosts from lab.yaml if the pin fails, then lab up", "%s; %s", detail, what)
+	case dnsErr == nil && best == addrs[0] && dnsSpeed >= SlowCDN:
+		return warn("remove zot.addHosts from lab.yaml (DNS's own answer is fast), then lab up", "%s; %s", detail, what)
+	}
+	return warn(fmt.Sprintf("pin the faster address instead: zot: {addHosts: {%s: %s}} in lab.yaml, then lab up", GHCRCDN, best),
+		"%s; %s; %s gives %s", detail, what, best, rate(bestSpeed))
+}
+
+// checkOtherPins checks that every zot.addHosts pin besides the CDN's
+// answers on port 443; bad is true when one does not.
+func checkOtherPins(ctx context.Context, p GHCRProbe, pins map[string]string) (Result, bool) {
+	hosts := make([]string, 0, len(pins))
+	for h := range pins {
+		if h != GHCRCDN {
+			hosts = append(hosts, h)
+		}
+	}
+	slices.Sort(hosts)
+	for _, h := range hosts {
+		if err := p.Reach(ctx, pins[h], 2*time.Second); err != nil {
+			return warn(fmt.Sprintf("fix or remove %s in zot.addHosts in lab.yaml, then lab up", h),
+				"lab-zot's pinned %s for %s does not answer on 443: %s", pins[h], h, firstLine(err.Error())), true
+		}
+	}
+	return Result{}, false
+}
+
+// fastest measures each address and returns the fastest one faster than
+// floor, or "".
+func fastest(ctx context.Context, p GHCRProbe, url string, pool []string, floor float64) (string, float64) {
+	best, bestSpeed := "", floor
+	for _, a := range pool {
 		if ctx.Err() != nil {
 			break
 		}
@@ -85,11 +145,7 @@ func checkGHCR(ctx context.Context, sys System, opts Options) Result {
 			best, bestSpeed = a, s
 		}
 	}
-	if best == "" || bestSpeed < 2*speed {
-		return warn("cold pulls of ghcr.io images will be slow; no other CDN address is faster now", "%s: slow", detail)
-	}
-	return warn(fmt.Sprintf("give lab-zot the faster address in lab.yaml: zot: {addHosts: {%s: %s}}, then lab up (only lab-zot uses it; /etc/hosts is not touched)", GHCRCDN, best),
-		"%s: slow; %s gives %s", detail, best, rate(bestSpeed))
+	return best, bestSpeed
 }
 
 // candidates are the CDN addresses to try besides the first DNS answer.
@@ -130,6 +186,17 @@ func (HostGHCRProbe) Resolve(ctx context.Context, host string) ([]string, error)
 		return ips, nil
 	}
 	return v4, nil
+}
+
+// Reach implements GHCRProbe.
+func (HostGHCRProbe) Reach(ctx context.Context, addr string, d time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(addr, "443"))
+	if err != nil {
+		return err
+	}
+	return c.Close()
 }
 
 // BlobURL implements GHCRProbe: an anonymous pull token, the image's

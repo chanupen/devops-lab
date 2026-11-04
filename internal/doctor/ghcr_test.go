@@ -27,6 +27,13 @@ func (f *fakeGHCR) Speed(_ context.Context, _, addr string, _ time.Duration) (fl
 	return 0, errors.New("connection refused")
 }
 
+func (f *fakeGHCR) Reach(_ context.Context, addr string, _ time.Duration) error {
+	if _, ok := f.speeds[addr]; ok {
+		return nil
+	}
+	return errors.New("i/o timeout")
+}
+
 func TestCheckGHCR(t *testing.T) {
 	const mib = 1 << 20
 	tests := []struct {
@@ -47,8 +54,17 @@ func TestCheckGHCR(t *testing.T) {
 		{name: "override is measured", probe: &fakeGHCR{addrs: []string{"10.1.1.1"},
 			speeds: map[string]float64{"10.1.1.1": 0.2 * mib, "185.199.109.154": 8 * mib}},
 			hosts: map[string]string{GHCRCDN: "185.199.109.154"}, want: OK, wantDetail: "lab-zot uses 185.199.109.154 (zot.addHosts), 8.0 MiB/s"},
-		{name: "broken override", probe: &fakeGHCR{addrs: []string{"185.199.110.154"}, speeds: map[string]float64{"185.199.110.154": 9 * mib}},
-			hosts: map[string]string{GHCRCDN: "192.0.2.1"}, want: Warn, wantFix: "remove or change zot.addHosts"},
+		{name: "broken override, DNS is fast: drop the pin", probe: &fakeGHCR{addrs: []string{"185.199.110.154"}, speeds: map[string]float64{"185.199.110.154": 9 * mib}},
+			hosts: map[string]string{GHCRCDN: "192.0.2.1"}, want: Warn, wantDetail: "pinned 192.0.2.1 (zot.addHosts) fails", wantFix: "remove zot.addHosts"},
+		{name: "slow override: a faster pin is suggested", probe: &fakeGHCR{addrs: []string{"10.1.1.1"},
+			speeds: map[string]float64{"10.1.1.1": 0.1 * mib, "185.199.109.154": 0.3 * mib, "185.199.111.154": 6 * mib}},
+			hosts: map[string]string{GHCRCDN: "185.199.109.154"}, want: Warn, wantDetail: "pinned 185.199.109.154 (zot.addHosts) is slow: 0.3 MiB/s; 185.199.111.154 gives 6.0 MiB/s",
+			wantFix: "zot: {addHosts: {" + GHCRCDN + ": 185.199.111.154}}"},
+		{name: "override works while DNS's address fails", probe: &fakeGHCR{addrs: []string{"10.1.1.1"},
+			speeds: map[string]float64{"185.199.109.154": 8 * mib}},
+			hosts: map[string]string{GHCRCDN: "185.199.109.154"}, want: OK, wantDetail: "lab-zot uses 185.199.109.154"},
+		{name: "another pinned host does not answer", probe: &fakeGHCR{addrs: []string{"185.199.110.154"}, speeds: map[string]float64{"185.199.110.154": 9 * mib}},
+			hosts: map[string]string{"ghcr.io": "192.0.2.7"}, want: Warn, wantDetail: "pinned 192.0.2.7 for ghcr.io does not answer", wantFix: "ghcr.io in zot.addHosts"},
 		{name: "ghcr.io unreachable", probe: &fakeGHCR{addrs: []string{"185.199.110.154"}, urlErr: errors.New("dial tcp: timeout")},
 			want: Warn, wantDetail: "ghcr.io blob: dial tcp: timeout"},
 	}
