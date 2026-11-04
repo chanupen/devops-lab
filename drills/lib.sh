@@ -114,3 +114,43 @@ all_apps_ready() {
   [ "$(kubectl -n argocd get applications -o json |
     jq '[.items[] | select(.status.sync.status != "Synced" or .status.health.status != "Healthy")] | length')" = 0 ]
 }
+
+# sm <Action> <json>: one Secrets Manager call to Moto (the local
+# provider's AWS emulator on 127.0.0.1:4566), through its JSON API with
+# curl, so the scripts need no aws image. Moto checks no signature; the
+# credential scope only sets the region. Prints the response; fails on an
+# API error.
+sm() {
+  local out
+  out=$(curl -s --max-time 10 -H 'Content-Type: application/x-amz-json-1.1' -H "X-Amz-Target: secretsmanager.$1" \
+    -H "Authorization: AWS4-HMAC-SHA256 Credential=lab-dummy/20260101/${AWS_REGION:-ap-south-1}/secretsmanager/aws4_request, SignedHeaders=host, Signature=0" \
+    -d "$2" "${AWS_ENDPOINT_URL_SECRETS_MANAGER:-http://127.0.0.1:4566}/") || return 1
+  printf '%s\n' "$out"
+  ! jq -e '.__type? // empty' <<<"$out" >/dev/null 2>&1
+}
+
+# kind_node_running <name>: the kind node's container runs.
+kind_node_running() { [ "$(podman inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+
+# node_ready <name>: the Node reports Ready.
+node_ready() {
+  [ "$(kubectl get node "$1" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = True ]
+}
+
+# pod_netns <node> <namespace> <container>: run the rest of the command
+# line inside the network namespace of that container on that kind node
+# (tc, ip). The node is root in its user namespace and owns the pod's
+# network namespace, so this needs no privileged pod and no sudo.
+pod_netns() {
+  local node=$1 ns=$2 name=$3
+  shift 3
+  podman exec "$node" sh -c '
+    cid=$(crictl ps -q --name "^$1\$" --label "io.kubernetes.pod.namespace=$2" | head -1)
+    [ -n "$cid" ] || { echo "no running container $1 in $2 on this node" >&2; exit 3; }
+    pid=$(crictl inspect -o go-template --template "{{.info.pid}}" "$cid")
+    shift 2
+    exec nsenter -t "$pid" -n "$@"' sh "$name" "$ns" "$@"
+}
+
+# kind_workers: the lab's kind worker nodes.
+kind_workers() { kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}'; }

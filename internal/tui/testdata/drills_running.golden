@@ -3,12 +3,12 @@
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────
  Drills                       │ A memory limit far below what the app needs  oom                    
  ● bad-deploy  beginner       │ ◐ running 04:12 · 25:48 left · lab puts everything back at 02:50    
- ● dns         intermediate   │ ● alert KubeContainerOOMKilled fired after 2m12s                    
- ◐ oom         intermediate   │ ● detect: 3m12s                                                     
-                              │ hints 1/4 · verify runs 0                                           
-                              │                                                                     
-                              │ The pager goes off: the sample app's frontend at                    
-                              │ https://podinfo.localtest.me:8443 fails its calls to the backend,   
+ ○ cert-expiry intermediate   │ ● alert KubeContainerOOMKilled fired after 2m12s                    
+ ● dns         intermediate   │ ● detect: 3m12s                                                     
+ ● node-loss   intermediate   │ hints 1/4 · verify runs 0                                           
+ ◐ oom         intermediate   │                                                                     
+ ○ secret-drift intermediate  │ The pager goes off: the sample app's frontend at                    
+ ○ slow-db     advanced       │ https://podinfo.localtest.me:8443 fails its calls to the backend,   
                               │ on and off, since the backend team's latest release. They want to   
                               │ keep that release. Find what is wrong, fix it the GitOps way, and   
                               │ run lab drills verify.                                              

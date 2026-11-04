@@ -13,7 +13,12 @@
 // annotations; status and controller-owned fields left out). If anything
 // fails the drill is aborted first, so no fault is left behind.
 //
-// It needs a running lab with the obs and sample-app stacks, its
+// Before recovery, verify's message must not name the cause: none of the
+// drill's spoilers may appear in it. After every run no kind node may be
+// stopped or NotReady and no netem rule may be left on Postgres.
+//
+// It needs a running lab with the obs, sample-app, secrets and sample-db
+// stacks, its
 // kubeconfig in LAB_E2E_MAIN_KUBECONFIG, and podman, kubectl, jq and
 // argocd. Its runs go to a throwaway state file, not the learner's
 // history. One drill: -run E2EDrills/dns.
@@ -163,7 +168,7 @@ func TestE2EDrills(t *testing.T) {
 	// A throwaway state with the stacks the drills need marked applied.
 	store := state.NewStore(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.Update(func(s *state.State) error {
-		for _, st := range []string{"obs", "sample-app"} {
+		for _, st := range []string{"obs", "sample-app", "secrets", "sample-db"} {
 			s.Stacks[st] = state.StackState{Status: state.Applied}
 		}
 		return nil
@@ -174,7 +179,9 @@ func TestE2EDrills(t *testing.T) {
 	m := &drills.Manager{Drills: all, Store: store, Kubeconfig: kubeconfig, Runner: labs.ExecRunner{},
 		Kube:   func() (dynamic.Interface, error) { return dyn, nil },
 		Alerts: drills.ProxyAlerts{REST: core.CoreV1().RESTClient()},
-		Env:    append(local.LabRegistryEnv(), "XDG_CONFIG_HOME="+filepath.Join(tmp, ".config"), "TMPDIR="+tmp)}
+		Test:   true,
+		Env: append(append(local.LabRegistryEnv(), local.MotoEnv()...),
+			"XDG_CONFIG_HOME="+filepath.Join(tmp, ".config"), "TMPDIR="+tmp)}
 	ctx := context.Background()
 	log := logWriter{t}
 
@@ -202,6 +209,11 @@ func TestE2EDrills(t *testing.T) {
 				t.Fatalf("verify right after inject: passed %v, %v", res.Passed, err)
 			}
 			t.Logf("verify before the fix: %s", res.Reason)
+			for _, w := range d.Spoilers {
+				if strings.Contains(strings.ToLower(res.Reason), strings.ToLower(w)) {
+					t.Errorf("verify before the fix gives the cause away (%q): %s", w, res.Reason)
+				}
+			}
 			fired := waitAlert(ctx, t, m, 12*time.Minute)
 			if fired.IsZero() {
 				t.Errorf("alert %s did not fire within 12 minutes", d.Alert.Name)
@@ -221,6 +233,7 @@ func TestE2EDrills(t *testing.T) {
 				t.Fatalf("after a passing verify the run is %+v", r)
 			}
 			backAsBefore(ctx, t, dyn, d, before)
+			nothingLeft(ctx, t, d, kubeconfig)
 
 			// 2. inject, abort, back as before.
 			if _, err := m.Start(ctx, d.ID, false, log); err != nil {
@@ -233,9 +246,33 @@ func TestE2EDrills(t *testing.T) {
 				t.Fatalf("abort: %v", err)
 			}
 			backAsBefore(ctx, t, dyn, d, before)
+			nothingLeft(ctx, t, d, kubeconfig)
 		})
 	}
 	_ = log
+}
+
+// leftovers fails when a kind node of the lab is stopped or NotReady, or
+// a netem rule is on a Postgres container: faults node-loss and slow-db
+// must never leave behind.
+const leftovers = `. "$1/lib.sh"
+bad=0
+for n in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+  kind_node_running "$n" || { echo "kind node $n is not running"; bad=1; continue; }
+  node_ready "$n" || { echo "node $n is not Ready"; bad=1; }
+  if pod_netns "$n" sample-db postgres tc qdisc show dev eth0 2>/dev/null | grep -q netem; then
+    echo "a netem rule is left on Postgres on $n"; bad=1
+  fi
+done
+exit $bad`
+
+func nothingLeft(ctx context.Context, t *testing.T, d drills.Drill, kubeconfig string) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "bash", "-c", leftovers, "leftovers", filepath.Dir(d.Dir))
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("left behind after %s: %s", d.ID, out)
+	}
 }
 
 // waitAlert checks the drill's alert until it fires or the time is up.

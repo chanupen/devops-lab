@@ -234,8 +234,7 @@ func (m Model) drillAction(k string) (tea.Model, tea.Cmd) {
 	}
 	acts := m.opts.Drills
 	m.drills.busy, m.flash = command, statusProgressing.symbol()+" $ "+command
-	switch k {
-	case "h":
+	if k == "h" {
 		return m, func() tea.Msg {
 			n, total, h, err := acts.Hint()
 			if err == nil && n <= total && !strings.HasPrefix(h, "No more hints") {

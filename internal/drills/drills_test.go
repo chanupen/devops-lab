@@ -548,8 +548,16 @@ func TestRepoDrills(t *testing.T) {
 		if d.Alert.Name == "" {
 			t.Errorf("%s names no alert", d.ID)
 		}
+		if len(d.Spoilers) == 0 {
+			t.Errorf("%s lists no spoilers for its verify messages", d.ID)
+		}
+		for _, h := range d.Hints[:len(d.Hints)-1] {
+			if strings.Contains(h, d.CauseText()) {
+				t.Errorf("%s: a hint before the last quotes the cause", d.ID)
+			}
+		}
 	}
-	if strings.Join(ids, " ") != "bad-deploy dns oom" {
+	if strings.Join(ids, " ") != "bad-deploy cert-expiry dns node-loss oom secret-drift slow-db" {
 		t.Errorf("drills = %v", ids)
 	}
 }
