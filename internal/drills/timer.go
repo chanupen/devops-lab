@@ -3,10 +3,14 @@ package drills
 import (
 	"context"
 	"fmt"
+	"math"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// timerMargin is how many seconds after the deadline the timer fires.
+const timerMargin = 10
 
 // Timer restores the lab at a drill's deadline even when no lab process
 // runs then.
@@ -37,7 +41,9 @@ func (t SystemdTimer) Schedule(ctx context.Context, run string, at time.Time) (s
 	if t.Now != nil {
 		now = t.Now
 	}
-	secs := max(int(at.Sub(now()).Seconds()), 1)
+	// Round up and add a margin: a timer with AccuracySec may fire a few
+	// seconds early, and abort --expired does nothing before the deadline.
+	secs := max(int(math.Ceil(at.Sub(now()).Seconds())), 0) + timerMargin
 	args := []string{"--user", "--unit=" + unit, "--collect",
 		fmt.Sprintf("--on-active=%ds", secs), "--timer-property=AccuracySec=5s",
 		"--property=Restart=on-failure", "--property=RestartSec=60",

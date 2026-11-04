@@ -103,21 +103,32 @@ func (p ProxyAlerts) prometheus(ctx context.Context, a Alert, since time.Time) (
 		sel = append(sel, fmt.Sprintf("%s=%q", k, a.Labels[k]))
 	}
 	now := time.Now()
+	// From a little before the drill, so an alert already firing then
+	// (from an earlier run) shows as such and is not counted.
 	q := url.Values{
 		"query": {"ALERTS{" + strings.Join(sel, ",") + "}"},
-		"start": {strconv.FormatInt(since.Unix(), 10)},
+		"start": {strconv.FormatInt(since.Add(-lookBack).Unix(), 10)},
 		"end":   {strconv.FormatInt(now.Unix(), 10)},
-		"step":  {"15"},
+		"step":  {strconv.Itoa(step)},
 	}
 	b, err := p.proxy(Prometheus, "/api/v1/query_range", q).DoRaw(ctx)
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	return firstSample(b)
+	return firstSample(b, since)
 }
 
-// firstSample reads a Prometheus range query and returns its earliest sample.
-func firstSample(b []byte) (time.Time, bool, error) {
+// The range query's step and how far before the drill it starts.
+const (
+	step     = 15
+	lookBack = 2 * time.Minute
+)
+
+// firstSample reads a Prometheus range query and returns the earliest time
+// at or after since that an alert started firing: a sample with no sample
+// one step before it. An alert already firing at since only counts once
+// it stopped and fired again.
+func firstSample(b []byte, since time.Time) (time.Time, bool, error) {
 	var r struct {
 		Status string `json:"status"`
 		Data   struct {
@@ -133,12 +144,22 @@ func firstSample(b []byte) (time.Time, bool, error) {
 		return time.Time{}, false, fmt.Errorf("prometheus: status %q", r.Status)
 	}
 	var first float64
+	from := float64(since.Unix())
 	for _, s := range r.Data.Result {
-		if len(s.Values) == 0 {
-			continue
-		}
-		if t, ok := s.Values[0][0].(float64); ok && (first == 0 || t < first) {
-			first = t
+		prev := -1.0
+		for _, v := range s.Values {
+			t, ok := v[0].(float64)
+			if !ok {
+				continue
+			}
+			started := prev < 0 || t-prev > 1.5*step
+			prev = t
+			if started && t >= from {
+				if first == 0 || t < first {
+					first = t
+				}
+				break
+			}
 		}
 	}
 	if first == 0 {

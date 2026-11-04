@@ -372,7 +372,10 @@ func TestExpire(t *testing.T) {
 	if done, err := m.Expire(ctx, run.Run, io.Discard); done || err != nil {
 		t.Fatalf("before the deadline: %v, %v", done, err)
 	}
-	c.advance(2 * time.Minute)
+	c.advance(50 * time.Second) // 10s early, as a timer with AccuracySec may fire
+	if done, err := m.Expire(ctx, "20200101T000000Z", io.Discard); done || err != nil {
+		t.Fatalf("another run's timer: %v, %v", done, err)
+	}
 	if done, err := m.Expire(ctx, "20200101T000000Z", io.Discard); done || err != nil {
 		t.Fatalf("another run's timer: %v, %v", done, err)
 	}
@@ -454,11 +457,26 @@ func TestEarliestAlert(t *testing.T) {
 	if _, ok, _ := earliestAlert([]byte(`[{"startsAt":"2026-11-04T09:00:00Z"}]`), since); ok {
 		t.Error("an alert firing before the drill counted")
 	}
-	at, ok, err = firstSample([]byte(`{"status":"success","data":{"result":[{"values":[[1793790300,"1"],[1793790315,"1"]]},{"values":[[1793790240,"1"]]}]}}`))
-	if err != nil || !ok || at.Unix() != 1793790240 {
-		t.Errorf("firstSample = %v, %v, %v", at, ok, err)
+	// since = 1793790000. Series 1 starts firing at 1793790300; series 2
+	// was firing before since (an earlier run's) and is not counted until
+	// it stops and fires again at 1793790600.
+	since = time.Unix(1793790000, 0)
+	b = []byte(`{"status":"success","data":{"result":[
+		{"values":[[1793790300,"1"],[1793790315,"1"]]},
+		{"values":[[1793789985,"1"],[1793790000,"1"],[1793790015,"1"],[1793790600,"1"]]}]}}`)
+	at, ok, err = firstSample(b, since)
+	if err != nil || !ok || at.Unix() != 1793790300 {
+		t.Errorf("firstSample = %v, %v, %v", at.Unix(), ok, err)
 	}
-	if _, ok, err := firstSample([]byte(`{"status":"success","data":{"result":[]}}`)); ok || err != nil {
+	b = []byte(`{"status":"success","data":{"result":[{"values":[[1793789985,"1"],[1793790000,"1"],[1793790600,"1"]]}]}}`)
+	if at, ok, _ := firstSample(b, since); !ok || at.Unix() != 1793790600 {
+		t.Errorf("fired again after a gap: %v, %v", at.Unix(), ok)
+	}
+	b = []byte(`{"status":"success","data":{"result":[{"values":[[1793789985,"1"],[1793790000,"1"],[1793790015,"1"]]}]}}`)
+	if _, ok, _ := firstSample(b, since); ok {
+		t.Error("an alert firing since before the drill counted")
+	}
+	if _, ok, err := firstSample([]byte(`{"status":"success","data":{"result":[]}}`), since); ok || err != nil {
 		t.Errorf("no samples: %v, %v", ok, err)
 	}
 }

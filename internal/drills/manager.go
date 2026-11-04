@@ -362,11 +362,15 @@ func (m *Manager) RestoreForUp(ctx context.Context, log io.Writer) (state.DrillR
 	return r, true, err
 }
 
+// expireSlack lets a timer that fires a little early still restore.
+const expireSlack = 30 * time.Second
+
 // Expire restores the active drill if it is run (any run when run is "")
-// and past its deadline. It reports whether it restored anything.
+// and past its deadline (less a few seconds' slack for an early timer). It
+// reports whether it restored anything.
 func (m *Manager) Expire(ctx context.Context, run string, log io.Writer) (bool, error) {
 	r, _, ok, err := m.Active()
-	if err != nil || !ok || (run != "" && r.Run != run) || m.now().Before(r.Deadline) {
+	if err != nil || !ok || (run != "" && r.Run != run) || m.now().Before(r.Deadline.Add(-expireSlack)) {
 		return false, err
 	}
 	_, err = m.end(ctx, state.DrillExpired, log)
