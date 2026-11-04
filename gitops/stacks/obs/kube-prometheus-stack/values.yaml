@@ -73,13 +73,13 @@ additionalPrometheusRulesMap:
       - name: lab-drills
         rules:
           # oom: a container restarted in the last 10 minutes and its last
-          # termination was an OOM kill.
+          # termination was an OOM kill. increase(), not "offset 10m": a
+          # pod younger than 10 minutes (a new release) has no older sample.
           - alert: KubeContainerOOMKilled
             expr: |
-              (kube_pod_container_status_restarts_total{job="kube-state-metrics"}
-                - kube_pod_container_status_restarts_total{job="kube-state-metrics"} offset 10m >= 1)
-              and ignoring (reason)
-              min_over_time(kube_pod_container_status_last_terminated_reason{job="kube-state-metrics", reason="OOMKilled"}[10m]) == 1
+              increase(kube_pod_container_status_restarts_total{job="kube-state-metrics"}[10m]) > 0
+              and on (namespace, pod, container)
+              max_over_time(kube_pod_container_status_last_terminated_reason{job="kube-state-metrics", reason="OOMKilled"}[10m]) == 1
             labels:
               severity: warning
             annotations:
