@@ -32,7 +32,9 @@ argocd app rollback podinfo-frontend <id>
 
 Why not `kubectl rollout undo` or `kubectl edit`? Argo CD owns the Deployment. With self-heal on it puts the bad release back within seconds; with auto-sync off, the cluster and Argo CD disagree, and the next sync brings the bad release back. A rollback through Argo CD records what runs and why in its history.
 
-The app now shows `OutOfSync`: it runs the old release while its desired state still names the new one. That is expected after an emergency rollback. The lasting fix is in the release process: fix or revert the release where it came from (the pipeline, or Git when the image tag is in Git), then turn auto-sync back on. When the drill ends, lab does that part: it puts the Application back as Git has it.
+When the history has no good release to go back to, undo the release itself, still through Argo CD: `argocd app unset podinfo-frontend -p image.repository -p image.tag` removes the parameters the pipeline set, and Argo CD syncs the release in Git. `lab drills verify` accepts either; it checks that the release running came from Argo CD.
+
+After a rollback the app shows `OutOfSync`: it runs the old release while its desired state still names the new one. That is expected after an emergency rollback. The lasting fix is in the release process: fix or revert the release where it came from (the pipeline, or Git when the image tag is in Git), then turn auto-sync back on. When the drill ends, lab does that part: it puts the Application back as Git has it.
 
 `argocd` here means the CLI in core mode: it talks to the API server with your kubeconfig, no Argo CD login. Core mode reads its namespace from the kube context, so point the context at `argocd` once (kubectl then defaults to that namespace too):
 

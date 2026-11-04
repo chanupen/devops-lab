@@ -12,6 +12,7 @@ hints:
   - "kubectl -n podinfo describe pod and kubectl -n podinfo logs --previous show why the container exits, and which image it runs."
   - "Nothing in Git changed. Who deployed that image? argocd app history podinfo-frontend (argocd --core, or the UI at https://argocd.localtest.me:8443) lists every release."
   - "Argo CD refuses to roll back while auto-sync is on: argocd app set podinfo-frontend --sync-policy none, then argocd app rollback podinfo-frontend <id of the last good release>."
+  - "No good release in the history? Undo the release itself through Argo CD: argocd app unset podinfo-frontend -p image.repository -p image.tag, and Argo CD syncs the release in Git."
 touches: [podinfo, argocd]
 snapshot:
   - {apiVersion: argoproj.io/v1alpha1, resource: applications, namespace: argocd, name: lab-bootstrap}

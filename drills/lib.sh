@@ -59,6 +59,19 @@ release() {
     -p "{\"spec\":{\"source\":{\"helm\":{\"parameters\":$params}}}}" >/dev/null
 }
 
+# good_release <app>: make sure Argo CD's history has a release without
+# Helm parameters (the release from Git), so there is one to roll back to.
+# History lives in the Application's status and can be empty (an app made
+# again, its status cleared); a sync of what runs now records one.
+good_release() {
+  local n
+  n=$(kubectl -n argocd get application "$1" -o json |
+    jq '[.status.history // [] | .[] | select((.source.helm.parameters // []) | length == 0)] | length')
+  [ "${n:-0}" -gt 0 ] && return 0
+  echo "recording the running release of $1 in Argo CD's history first"
+  argocd_core app sync "$1" --timeout 180 >/dev/null
+}
+
 # app_status <app>: "Synced/Healthy" and the like.
 app_status() {
   kubectl -n argocd get application "$1" -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null
