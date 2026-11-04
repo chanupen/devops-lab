@@ -40,6 +40,93 @@ type State struct {
 	// progress of every lab ever started, by lab ID.
 	ActiveLab string                 `json:"activeLab,omitempty"`
 	Labs      map[string]LabProgress `json:"labs,omitempty"`
+	// ActiveDrill is the drill whose fault is in the cluster, with what it
+	// takes to undo it, written before the fault goes in. Drills is the
+	// history of finished runs, oldest first.
+	ActiveDrill *DrillRun  `json:"activeDrill,omitempty"`
+	Drills      []DrillRun `json:"drills,omitempty"`
+}
+
+// MaxDrillRuns is how many finished drill runs the history keeps.
+const MaxDrillRuns = 200
+
+// Drill run phases, while the run is active.
+const (
+	DrillInjecting = "injecting" // the fault is going in
+	DrillRunning   = "running"   // the fault is in; the timers run
+	DrillRestoring = "restoring" // putting everything back
+)
+
+// Drill run outcomes, once it ended.
+const (
+	DrillRecovered    = "recovered"     // verify passed
+	DrillAborted      = "aborted"       // lab drills abort
+	DrillExpired      = "expired"       // the time limit restored it
+	DrillInjectFailed = "inject failed" // the fault never went in fully; restored
+	DrillRestoredByUp = "restored by lab up"
+)
+
+// DrillRun is one run of a drill.
+type DrillRun struct {
+	Run    string `json:"run"` // e.g. 20261104T163100Z
+	Drill  string `json:"drill"`
+	Dir    string `json:"dir"` // the drill's directory, for restore.sh after a crash
+	Random bool   `json:"random,omitempty"`
+	Phase  string `json:"phase,omitempty"`
+	// Started is when the fault was in and the timers started; zero while
+	// injecting. Deadline is when the time limit restores the lab.
+	Started  time.Time `json:"started,omitzero"`
+	Deadline time.Time `json:"deadline"`
+	// Alert is the alert the drill expects; AlertFired when Alertmanager
+	// first had it firing, if it did before recovery.
+	Alert      string    `json:"alert,omitempty"`
+	AlertFired time.Time `json:"alertFired,omitzero"`
+	Acked      time.Time `json:"acked,omitzero"`     // lab drills ack: found it
+	Recovered  time.Time `json:"recovered,omitzero"` // verify passed
+	Hints      int       `json:"hints,omitempty"`
+	Verifies   int       `json:"verifies,omitempty"`
+	Ended      time.Time `json:"ended,omitzero"`
+	Outcome    string    `json:"outcome,omitempty"`
+	Error      string    `json:"error,omitempty"` // the last restore error
+	// Timer is the systemd user timer that restores the lab at Deadline.
+	Timer string `json:"timer,omitempty"`
+	// Snapshot holds the objects the fault changes, as they were before
+	// it; restore puts them back. Kept only while the run is active.
+	Snapshot []SavedObject `json:"snapshot,omitempty"`
+}
+
+// SavedObject is one Kubernetes object as it was before a drill.
+type SavedObject struct {
+	APIVersion string `json:"apiVersion"`
+	Resource   string `json:"resource"`
+	Namespace  string `json:"namespace,omitempty"`
+	Name       string `json:"name"`
+	// Absent: the object did not exist, so restore deletes it.
+	Absent bool            `json:"absent,omitempty"`
+	Object json.RawMessage `json:"object,omitempty"`
+}
+
+// TimeTo is how long after the fault went in t came; zero when either is unknown.
+func (r DrillRun) TimeTo(t time.Time) time.Duration {
+	if r.Started.IsZero() || t.IsZero() || t.Before(r.Started) {
+		return 0
+	}
+	return t.Sub(r.Started)
+}
+
+// EndDrill moves the active drill to the history with outcome, dropping
+// its snapshot.
+func (s *State) EndDrill(outcome string, at time.Time) {
+	if s.ActiveDrill == nil {
+		return
+	}
+	r := *s.ActiveDrill
+	r.Phase, r.Outcome, r.Ended, r.Snapshot, r.Error = "", outcome, at, nil, ""
+	s.Drills = append(s.Drills, r)
+	if n := len(s.Drills) - MaxDrillRuns; n > 0 {
+		s.Drills = append([]DrillRun(nil), s.Drills[n:]...)
+	}
+	s.ActiveDrill = nil
 }
 
 // LabProgress is how far one lab got.
