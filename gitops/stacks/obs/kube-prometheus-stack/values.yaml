@@ -15,18 +15,20 @@ prometheus:
     probeSelectorNilUsesHelmValues: false
   # Components whose charts would need the ServiceMonitor CRD before obs
   # exists (core, secrets): obs scrapes them itself. A missing target is
-  # harmless while its stack is down.
+  # harmless while its stack is down. honorLabels keeps their namespace
+  # label (the Certificate's, the ExternalSecret's) instead of renaming it
+  # exported_namespace.
   additionalServiceMonitors:
     - name: cert-manager
       namespaceSelector: {matchNames: [cert-manager]}
       selector:
         matchLabels: {app.kubernetes.io/name: cert-manager, app.kubernetes.io/component: controller}
-      endpoints: [{port: http-metrics, interval: 30s}]
+      endpoints: [{port: http-metrics, interval: 30s, honorLabels: true}]
     - name: external-secrets
       namespaceSelector: {matchNames: [external-secrets]}
       selector:
         matchLabels: {app.kubernetes.io/name: external-secrets}
-      endpoints: [{port: metrics, interval: 30s}]
+      endpoints: [{port: metrics, interval: 30s, honorLabels: true}]
 
 alertmanager:
   enabled: true
