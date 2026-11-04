@@ -8,12 +8,13 @@
 //
 //	go test -tags e2e -run E2ELab1 -v -timeout 40m ./internal/labs/
 //
-// Labs on the main cluster (2, 3 and 5) run only when
+// Labs on the main cluster (2, 3, 4 and 5) run only when
 // LAB_E2E_MAIN_KUBECONFIG names a running lab's kubeconfig. They work only
 // in their own lab0N-* namespaces and labelled cluster objects, and reset
 // them after; they write the lab registry's mirror file next to it, as lab
 // labs start does. Their stacks (registry, cluster, obs, sample-app,
-// policy) must be up:
+// policy, secrets, sample-db) must be up; lab 4 reaches Moto on 127.0.0.1
+// with the variables lab labs sets. One lab: -run E2EMain/04.
 //
 //	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EMain -v -timeout 60m ./internal/labs/
 package labs_test
@@ -216,7 +217,7 @@ func TestE2EMain(t *testing.T) {
 		// staleFor: lab 3's first steps read rates over 2 minutes, which
 		// still hold a previous run's traffic for a while.
 		staleFor time.Duration
-	}{{"02", 0}, {"03", 4 * time.Minute}, {"05", 0}}
+	}{{"02", 0}, {"03", 4 * time.Minute}, {"04", 0}, {"05", 0}}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			labHome := t.TempDir()
@@ -224,14 +225,14 @@ func TestE2EMain(t *testing.T) {
 			// The lab's own state: its stacks are up on the main lab.
 			store := state.NewStore(filepath.Join(labHome, "state.json"))
 			if err := store.Update(func(s *state.State) error {
-				for _, st := range []string{"registry", "cluster", "gitops", "core", "obs", "sample-app", "policy"} {
+				for _, st := range []string{"registry", "cluster", "gitops", "core", "obs", "sample-app", "policy", "secrets", "sample-db"} {
 					s.Stacks[st] = state.StackState{Status: state.Applied}
 				}
 				return nil
 			}); err != nil {
 				t.Fatal(err)
 			}
-			scriptEnv := append(local.LabRegistryEnv(), "LAB_WORK="+work)
+			scriptEnv := append(append(local.LabRegistryEnv(), local.MotoEnv()...), "LAB_WORK="+work)
 			m := &labs.Manager{Labs: all, Store: store, Mode: "local", Runner: labs.ExecRunner{}, Home: labHome,
 				MainKubeconfig: kubeconfig, LookPath: exec.LookPath, Env: scriptEnv,
 				Prepare: func(labs.Lab) error { return local.EnsureLabRegistry(filepath.Dir(kubeconfig)) }}

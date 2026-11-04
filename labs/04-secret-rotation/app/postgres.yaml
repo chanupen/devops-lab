@@ -1,0 +1,74 @@
+# Postgres. Its first start creates the superuser from db-admin; the init
+# script then makes the group role app, which holds the privileges and
+# cannot log in, and the app's login role (db-app's username) as a member
+# of it. The data is in an emptyDir: this lab's database lives as long as
+# its pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: lab04-app
+data:
+  10-app-role.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      --set u="$APP_USER" --set p="$APP_PASSWORD" <<'SQL'
+    CREATE ROLE app NOLOGIN;
+    GRANT CONNECT, TEMPORARY ON DATABASE app TO app;
+    GRANT USAGE, CREATE ON SCHEMA public TO app;
+    CREATE ROLE :"u" LOGIN PASSWORD :'p' IN ROLE app;
+    SQL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: lab04-app
+spec:
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: lab04-app
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+          env:
+            - {name: POSTGRES_DB, value: app}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: db-admin, key: username}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: db-admin, key: password}}
+            - name: APP_USER
+              valueFrom: {secretKeyRef: {name: db-app, key: username}}
+            - name: APP_PASSWORD
+              valueFrom: {secretKeyRef: {name: db-app, key: password}}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, postgres, -h, 127.0.0.1]}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init
+          configMap: {name: postgres-init}

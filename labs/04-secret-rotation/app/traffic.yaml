@@ -1,0 +1,52 @@
+# Steady traffic against the app: about 4 requests a second to /api/check,
+# which runs a query as the app's database user. Every failed request is
+# logged with its time; every 10 seconds a line says how many requests
+# succeeded and failed so far. It runs for 45 minutes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: traffic
+  namespace: lab04-traffic
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2700
+  template:
+    metadata:
+      labels: {app: traffic}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: traffic
+          image: docker.io/library/alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+          env:
+            - {name: URL, value: "http://sample-db.lab04-app:8080/api/check"}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              ok=0; failed=0; last=$(date +%s)
+              while true; do
+                if wget -q -T 2 -O /dev/null "$URL"; then
+                  ok=$((ok + 1))
+                else
+                  failed=$((failed + 1))
+                  echo "$(date -u +%FT%TZ) FAILED request $((ok + failed))"
+                fi
+                now=$(date +%s)
+                if [ $((now - last)) -ge 10 ]; then
+                  echo "$(date -u +%FT%TZ) progress ok=$ok failed=$failed"
+                  last=$now
+                fi
+                sleep 0.25
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {memory: 32Mi}

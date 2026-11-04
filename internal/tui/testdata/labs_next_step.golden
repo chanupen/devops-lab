@@ -5,8 +5,8 @@
  ◐ 01  Bootstrap Argo CD from scratch  2/6                 │ ● ● ◐ ○ ○ ○                            
  ○ 02  Build, scan and promote an image by retagging  0/6  │                                        
  ○ 03  SLO and burn-rate alerts for the sample app  0/7    │ Make Argo CD sync podinfo on its own.  
- ○ 05  Kyverno policy that blocks images without a digest …│ Turn on self-heal, so it undoes        
-                                                           │ changes made in the cluster. Turn on   
+ ○ 04  Rotate a database password without restarting the a…│ Turn on self-heal, so it undoes        
+ ○ 05  Kyverno policy that blocks images without a digest …│ changes made in the cluster. Turn on   
                                                            │ prune, so it deletes what was removed  
                                                            │ from Git.                              
                                                            │                                        

@@ -1,0 +1,11 @@
+# Lab 4. The format is described in labs/README.md.
+id: 04-secret-rotation
+title: Rotate a database password without restarting the app
+time: 40m
+level: intermediate
+modes: [local]      # cloud needs only an overlay: the same store on AWS Secrets Manager with Pod Identity
+needs: lab          # the main lab's cluster, namespaces lab04-app and lab04-traffic
+stacks: [secrets, sample-db]
+# The aws CLI runs as a pinned image through rootless Podman, so only these
+# are needed on the host.
+tools: [podman, kubectl, jq]
