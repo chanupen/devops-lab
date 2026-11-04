@@ -27,9 +27,15 @@ func (f *fakeDrills) actions() DrillActions {
 			f.calls = append(f.calls, "verify")
 			return drills.Result{Reason: "CoreDNS has 0 replicas"}, nil
 		},
-		Ack: func(context.Context) (state.DrillRun, error) {
-			f.calls = append(f.calls, "ack")
-			return state.DrillRun{Started: t0, Acked: t0.Add(time.Minute)}, nil
+		Ack: func(_ context.Context, cause string) (state.DrillRun, bool, error) {
+			f.calls = append(f.calls, "ack "+cause)
+			if cause != "coredns-down" {
+				return state.DrillRun{Started: t0}, false, nil
+			}
+			return state.DrillRun{Started: t0, Acked: t0.Add(time.Minute)}, true, nil
+		},
+		AckCauses: func() []Cause {
+			return []Cause{{"coredns-down", "CoreDNS is down"}, {"netpol", "A NetworkPolicy"}}
 		},
 		Hint: func() (int, int, string, error) {
 			f.calls = append(f.calls, "hint")
@@ -86,8 +92,20 @@ func TestDrillKeys(t *testing.T) {
 
 	m.d.st.ActiveDrill = &state.DrillRun{Drill: "dns", Phase: state.DrillRunning, Started: t0, Deadline: t0.Add(30 * time.Minute)}
 	m.opts.Now = func() time.Time { return t0.Add(time.Minute) }
-	m = pressDrill(t, m, "a", "h", "v")
-	if got := strings.Join(f.calls, ","); got != "start dns,ack,hint,verify" {
+	m = pressDrill(t, m, "a")
+	if m.drills.pick == nil || len(f.calls) != 1 {
+		t.Fatalf("a opens the cause list: %+v %v", m.drills.pick, f.calls)
+	}
+	m = pressDrill(t, m, "2", "enter")
+	if !strings.Contains(m.flash, "not the cause: netpol") {
+		t.Errorf("wrong cause: %q", m.flash)
+	}
+	m = pressDrill(t, m, "a", "esc")
+	if m.drills.pick != nil || len(f.calls) != 2 {
+		t.Errorf("esc closes the list without an ack: %v", f.calls)
+	}
+	m = pressDrill(t, m, "a", "enter", "h", "v")
+	if got := strings.Join(f.calls, ","); got != "start dns,ack netpol,ack coredns-down,hint,verify" {
 		t.Fatalf("calls = %v", got)
 	}
 	if !strings.Contains(m.drills.last, "not recovered yet: CoreDNS has 0 replicas") || len(*m.drills.hints) != 1 {

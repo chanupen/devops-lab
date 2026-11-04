@@ -62,3 +62,46 @@ func TestDrillHistory(t *testing.T) {
 		t.Errorf("best = %v", best)
 	}
 }
+
+// The list's footer names a real drill and, only when a drill needs
+// stacks that are down, those stacks.
+func TestDrillListFooter(t *testing.T) {
+	all := []drills.Drill{{ID: "bad-deploy", Stacks: []string{"sample-app"}}, {ID: "slow-db", Stacks: []string{"sample-db", "obs"}}}
+	st := state.New()
+	st.Stacks["sample-app"] = state.StackState{Status: state.Applied}
+	st.Stacks["obs"] = state.StackState{Status: state.Applied}
+	got := drillListFooter(all, st)
+	if !strings.Contains(got, "○ needs stacks that are not up: lab up --stacks sample-db\n") ||
+		!strings.Contains(got, "lab drills start bad-deploy, or lab drills start --random") {
+		t.Errorf("footer with a stack down:\n%s", got)
+	}
+	st.Stacks["sample-db"] = state.StackState{Status: state.Applied}
+	if got := drillListFooter(all, st); strings.Contains(got, "○") || !strings.Contains(got, "lab drills start bad-deploy,") {
+		t.Errorf("footer with every stack up:\n%s", got)
+	}
+}
+
+// History marks each ack right or wrong; reset deletes one drill's runs
+// or all of them.
+func TestDrillHistoryAcksAndReset(t *testing.T) {
+	t0 := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	runs := []state.DrillRun{
+		{Drill: "dns", Outcome: state.DrillRecovered, Started: t0, Acked: t0.Add(3 * time.Minute),
+			Acks: []state.DrillAck{{Cause: "netpol"}, {Cause: "coredns-down", Right: true}}},
+		{Drill: "oom", Outcome: state.DrillAborted, Started: t0},
+	}
+	var b strings.Builder
+	if err := writeDrillHistory(&b, runs); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "✕ netpol, ● coredns-down") {
+		t.Errorf("history:\n%s", b.String())
+	}
+	st := state.State{Drills: runs}
+	if n := st.ResetDrills("dns"); n != 1 || len(st.Drills) != 1 || st.Drills[0].Drill != "oom" {
+		t.Errorf("reset dns: %d, %v", n, st.Drills)
+	}
+	if n := st.ResetDrills(""); n != 1 || st.Drills != nil {
+		t.Errorf("reset all: %d, %v", n, st.Drills)
+	}
+}

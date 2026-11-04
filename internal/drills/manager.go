@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -43,6 +45,19 @@ type Manager struct {
 	Pick func(n int) int
 	// VerifyTimeout and ScriptTimeout override the defaults (tests).
 	VerifyTimeout, ScriptTimeout time.Duration
+	// Test keeps the runs out of the history: the e2e test, and a
+	// maintainer's check with LAB_DRILLS_TEST=1.
+	Test bool
+}
+
+// TestEnv set to 1 makes lab drills runs test runs, kept out of the history.
+const TestEnv = "LAB_DRILLS_TEST"
+
+// RunDir is where a run's scripts may keep files restore needs that are
+// not Kubernetes objects (DRILL_STATE): beside the state file, so a
+// restore after a crash finds them. Removed when the run ends.
+func (m *Manager) RunDir(run string) string {
+	return filepath.Join(filepath.Dir(m.Store.Path()), "drills", run)
 }
 
 func (m *Manager) now() time.Time {
@@ -150,7 +165,10 @@ func (m *Manager) Start(ctx context.Context, id string, random bool, log io.Writ
 	now := m.now()
 	run := state.DrillRun{
 		Run: now.UTC().Format("20060102T150405Z"), Drill: d.ID, Dir: d.Dir, Random: random,
-		Phase: state.DrillInjecting, Deadline: now.Add(d.Limit()), Alert: d.Alert.Name, Snapshot: saved,
+		Phase: state.DrillInjecting, Deadline: now.Add(d.Limit()), Alert: d.Alert.Name, Snapshot: saved, Test: m.Test,
+	}
+	if err := os.MkdirAll(m.RunDir(run.Run), 0o700); err != nil {
+		return state.DrillRun{}, err
 	}
 	// Written before anything changes: from here on, abort, lab up and the
 	// timer can put the lab back.
@@ -220,7 +238,8 @@ func (m *Manager) scriptTimeout() time.Duration {
 func (m *Manager) script(ctx context.Context, d Drill, r state.DrillRun, name string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	env := append([]string{"KUBECONFIG=" + m.Kubeconfig, "DRILL_ID=" + d.ID, "DRILL_DIR=" + d.Dir, "DRILL_RUN=" + r.Run}, m.Env...)
+	env := append([]string{"KUBECONFIG=" + m.Kubeconfig, "DRILL_ID=" + d.ID, "DRILL_DIR=" + d.Dir, "DRILL_RUN=" + r.Run,
+		"DRILL_STATE=" + m.RunDir(r.Run)}, m.Env...)
 	out, err := m.Runner.Run(ctx, d.Script(name), d.Dir, env)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = fmt.Errorf("timed out after %s", timeout)
@@ -249,31 +268,66 @@ func (m *Manager) CheckAlert(ctx context.Context) (state.DrillRun, error) {
 	})
 }
 
-// Ack records that the learner found the fault: it stops the detect timer.
-func (m *Manager) Ack(ctx context.Context) (state.DrillRun, error) {
-	r, _, err := m.active()
+// AckCauses are the causes lab drills ack takes for run r. A random
+// drill offers every drill's causes, so the list does not name it.
+func (m *Manager) AckCauses(r state.DrillRun, d Drill) map[string]string {
+	if !r.Random {
+		return d.Causes
+	}
+	all := map[string]string{}
+	for _, x := range m.Drills {
+		for id, text := range x.Causes {
+			all[id] = text
+		}
+	}
+	return all
+}
+
+// SortedIDs are a cause map's keys in order.
+func SortedIDs(causes map[string]string) []string {
+	return Drill{Causes: causes}.CauseIDs()
+}
+
+// ErrNoCause asks for a cause: lab drills ack --list shows them.
+var ErrNoCause = errors.New("name the cause you found: lab drills ack <cause>; lab drills ack --list shows them")
+
+// Ack records the cause the learner says they found. The right cause
+// stops the detect timer; a wrong one is recorded and the timer runs on.
+func (m *Manager) Ack(ctx context.Context, cause string) (state.DrillRun, bool, error) {
+	r, d, err := m.active()
 	if err != nil {
-		return r, err
+		return r, false, err
 	}
 	if r.Phase != state.DrillRunning {
-		return r, fmt.Errorf("the drill is %s", r.Phase)
+		return r, false, fmt.Errorf("the drill is %s", r.Phase)
 	}
 	if !r.Acked.IsZero() {
-		return r, nil
+		return r, true, nil
 	}
-	r.Acked = m.now()
+	if cause == "" {
+		return r, false, ErrNoCause
+	}
+	if _, ok := m.AckCauses(r, d)[cause]; !ok {
+		return r, false, fmt.Errorf("%q is not one of the causes: lab drills ack --list shows them", cause)
+	}
+	ack := state.DrillAck{At: m.now(), Cause: cause, Right: cause == d.Cause}
 	if err := m.Store.Update(func(s *state.State) error {
-		if s.ActiveDrill != nil && s.ActiveDrill.Run == r.Run && s.ActiveDrill.Acked.IsZero() {
-			s.ActiveDrill.Acked = r.Acked
+		if s.ActiveDrill == nil || s.ActiveDrill.Run != r.Run {
+			return errors.New("the drill ended")
 		}
+		s.ActiveDrill.Acks = append(s.ActiveDrill.Acks, ack)
+		if ack.Right && s.ActiveDrill.Acked.IsZero() {
+			s.ActiveDrill.Acked = ack.At
+		}
+		r = *s.ActiveDrill
 		return nil
 	}); err != nil {
-		return r, err
+		return r, false, err
 	}
 	if c, err := m.CheckAlert(ctx); err == nil {
 		r = c
 	}
-	return r, nil
+	return r, ack.Right, nil
 }
 
 // Hint returns the next hint and counts it.
@@ -286,6 +340,9 @@ func (m *Manager) Hint() (n, total int, hint string, err error) {
 		return r.Hints, len(d.Hints), "No more hints. drills/" + d.ID + "/solution.sh is the reference fix; lab drills abort puts everything back.", nil
 	}
 	hint = d.Hints[r.Hints]
+	if r.Hints+1 == len(d.Hints) && d.CauseText() != "" && !r.Random {
+		hint += "\nThe cause: " + d.CauseText() + "."
+	}
 	return r.Hints + 1, len(d.Hints), hint, m.Store.Update(func(s *state.State) error {
 		if s.ActiveDrill != nil && s.ActiveDrill.Run == r.Run {
 			s.ActiveDrill.Hints = r.Hints + 1
@@ -447,13 +504,13 @@ func (m *Manager) restore(ctx context.Context, d Drill, r *state.DrillRun, outco
 	if m.Timer != nil {
 		_ = m.Timer.Cancel(ctx, r.Timer)
 	}
+	_ = os.RemoveAll(m.RunDir(r.Run))
 	now := m.now()
 	return m.Store.Update(func(s *state.State) error {
 		if s.ActiveDrill == nil || s.ActiveDrill.Run != r.Run {
 			return nil // another lab finished it
 		}
-		s.EndDrill(outcome, now)
-		*r = s.Drills[len(s.Drills)-1]
+		*r = s.EndDrill(outcome, now)
 		return nil
 	})
 }

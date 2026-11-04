@@ -34,7 +34,7 @@ var (
 			{"j k ↑ ↓", "Move between drills"},
 			{"enter", "Start the selected drill, after a prompt (lab drills start <id>)"},
 			{"R", "Start a random drill, without saying which (lab drills start --random)"},
-			{"a", "Found it: stop the detect timer (lab drills ack)"},
+			{"a", "Name the cause you found; the right one stops the detect timer (lab drills ack <cause>)"},
 			{"v", "Verify the fix; a pass stops the recover timer and puts the lab back (lab drills verify)"},
 			{"h", "Show the next hint (lab drills hint)"},
 			{"x", "Abort: put back everything the drill changed, after a prompt (lab drills abort)"},

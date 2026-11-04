@@ -19,6 +19,12 @@ mi() { # a Kubernetes memory quantity in MiB, or -1
   *) echo $((q / 1048576)) ;;
   esac
 }
+# The symptom first: until the backend runs steadily, say only that.
+pods=$(kubectl -n podinfo get pods -l app.kubernetes.io/name=podinfo-backend -o json)
+bad=$(jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | .status.containerStatuses[]? |
+  select((.ready | not) or .restartCount > 0)] | length' <<<"$pods")
+[ "$bad" = 0 ] || fail "the backend still does not run steadily: a pod is not ready or keeps restarting"
+rolled_out podinfo podinfo-backend || fail "the backend still does not run steadily: its pods are not all up yet"
 d=$(kubectl -n podinfo get deployment podinfo-backend -o json) || fail "no Deployment podinfo-backend"
 c=$(jq '.spec.template.spec.containers[0]' <<<"$d")
 [[ "$(jq -r '.command | join(" ")' <<<"$c")" == *--stress-memory=128* ]] ||
@@ -32,9 +38,4 @@ request=$(mi "$(jq -r '.resources.requests.memory // ""' <<<"$c")")
 [ "$request" -le "$limit" ] || fail "the request (${request}Mi) is above the limit (${limit}Mi)"
 [ "$(app_status podinfo-backend)" = Synced/Healthy ] ||
   fail "Application podinfo-backend is $(app_status podinfo-backend): set the memory in Argo CD's desired state (argocd app set), so self-heal keeps it"
-rolled_out podinfo podinfo-backend || fail "podinfo-backend is not rolled out yet: kubectl -n podinfo rollout status deployment podinfo-backend"
-pods=$(kubectl -n podinfo get pods -l app.kubernetes.io/name=podinfo-backend -o json)
-bad=$(jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | .status.containerStatuses[]? |
-  select((.ready | not) or .restartCount > 0)] | length' <<<"$pods")
-[ "$bad" = 0 ] || fail "a podinfo-backend container is not ready or has restarted since the fix: kubectl -n podinfo describe pod"
 ok "podinfo-backend keeps its catalogue with requests ${request}Mi and limit ${limit}Mi, set through Argo CD"

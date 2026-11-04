@@ -12,6 +12,14 @@ hints:
   - "Names like podinfo-backend.podinfo resolve through the cluster's DNS: CoreDNS in kube-system. Is it running? kubectl -n kube-system get deploy,pods -l k8s-app=kube-dns"
   - "Zero replicas is not a crash: something set it. kubectl -n kube-system get deploy coredns -o yaml --show-managed-fields shows who changed spec.replicas and when; its annotations say what it was before."
   - "Put back the replicas it had (kubectl -n kube-system scale deployment coredns --replicas=...), then explain why it went down and what stops it happening again."
+cause: coredns-scaled-down
+causes:
+  coredns-scaled-down: CoreDNS was scaled to zero replicas
+  network-policy: A NetworkPolicy blocks the frontend from the backend
+  backend-crash: The backend crashes
+  bad-backend-url: A release points the frontend at the wrong backend URL
+  service-selector: The backend Service selects no pods
+spoilers: [CoreDNS, replicas, scaled, downscaler]
 touches: [kube-system]
 snapshot:
   - {apiVersion: apps/v1, resource: deployments, namespace: kube-system, name: coredns}

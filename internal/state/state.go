@@ -81,15 +81,21 @@ type DrillRun struct {
 	// first had it firing, if it did before recovery.
 	Alert      string    `json:"alert,omitempty"`
 	AlertFired time.Time `json:"alertFired,omitzero"`
-	Acked      time.Time `json:"acked,omitzero"`     // lab drills ack: found it
-	Recovered  time.Time `json:"recovered,omitzero"` // verify passed
-	Hints      int       `json:"hints,omitempty"`
-	Verifies   int       `json:"verifies,omitempty"`
-	Ended      time.Time `json:"ended,omitzero"`
-	Outcome    string    `json:"outcome,omitempty"`
-	Error      string    `json:"error,omitempty"` // the last restore error
+	// Acked is when an ack named the right cause: it stops the detect
+	// timer. Acks are every ack, right or wrong.
+	Acked     time.Time  `json:"acked,omitzero"`
+	Acks      []DrillAck `json:"acks,omitempty"`
+	Recovered time.Time  `json:"recovered,omitzero"` // verify passed
+	Hints     int        `json:"hints,omitempty"`
+	Verifies  int        `json:"verifies,omitempty"`
+	Ended     time.Time  `json:"ended,omitzero"`
+	Outcome   string     `json:"outcome,omitempty"`
+	Error     string     `json:"error,omitempty"` // the last restore error
 	// Timer is the systemd user timer that restores the lab at Deadline.
 	Timer string `json:"timer,omitempty"`
+	// Test marks a run by a test or a maintainer's check: it never goes
+	// into the history (LAB_DRILLS_TEST=1, or the e2e test).
+	Test bool `json:"test,omitempty"`
 	// Snapshot holds the objects the fault changes, as they were before
 	// it; restore puts them back. Kept only while the run is active.
 	Snapshot []SavedObject `json:"snapshot,omitempty"`
@@ -106,6 +112,25 @@ type SavedObject struct {
 	Object json.RawMessage `json:"object,omitempty"`
 }
 
+// DrillAck is one lab drills ack: the cause the learner named, and
+// whether it was the drill's cause.
+type DrillAck struct {
+	At    time.Time `json:"at"`
+	Cause string    `json:"cause"`
+	Right bool      `json:"right,omitempty"`
+}
+
+// WrongAcks counts the acks that named the wrong cause.
+func (r DrillRun) WrongAcks() int {
+	n := 0
+	for _, a := range r.Acks {
+		if !a.Right {
+			n++
+		}
+	}
+	return n
+}
+
 // TimeTo is how long after the fault went in t came; zero when either is unknown.
 func (r DrillRun) TimeTo(t time.Time) time.Duration {
 	if r.Started.IsZero() || t.IsZero() || t.Before(r.Started) {
@@ -115,18 +140,40 @@ func (r DrillRun) TimeTo(t time.Time) time.Duration {
 }
 
 // EndDrill moves the active drill to the history with outcome, dropping
-// its snapshot.
-func (s *State) EndDrill(outcome string, at time.Time) {
+// its snapshot, and returns the finished run. A test run ends without
+// reaching the history.
+func (s *State) EndDrill(outcome string, at time.Time) DrillRun {
 	if s.ActiveDrill == nil {
-		return
+		return DrillRun{}
 	}
 	r := *s.ActiveDrill
 	r.Phase, r.Outcome, r.Ended, r.Snapshot, r.Error = "", outcome, at, nil, ""
+	s.ActiveDrill = nil
+	if r.Test {
+		return r
+	}
 	s.Drills = append(s.Drills, r)
 	if n := len(s.Drills) - MaxDrillRuns; n > 0 {
 		s.Drills = append([]DrillRun(nil), s.Drills[n:]...)
 	}
-	s.ActiveDrill = nil
+	return r
+}
+
+// ResetDrills deletes the history of drill id, or of every drill when id
+// is "", and returns how many runs it deleted.
+func (s *State) ResetDrills(id string) int {
+	kept := s.Drills[:0]
+	for _, r := range s.Drills {
+		if id != "" && r.Drill != id {
+			kept = append(kept, r)
+		}
+	}
+	n := len(s.Drills) - len(kept)
+	s.Drills = kept
+	if len(s.Drills) == 0 {
+		s.Drills = nil
+	}
+	return n
 }
 
 // LabProgress is how far one lab got.
