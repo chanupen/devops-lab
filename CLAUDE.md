@@ -109,9 +109,18 @@ If a phase slips, cut TUI screens before labs.
 - CLI: `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | reset | stop`. Verify runs with KUBECONFIG set and a 60 s timeout. Progress lives in `~/.lab/state.json`.
 - Every solution must pass its verify script on a fresh cluster: `go test -tags e2e -run E2E -timeout 40m ./internal/labs/` (needs Podman, kubectl, helm, jq, argocd).
 
+## Drills
+
+- Format and rules in `drills/README.md`: `drills/<id>/` with `drill.yaml` (id, title, level, stacks, timeLimit, alert, hints, touches, snapshot), README (intro = the page), `inject.sh`, `verify.sh`, `restore.sh`, `solution.sh`; shared `drills/lib.sh`.
+- CLI: `lab drills list | start <id> | start --random | status | hint | ack | verify | abort | history`; TUI screen 4. One drill at a time, never while a lab is started; `start`, `verify`, `abort` take the lab lock.
+- Before inject, lab saves the `snapshot` objects into `~/.lab/state.json`; restore puts them back and checks them. `lab drills abort`, `lab up` and the time-limit timer (systemd user timer) restore; `lab doctor` reports an active drill. Never leave a fault behind.
+- Faults that change an app go through Argo CD (Helm parameters on the Application, lab-bootstrap told to ignore them for that app), never through Git. Drills touch only the sample app's namespaces, except `dns` (CoreDNS).
+- Each drill names its alert; ones kube-prometheus-stack lacks live in the obs stack's `lab-drills` rules.
+- e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -timeout 90m ./internal/drills/`.
+
 ## `lab doctor` checks (phase 0)
 
-Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile. Output: coloured table, `--json` flag, non-zero exit on failure.
+Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
 
 ## Conventions
 

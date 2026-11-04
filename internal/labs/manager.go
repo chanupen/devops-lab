@@ -185,6 +185,9 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 	if st.ActiveLab != "" && st.ActiveLab != l.ID {
 		return l, fmt.Errorf("lab %s is started; lab labs stop first (one lab at a time)", st.ActiveLab)
 	}
+	if st.ActiveDrill != nil {
+		return l, errors.New("a drill is running on the main lab; finish it first: lab drills verify, or lab drills abort")
+	}
 	if !slices.Contains(l.Modes, m.Mode) {
 		return l, fmt.Errorf("lab %s runs in %s mode, not %s", l.ID, strings.Join(l.Modes, ", "), m.Mode)
 	}

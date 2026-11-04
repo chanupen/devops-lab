@@ -175,11 +175,13 @@ var ExternalSecretGVR = schema.GroupVersionResource{Group: "external-secrets.io"
 // it. Moto keeps no state, so after a restart it is empty while the
 // Secrets (and the database passwords they hold) still exist. A secret
 // Moto has is left alone: it is the current value. It returns the names it
-// put back.
-func Reseed(ctx context.Context, s Secrets, dyn dynamic.Interface, core kubernetes.Interface) ([]string, error) {
+// put back, and the ExternalSecrets it skipped (namespace/name): one with
+// spec.target.template builds its Secret from the remote value, so the
+// Secret is not that value and cannot be copied back.
+func Reseed(ctx context.Context, s Secrets, dyn dynamic.Interface, core kubernetes.Interface) (put, skipped []string, err error) {
 	list, err := dyn.Resource(ExternalSecretGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("list ExternalSecrets: %w", err)
+		return nil, nil, fmt.Errorf("list ExternalSecrets: %w", err)
 	}
 	want := map[string]map[string]string{} // remote key -> property -> value
 	whole := map[string]bool{}             // remote keys read whole (dataFrom.extract)
@@ -187,6 +189,10 @@ func Reseed(ctx context.Context, s Secrets, dyn dynamic.Interface, core kubernet
 		store, _, _ := unstructuredString(es.Object, "spec", "secretStoreRef", "name")
 		kind, _, _ := unstructuredString(es.Object, "spec", "secretStoreRef", "kind")
 		if store != SecretStore || kind != "ClusterSecretStore" {
+			continue
+		}
+		if _, templated := lookup(es.Object, "spec", "target", "template"); templated {
+			skipped = append(skipped, es.GetNamespace()+"/"+es.GetName())
 			continue
 		}
 		target, _, _ := unstructuredString(es.Object, "spec", "target", "name")
@@ -199,7 +205,6 @@ func Reseed(ctx context.Context, s Secrets, dyn dynamic.Interface, core kubernet
 		}
 		addFromSecret(es.Object, sec, want, whole)
 	}
-	var put []string
 	keys := make([]string, 0, len(want))
 	for k := range want {
 		keys = append(keys, k)
@@ -207,20 +212,20 @@ func Reseed(ctx context.Context, s Secrets, dyn dynamic.Interface, core kubernet
 	slices.Sort(keys)
 	for _, key := range keys {
 		if _, ok, err := s.Get(ctx, key); err != nil {
-			return put, err
+			return put, skipped, err
 		} else if ok {
 			continue
 		}
 		v, err := json.Marshal(want[key])
 		if err != nil {
-			return put, err
+			return put, skipped, err
 		}
 		if err := s.Put(ctx, key, string(v)); err != nil {
-			return put, fmt.Errorf("put %s: %w", key, err)
+			return put, skipped, fmt.Errorf("put %s: %w", key, err)
 		}
 		put = append(put, key)
 	}
-	return put, nil
+	return put, skipped, nil
 }
 
 // addFromSecret maps an ExternalSecret's data back onto its remote keys:
@@ -302,7 +307,11 @@ func (p *Provider) reseed(ctx context.Context, log io.Writer) error {
 	if err := p.motoReady(ctx, log); err != nil {
 		return err
 	}
-	put, err := Reseed(ctx, p.secrets, c.Dynamic, c.Core)
+	put, skipped, err := Reseed(ctx, p.secrets, c.Dynamic, c.Core)
+	for _, es := range skipped {
+		logf(log, "warning: not putting back the secret ExternalSecret %s reads: it has spec.target.template, so its Secret "+
+			"is not the value in Secrets Manager; if %s lost it, put it back by hand", es, MotoContainer)
+	}
 	for _, k := range put {
 		logf(log, "put %s back into %s from its Secret in the cluster (Moto keeps no state across restarts)", k, MotoContainer)
 	}

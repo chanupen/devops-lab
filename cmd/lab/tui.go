@@ -103,6 +103,10 @@ func tuiOptions(flags labFlags, newProvider providerFactory) (*tui.Options, erro
 				return n, h, err
 			}
 		}
+		// The Drills screen, through the same manager as lab drills.
+		if m, err := drillsManager(flags); err == nil {
+			opts.DrillList, opts.Drills = m.Drills, tuiDrillActions(m)
+		}
 	}
 	return opts, nil
 }

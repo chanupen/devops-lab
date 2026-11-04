@@ -253,6 +253,9 @@ func createBody(c ContainerSpec) map[string]any {
 		"name": c.Name, "image": c.Image, "labels": c.Labels,
 		"portmappings": ports, "volumes": vols, "mounts": mounts,
 	}
+	if len(c.HostAdd) > 0 {
+		body["hostadd"] = c.HostAdd
+	}
 	if c.Network != "" {
 		body["netns"] = map[string]string{"nsmode": "bridge"}
 		body["Networks"] = map[string]any{c.Network: map[string]any{"aliases": c.Aliases}}

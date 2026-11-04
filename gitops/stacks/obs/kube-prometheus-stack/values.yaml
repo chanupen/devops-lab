@@ -57,3 +57,41 @@ grafana:
       uid: loki
       url: http://loki.monitoring.svc:3100
       access: proxy
+
+# KubePodCrashLooping waits 15 minutes upstream; most crash loops are
+# fixed sooner than that, so the lab's alert would rarely fire. 5 minutes
+# is still long enough to skip a pod that restarts once.
+customRules:
+  KubePodCrashLooping:
+    for: 5m
+
+# Alerts kube-prometheus-stack does not have, for faults the drills
+# (drills/) inject. Each drill names the alert that should catch it.
+additionalPrometheusRulesMap:
+  lab-drills:
+    groups:
+      - name: lab-drills
+        rules:
+          # oom: a container restarted in the last 10 minutes and its last
+          # termination was an OOM kill. increase(), not "offset 10m": a
+          # pod younger than 10 minutes (a new release) has no older sample.
+          - alert: KubeContainerOOMKilled
+            expr: |
+              increase(kube_pod_container_status_restarts_total{job="kube-state-metrics"}[10m]) > 0
+              and on (namespace, pod, container)
+              max_over_time(kube_pod_container_status_last_terminated_reason{job="kube-state-metrics", reason="OOMKilled"}[10m]) == 1
+            labels:
+              severity: warning
+            annotations:
+              summary: Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} was OOMKilled.
+              description: Its memory limit is below what it needs; compare the limit with container_memory_working_set_bytes.
+          # dns: CoreDNS is scraped as job coredns. With every replica gone
+          # its targets disappear, so up == 0 never shows; absent() does.
+          - alert: CoreDNSDown
+            expr: absent(up{job="coredns"} == 1)
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: No CoreDNS instance is up.
+              description: Service discovery by name fails across the cluster; check the coredns Deployment in kube-system.

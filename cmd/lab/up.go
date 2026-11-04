@@ -12,6 +12,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/state"
 )
 
 func newUpCmd(newProvider providerFactory) *cobra.Command {
@@ -23,6 +24,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 		timeout  time.Duration
 		revision string
 		ttl      time.Duration
+		refresh  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -32,11 +34,15 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			"Then it plans against ~/.lab/state.json and applies stacks in dependency order. Stacks\n" +
 			"already applied are kept; failed ones are retried. Deployed stacks outside the profile\n" +
 			"are kept unless --prune is given.",
-		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n  lab up --mode cloud --ttl 20m",
-		Args:    cobra.NoArgs,
+		Example: "  lab up\n  lab up --stacks cluster,registry\n  lab up --stacks obs --revision feat/obs\n" +
+			"  lab up --stacks gitops --refresh-repo   # after rotating the deploy key\n  lab up --mode cloud --ttl 20m",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, store, g, err := flags.load()
 			if err != nil {
+				return err
+			}
+			if err := restoreDrill(cmd, flags, cfg.Mode, store); err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("ttl") {
@@ -48,9 +54,9 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				}
 				cfg.Cloud.TTL = config.Duration(ttl)
 			}
-			command := upCommand(stacks, prune, revision)
+			command := upCommand(stacks, prune, revision, refresh)
 			eng := engine.New(g, store, nil)
-			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision}
+			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision, RefreshRepo: refresh}
 			// Plan once without the provider so a bad request fails before
 			// one is built, then again with what it supports.
 			if _, err := eng.PlanUp(cfg, opts); err != nil {
@@ -80,6 +86,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				}
 			}
 			opts.Supports = prov.Supports
+			if sr, ok := prov.(staleReporter); ok {
+				if opts.Reapply, err = sr.StaleStacks(cmd.Context()); err != nil {
+					return err
+				}
+			}
 			p, err := eng.PlanUp(cfg, opts)
 			if err != nil {
 				return err
@@ -115,14 +126,43 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before destroying stacks or, in cloud mode, applying to AWS")
 	cmd.Flags().StringVar(&revision, "revision", "",
 		"sync the gitops stack from this Git branch to test changes before they merge (default main)")
+	cmd.Flags().BoolVar(&refresh, "refresh-repo", false,
+		"re-apply the gitops stack so Argo CD reloads its repository Secret from repo.sshKeyFile (a rotated deploy key)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 0, "cloud mode: lifetime of a new lab (default cloud.ttl in lab.yaml, at most 8h); the reaper deletes it after that")
 	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
 	return cmd
 }
 
+// restoreDrill puts back a drill that is still in the lab (a crash, a
+// reboot, a drill left running) before lab up changes anything: its fault
+// is drift, and lab up makes the lab match lab.yaml and Git.
+func restoreDrill(cmd *cobra.Command, flags labFlags, mode string, store *state.Store) error {
+	if mode != "local" {
+		return nil
+	}
+	st, err := store.Load()
+	if err != nil || st.ActiveDrill == nil {
+		return err
+	}
+	m, err := drillsManager(flags)
+	if err != nil {
+		return fmt.Errorf("a drill is still in the lab, but lab cannot load the drills to put it back: %w", err)
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "a drill is still in the lab (%s); putting everything it changed back first\n", st.ActiveDrill.Phase)
+	return drillOp(cmd, m, "lab up (restores the drill)", "restore", func(w io.Writer) error {
+		_, _, err := m.RestoreForUp(cmd.Context(), w)
+		if err != nil {
+			return fmt.Errorf("restoring the drill: %w; lab up changes nothing until it is back (lab drills abort tries again)", err)
+		}
+		_, _ = fmt.Fprintln(out, "● the drill is restored (lab drills history shows it)")
+		return nil
+	})
+}
+
 // upCommand is the CLI command recorded in the ops log.
-func upCommand(stacks []string, prune bool, revision string) string {
+func upCommand(stacks []string, prune bool, revision string, refresh bool) string {
 	c := "lab up"
 	if len(stacks) > 0 {
 		c += " --stacks " + strings.Join(stacks, ",")
@@ -132,6 +172,9 @@ func upCommand(stacks []string, prune bool, revision string) string {
 	}
 	if revision != "" {
 		c += " --revision " + revision
+	}
+	if refresh {
+		c += " --refresh-repo"
 	}
 	return c
 }

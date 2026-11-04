@@ -50,6 +50,9 @@ type ContainerSpec struct {
 	Binds   []Bind
 	Network string
 	Aliases []string
+	// HostAdd are "name:address" entries for the container's /etc/hosts
+	// (podman run --add-host).
+	HostAdd []string
 }
 
 // Port publishes a container port on a host address.

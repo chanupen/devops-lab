@@ -69,6 +69,8 @@ type System struct {
 	// MotoSecrets counts the secrets Moto holds (Secrets Manager
 	// ListSecrets on 127.0.0.1:4566); nil checks only that it runs.
 	MotoSecrets func(ctx context.Context) (int, error)
+	// GHCR measures ghcr.io blob downloads; nil skips the check.
+	GHCR GHCRProbe
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -121,7 +123,12 @@ type Options struct {
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
 	// Stacks are the stacks deployed, from the state file.
-	Stacks  []string
+	Stacks []string
+	// ZotHosts are lab.yaml's zot.addHosts (name -> address in lab-zot).
+	ZotHosts map[string]string
+	// Drill is the drill still in the lab, from the state file; nil when
+	// none is.
+	Drill   *DrillState
 	Timeout time.Duration // per check
 }
 
@@ -157,8 +164,45 @@ func Checks() []Check {
 		{"image cache", unitCheck("image cache", "lab-zot")},
 		{"lab registry", checkLabRegistry},
 		{"moto", checkMoto},
+		{"ghcr.io download", checkGHCR},
+		{"drill", checkDrill},
 		{"k8s support", checkK8sSupport},
 	}
+}
+
+// DrillState is the active drill as lab doctor reports it.
+type DrillState struct {
+	Label    string // "drill dns", or "a random drill"
+	Phase    string // injecting, running, restoring
+	Deadline time.Time
+	Error    string // the last restore error
+	Now      time.Time
+}
+
+// checkDrill reports a drill whose fault is still in the lab. A running
+// drill is a warning (the lab is broken on purpose); one past its time
+// limit, or one whose inject or restore did not finish (a crash, a
+// reboot), fails until lab drills abort or lab up puts it back.
+func checkDrill(_ context.Context, _ System, opts Options) Result {
+	d := opts.Drill
+	if d == nil {
+		return ok("none running")
+	}
+	const fix = "lab drills abort (or lab up) puts back what the drill changed, from the state file"
+	switch {
+	case d.Phase == "restoring":
+		detail := d.Label + ": putting the lab back did not finish"
+		if d.Error != "" {
+			detail += ": " + firstLine(d.Error)
+		}
+		return fail(fix, "%s", detail)
+	case d.Phase == "injecting":
+		return fail(fix, "%s: its fault went in only partly (lab was interrupted)", d.Label)
+	case !d.Now.Before(d.Deadline):
+		return fail(fix, "%s: past its time limit (%s) and not restored yet", d.Label, d.Deadline.Local().Format("15:04"))
+	}
+	return warn("lab drills status; lab drills verify or lab drills abort ends it",
+		"%s is running: the sample app is broken on purpose until %s", d.Label, d.Deadline.Local().Format("15:04"))
 }
 
 // Run executes the checks concurrently and returns results in input order.

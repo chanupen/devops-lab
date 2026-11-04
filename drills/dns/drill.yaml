@@ -1,0 +1,17 @@
+id: dns
+title: Service discovery fails across the app
+level: intermediate
+stacks: [sample-app, obs]
+timeLimit: 30m
+# Added by this drill to the obs stack (lab-drills rules): kube-prometheus-
+# stack scrapes CoreDNS but has no alert for it being gone.
+alert:
+  name: CoreDNSDown
+hints:
+  - "The frontend cannot reach the backend, but both pods run. What does the frontend use to find the backend? kubectl -n podinfo logs deploy/podinfo-frontend"
+  - "Names like podinfo-backend.podinfo resolve through the cluster's DNS: CoreDNS in kube-system. Is it running? kubectl -n kube-system get deploy,pods -l k8s-app=kube-dns"
+  - "Zero replicas is not a crash: something set it. kubectl -n kube-system get deploy coredns -o yaml --show-managed-fields shows who changed spec.replicas and when; its annotations say what it was before."
+  - "Put back the replicas it had (kubectl -n kube-system scale deployment coredns --replicas=...), then explain why it went down and what stops it happening again."
+touches: [kube-system]
+snapshot:
+  - {apiVersion: apps/v1, resource: deployments, namespace: kube-system, name: coredns}

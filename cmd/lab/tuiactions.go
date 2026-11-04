@@ -39,7 +39,7 @@ func command(req tui.Request) string {
 	if req.Down {
 		return downCommand(req.Stacks, false)
 	}
-	return upCommand(req.Stacks, false, "")
+	return upCommand(req.Stacks, false, "", false)
 }
 
 // Plan implements tui.Actions.

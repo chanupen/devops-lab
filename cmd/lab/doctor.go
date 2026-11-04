@@ -53,8 +53,12 @@ func newDoctorCmd() *cobra.Command {
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
+					opts.ZotHosts = cfg.Zot.AddHosts
 				}
+				repo, digest := local.ZotImageBlob()
+				sys.GHCR = doctor.HostGHCRProbe{Repo: repo, Digest: digest}
 				opts.Stacks = deployedStacks()
+				opts.Drill = activeDrill()
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
@@ -128,6 +132,24 @@ func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
 		return doctor.RegistryState{Pending: err.Error()}
 	}
 	return doctor.RegistryState{Err: err}
+}
+
+// activeDrill is the drill still in the local lab, for lab doctor.
+func activeDrill() *doctor.DrillState {
+	path, err := state.DefaultPath()
+	if err != nil {
+		return nil
+	}
+	st, err := state.NewStore(path).Load()
+	if err != nil || st.ActiveDrill == nil {
+		return nil
+	}
+	r := st.ActiveDrill
+	label := "drill " + r.Drill
+	if r.Random {
+		label = "a random drill"
+	}
+	return &doctor.DrillState{Label: label, Phase: r.Phase, Deadline: r.Deadline, Error: r.Error, Now: time.Now()}
 }
 
 // deployedStacks are the stacks the local state file records as applied;

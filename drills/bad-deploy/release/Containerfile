@@ -1,0 +1,10 @@
+# podinfo "6.15.1": the 6.15.0 image with a bug. Its start script passes
+# --port-metrics=9898, the port the HTTP server already listens on, so the
+# process exits at start: "listen tcp :9898: bind: address already in use".
+ARG BASE
+FROM ${BASE}
+USER root
+RUN mv /home/app/podinfo /home/app/podinfo.bin \
+ && printf '#!/bin/sh\nexec /home/app/podinfo.bin "$@" --port-metrics=9898\n' > /home/app/podinfo \
+ && chmod 755 /home/app/podinfo
+USER app

@@ -46,6 +46,15 @@ func externalSecret(ns, name, store, target string, data []any, dataFrom []any) 
 	}}
 }
 
+// templated is an ExternalSecret whose target.template builds the Secret.
+func templated(ns, name, key string) *unstructured.Unstructured {
+	es := externalSecret(ns, name, SecretStore, "", []any{ref("password", key, "password")}, nil)
+	es.Object["spec"].(map[string]any)["target"] = map[string]any{"template": map[string]any{
+		"data": map[string]any{"dsn": "postgres://app:{{ .password }}@postgres/app"},
+	}}
+	return es
+}
+
 func ref(secretKey, key, prop string) map[string]any {
 	return map[string]any{"secretKey": secretKey, "remoteRef": map[string]any{"key": key, "property": prop}}
 }
@@ -73,6 +82,9 @@ func TestReseed(t *testing.T) {
 		externalSecret("other", "x", "vault", "", []any{ref("k", "other/x", "k")}, nil),
 		// Not synced yet: no Secret, nothing to put back.
 		externalSecret("lab04-app", "pending", SecretStore, "", []any{ref("k", "lab04/pending", "k")}, nil),
+		// A template builds the Secret from the remote value (here a DSN),
+		// so the Secret is not the value: skipped, with a warning.
+		templated("lab04-app", "dsn", "lab04/dsn"),
 	}
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
@@ -81,6 +93,7 @@ func TestReseed(t *testing.T) {
 		secret("lab04-app", "db-credentials", map[string]string{"username": "app_v2", "password": "p2"}),
 		secret("sample-db", "app-db", map[string]string{"username": "app", "password": "pa"}),
 		secret("other", "x", map[string]string{"k": "v"}),
+		secret("lab04-app", "dsn", map[string]string{"dsn": "postgres://app:pw@postgres/app"}),
 	)
 	tests := []struct {
 		name   string
@@ -98,9 +111,15 @@ func TestReseed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &fakeSecrets{m: tt.before}
-			put, err := Reseed(ctx, s, dyn, core)
+			put, skipped, err := Reseed(ctx, s, dyn, core)
 			if err != nil || !slices.Equal(put, tt.put) {
 				t.Fatalf("Reseed put %v, %v; want %v", put, err, tt.put)
+			}
+			if want := []string{"lab04-app/dsn"}; !slices.Equal(skipped, want) {
+				t.Errorf("Reseed skipped %v, want %v", skipped, want)
+			}
+			if _, ok := s.m["lab04/dsn"]; ok {
+				t.Error("put a templated Secret's value back as if it were the remote value")
 			}
 			for key, want := range tt.want {
 				var got map[string]string

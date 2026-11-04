@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/kube"
 	"github.com/chanupen/devops-lab/internal/labs"
@@ -73,21 +74,26 @@ type Options struct {
 	Labs      []labs.Lab
 	LabVerify func(ctx context.Context, step int) (labs.Result, error)
 	LabHint   func(step int) (int, string, error)
+	// DrillList are the drills in drills/; Drills runs them. Nil actions
+	// turn the drill keys into hints for the CLI.
+	DrillList []drills.Drill
+	Drills    DrillActions
 }
 
 // Screens, in tab order. The key is the screen's number in the design;
-// 4 and 6 come in later releases.
+// 6 comes in a later release.
 const (
 	screenHome = iota
 	screenStacks
 	screenLabs
+	screenDrills
 	screenOps
 )
 
 var screens = []struct {
 	key  string
 	name string
-}{{"1", "Home"}, {"2", "Stacks"}, {"3", "Labs"}, {"5", "Ops"}}
+}{{"1", "Home"}, {"2", "Stacks"}, {"3", "Labs"}, {"4", "Drills"}, {"5", "Ops"}}
 
 // data is what every screen renders from.
 type data struct {
@@ -103,6 +109,7 @@ type data struct {
 	// readOnly names the lab holding the lock while this TUI cannot act.
 	readOnly string
 	labs     []labs.Lab
+	drills   []drills.Drill
 	// branchChecked and branchGone record the deleted-branch check by
 	// revision. Maps, so copies of the model share them.
 	branchChecked map[string]bool
@@ -183,6 +190,7 @@ type Model struct {
 	home   homeModel
 	stacks stacksModel
 	labs   labsModel
+	drills drillsModel
 	ops    opsModel
 	help   bool
 	flash  string // shown in the ops strip until the next key
@@ -226,7 +234,7 @@ func New(opts Options) Model {
 		opts.Now = time.Now
 	}
 	d := data{cfg: opts.Config, st: opts.State, appURL: opts.AppURL, hint: opts.AccessHint, cfgPath: opts.ConfigPath, deps: map[string][]string{},
-		branchChecked: map[string]bool{}, branchGone: map[string]bool{}, readOnly: opts.ReadOnly, labs: opts.Labs}
+		branchChecked: map[string]bool{}, branchGone: map[string]bool{}, readOnly: opts.ReadOnly, labs: opts.Labs, drills: opts.DrillList}
 	for _, s := range opts.Catalog {
 		d.order = append(d.order, s.Name)
 		d.deps[s.Name] = s.DependsOn
@@ -236,7 +244,7 @@ func New(opts Options) Model {
 			d.order = order
 		}
 	}
-	return Model{opts: opts, d: d, stacks: newStacksModel(), labs: newLabsModel(), width: 100, height: 30,
+	return Model{opts: opts, d: d, stacks: newStacksModel(), labs: newLabsModel(), drills: newDrillsModel(), width: 100, height: 30,
 		events: make(chan tea.Msg, 1), opEvents: make(chan tea.Msg, 1), gen: 1, lease: &lease{release: opts.Release}}
 }
 
@@ -440,7 +448,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ticks%unitsEvery == 0 {
 			units = m.checkUnits()
 		}
-		return m, tea.Batch(m.checkFiles(), c, units)
+		var drill tea.Cmd
+		m, drill = m.drillTick()
+		return m, tea.Batch(m.checkFiles(), c, units, drill)
 	case claimMsg:
 		m.claiming = false
 		var busy *state.BusyError
@@ -459,6 +469,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.confirmFor(msg), nil
 	case labVerifyMsg, labHintMsg:
 		return m.labDone(msg)
+	case drillMsg:
+		return m.drillDone(msg)
 	case reportMsg:
 		m.flash = ""
 		lines := newRing(logLines)
@@ -535,9 +547,12 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		c := m.confirm
 		m.confirm = nil
 		if k == "y" || k == "Y" {
+			if c.drill != nil {
+				return m.runDrill(*c.drill)
+			}
 			return m.request(c.req)
 		}
-		m.flash = "cancelled: " + c.req.Command()
+		m.flash = "cancelled: " + c.command()
 		return m, nil
 	case m.palette != nil:
 		switch k {
@@ -583,7 +598,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	case "?":
 		m.help = true
-	case "4", "6":
+	case "6":
 		m.flash = "screen " + k + " comes in a later release"
 	case ":":
 		m.palette = newPalette(m.d.order)
@@ -602,6 +617,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case screenLabs:
 			return m.labsKey(k)
+		case screenDrills:
+			return m.drillsKey(k)
 		case screenOps:
 			if k == "enter" {
 				return m.openOp()
@@ -699,8 +716,11 @@ func (m Model) View() string {
 		}
 		leftW := leftWidth(left, w)
 		rightW := w - leftW - 1
-		if m.screen == screenLabs {
+		if m.screen == screenLabs || m.screen == screenDrills {
 			l, r := m.labs.view(&m.d, m.now(), bodyH)
+			if m.screen == screenDrills {
+				l, r = m.drills.view(&m.d, m.now())
+			}
 			left = l(0)
 			leftW = leftWidth(left, w)
 			rightW = w - leftW - 1
@@ -727,6 +747,9 @@ func (m Model) header() string {
 	note := ""
 	if d.readOnly != "" {
 		note = "  " + warn.Render("read-only: another lab is running ("+holderPID(d.readOnly)+")")
+	}
+	if dh := drillHeader(d, m.now()); dh != "" {
+		note += "  " + dh
 	}
 	return fmt.Sprintf("%s%s  mode: %s  ctx: %s  health: %s  rev: %s  ttl: —",
 		lipgloss.NewStyle().Bold(true).Reverse(true).Render(" lab "), note, d.mode(), ctx, health(d), revision(d))
@@ -820,7 +843,7 @@ func (m Model) tabs() string {
 // else the latest operation.
 func (m Model) opsStrip() string {
 	if m.confirm != nil {
-		return " " + warn.Render(m.confirm.question) + "  y/N  " + faint.Render("$ "+m.confirm.req.Command())
+		return " " + warn.Render(m.confirm.question) + "  y/N  " + faint.Render("$ "+m.confirm.command())
 	}
 	if m.op != nil {
 		s := " ops ▸ "
@@ -867,10 +890,14 @@ func (m Model) hints() string {
 		return "j/k scroll  n/p next/previous step  v verify  h hint  esc back  ? help  q quit"
 	case m.screen == screenLabs:
 		return "j/k move  enter current step  v verify  h hint  n/p steps  ? help  q quit"
+	case m.screen == screenDrills && m.d.st.ActiveDrill != nil:
+		return "a found it (ack)  v verify  h hint  x abort  ? help  q quit"
+	case m.screen == screenDrills:
+		return "j/k move  enter start  R random drill  ? help  q quit"
 	case m.d.readOnly != "":
-		return "read-only: views and reports only  1 home  2 stacks  3 labs  5 ops  : palette  K k9s  ? help  q quit"
+		return "read-only: views and reports only  1 home  2 stacks  3 labs  4 drills  5 ops  : palette  K k9s  ? help  q quit"
 	default:
-		return "1 home  2 stacks  3 labs  5 ops  U up  : palette  K k9s  ? help  q quit"
+		return "1 home  2 stacks  3 labs  4 drills  5 ops  U up  : palette  K k9s  ? help  q quit"
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net"
 	"os"
 	"regexp"
 	"slices"
@@ -24,6 +26,8 @@ import (
 const K8sVersion = "1.36"
 
 var minorVersion = regexp.MustCompile(`^1\.[0-9]{1,3}$`)
+
+var hostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
 // Allowed values, in documentation order.
 var (
@@ -52,6 +56,16 @@ type Config struct {
 	K8sVersion  string   `yaml:"k8sVersion"`
 	Repo        Repo     `yaml:"repo"`
 	Cloud       Cloud    `yaml:"cloud"`
+	Zot         Zot      `yaml:"zot"`
+}
+
+// Zot holds settings for the local image cache (lab-zot).
+type Zot struct {
+	// AddHosts pins host names to addresses inside lab-zot only (Podman's
+	// --add-host), for example a faster GitHub CDN address for
+	// pkg-containers.githubusercontent.com when DNS returns a slow one
+	// (lab doctor measures it). The host's /etc/hosts is never touched.
+	AddHosts map[string]string `yaml:"addHosts"`
 }
 
 // Repo is the Git repository Argo CD (or Flux) syncs from. The lab always
@@ -161,6 +175,14 @@ func (c Config) Validate() error {
 	}
 	if c.Repo.SSHKeyFile != "" && !IsSSHURL(c.Repo.URL) {
 		errs = append(errs, fmt.Errorf("repo.url %q: a deploy key needs an SSH URL such as git@github.com:owner/repo.git", c.Repo.URL))
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Zot.AddHosts)) {
+		if !hostName.MatchString(name) {
+			errs = append(errs, fmt.Errorf("zot.addHosts: %q is not a host name", name))
+		}
+		if net.ParseIP(c.Zot.AddHosts[name]) == nil {
+			errs = append(errs, fmt.Errorf("zot.addHosts.%s: %q is not an IP address", name, c.Zot.AddHosts[name]))
+		}
 	}
 	if c.Mode == "cloud" && c.Cloud.Owner == "" {
 		errs = append(errs, fmt.Errorf("cloud.owner is required in cloud mode (it becomes the owner tag)"))

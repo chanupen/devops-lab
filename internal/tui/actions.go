@@ -89,6 +89,15 @@ type (
 type confirmState struct {
 	req      Request
 	question string
+	drill    *drillReq // a drill start or abort instead of req
+}
+
+// command is the CLI command the question is about.
+func (c confirmState) command() string {
+	if c.drill != nil {
+		return c.drill.command()
+	}
+	return c.req.Command()
 }
 
 // startOp runs req in the background. Progress reaches Update in batches at

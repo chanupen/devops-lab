@@ -327,6 +327,45 @@ func TestRegistryContainerSpec(t *testing.T) {
 	}
 }
 
+// zot.addHosts reaches lab-zot's /etc/hosts and its config hash, so a
+// changed override replaces the container (and lab up re-applies the
+// registry stack); no overrides keep the hash lab-zot had before.
+func TestZotHostOverrides(t *testing.T) {
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.networks[KindNetwork] = true
+	p := testProvider(t, rt, &fakeClusters{nodes: map[string]int{}}, false)
+	p.opts.ZotHosts = map[string]string{"pkg-containers.githubusercontent.com": "185.199.111.133", "a.example.com": "10.0.0.1"}
+	if why, err := p.ZotStale(ctx); why != "" || err != nil {
+		t.Fatalf("ZotStale with no container = %q, %v; want nothing", why, err)
+	}
+	if err := p.Apply(ctx, "registry", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a.example.com:10.0.0.1", "pkg-containers.githubusercontent.com:185.199.111.133"}
+	if got := rt.created[0].HostAdd; !slices.Equal(got, want) {
+		t.Errorf("HostAdd = %v, want %v", got, want)
+	}
+	if body := createBody(rt.created[0]); !slices.Equal(body["hostadd"].([]string), want) {
+		t.Errorf("create body hostadd = %v", body["hostadd"])
+	}
+	rt.containers[ZotContainer] = runningZot(rt.created[0].Labels["lab.config-hash"])
+	if why, err := p.ZotStale(ctx); why != "" || err != nil {
+		t.Errorf("ZotStale right after apply = %q, %v", why, err)
+	}
+	p.opts.ZotHosts = nil
+	if why, _ := p.ZotStale(ctx); !strings.Contains(why, "zot.addHosts") {
+		t.Errorf("ZotStale after removing the overrides = %q, want a reason", why)
+	}
+	rt.containers[ZotContainer] = runningZot(currentHash(t))
+	if why, _ := p.ZotStale(ctx); why != "" {
+		t.Errorf("a lab-zot without overrides is stale: %q", why)
+	}
+	if _, ok := createBody(ContainerSpec{Name: "x"})["hostadd"]; ok {
+		t.Error("hostadd sent with no overrides")
+	}
+}
+
 func TestApplyCluster(t *testing.T) {
 	hash := currentHash(t)
 	tests := []struct {

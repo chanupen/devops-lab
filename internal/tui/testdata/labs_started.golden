@@ -1,5 +1,5 @@
  lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —                          
- 1 Home   2 Stacks   3 Labs   5 Ops                                                                 
+ 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops                                                      
 ───────────────────────────────────────────────────────────┬────────────────────────────────────────
  Labs                                                      │ Bootstrap Argo CD from scratch         
  ◐ 01  Bootstrap Argo CD from scratch  2/6                 │ 01-argocd-bootstrap · about 45m · begi…

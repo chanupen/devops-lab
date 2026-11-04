@@ -1,0 +1,30 @@
+ lab   drill: ? 01:00/30:00  mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: feat/x  ttl: —    
+ 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops                                                      
+──────────────────────────────┬─────────────────────────────────────────────────────────────────────
+ Drills                       │ A random drill  (which one shows when it ends)                      
+ ● bad-deploy  beginner       │ ◐ running 01:00 · 29:00 left · lab puts everything back at 02:54    
+ ● dns         intermediate   │ ○ the alert: not fired yet                                          
+ ● oom         intermediate   │ ○ detect: not yet · a when you have found it                        
+                              │ hints 0/4 · verify runs 0                                           
+                              │                                                                     
+                              │ The pager goes off: users of the sample app at                      
+                              │ https://podinfo.localtest.me:8443 report errors. Nobody says what   
+                              │ changed. Find what is broken, fix it the way the team runs this     
+                              │ cluster (GitOps through Argo CD), and run lab drills verify.        
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+                              │                                                                     
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
+ a found it (ack)  v verify  h hint  x abort  ? help  q quit                                        
