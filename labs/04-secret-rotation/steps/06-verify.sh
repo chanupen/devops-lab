@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Step 6: app_v1 is retired and its password rejected, and the traffic Job
-# ran through the whole rotation with zero failed requests.
+# Step 6: app_v1 is dropped (or NOLOGIN), none of its sessions is left, its
+# old password is rejected, and the traffic Job ran through the whole
+# rotation with zero failed requests.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
 need_cluster
 [ "$(sql "select rolcanlogin from pg_roles where rolname = 'app_v1'")" != t ] ||
-  fail "app_v1 can still log in: ALTER ROLE app_v1 NOLOGIN (or DROP ROLE app_v1)"
-n=$(sql "select count(*) from pg_stat_activity where usename = 'app_v1'")
-[ "$n" = 0 ] || fail "$n session(s) of app_v1 are still open: NOLOGIN stops new logins only; end them with pg_terminate_backend"
+  fail "app_v1 can still log in: DROP ROLE app_v1 (or ALTER ROLE app_v1 NOLOGIN)"
+# After a DROP ROLE, a session left open has no user name any more: count
+# client sessions whose role no longer exists too.
+n=$(sql "select count(*) from pg_stat_activity where backend_type = 'client backend'
+  and (usename = 'app_v1' or usesysid not in (select oid from pg_roles))")
+[ "$n" = 0 ] || fail "$n session(s) of app_v1 are still open: retiring a role stops new logins only; end them with pg_terminate_backend"
 prev=$(secret_value "$APP_SECRET" AWSPREVIOUS)
 [ -n "$prev" ] || fail "no previous version of $APP_SECRET to test the old password with"
 out=$(login "$(jq -r .username <<<"$prev")" "$(jq -r .password <<<"$prev")")

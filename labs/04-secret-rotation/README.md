@@ -37,7 +37,11 @@ Postgres has three kinds of role:
 | `app` | no | a group role that holds the app's privileges |
 | `app_v1`, `app_v2`, ... | yes | the app's logins, members of `app` |
 
-A rotation adds a new member of `app` and retires the old one. The privileges stay on `app`, so nothing else changes. While both members can log in, the old and the new password both work: those are the dual credentials that make a rotation safe.
+A rotation adds a new member of `app` and retires the old one. The privileges, and any table, belong to `app`, so nothing else changes and the old login role can be dropped. While both members can log in, the old and the new password both work: those are the dual credentials that make a rotation safe.
+
+AWS calls this the **alternating users** strategy, one of the two its Secrets Manager rotation functions offer. The other, **single user**, changes one user's password in place: it is simpler, but for a moment the database and the secret disagree, and clients with the old password fail. Secrets Manager keeps the versions apart with staging labels: `AWSCURRENT` is the value clients should use, `AWSPREVIOUS` the one before it, and a rotation function first writes the new value as `AWSPENDING`. In this lab you do by hand what such a function does: create the user, store the secret, test it, then retire the old user.
+
+Postgres in this lab ships its own `pg_hba.conf`: every TCP connection must give a password (`scram-sha-256`), 127.0.0.1 included, and only the local Unix socket is trusted. The init script and `kubectl exec ... psql -U postgres` use that socket. The image's default also trusts 127.0.0.1, which would make any password work from inside the pod and prove nothing.
 
 ## Step 1: Deploy the app and read its setup
 
@@ -91,7 +95,7 @@ Store `app_v2`'s username and password as the new value of `lab04/db/app`. Updat
 
 ### Hints
 - `aws secretsmanager put-secret-value --secret-id lab04/db/app --secret-string "$(jq -cn --arg p "$(cat ~/lab04/app_v2.password)" '{username: "app_v2", password: $p}')"`.
-- Secrets Manager keeps versions. The new one gets the label `AWSCURRENT` and the old one `AWSPREVIOUS`: `aws secretsmanager get-secret-value --secret-id lab04/db/app --version-stage AWSPREVIOUS`.
+- Secrets Manager keeps versions. `put-secret-value` moves the label `AWSCURRENT` to the new version and `AWSPREVIOUS` to the old one: `aws secretsmanager get-secret-value --secret-id lab04/db/app --version-stage AWSPREVIOUS`. Deleting and re-creating the secret would lose the previous version.
 - Order matters. If you update the secret before the role exists, the app cannot connect with the new credentials. This app then keeps its old connection pool, but many apps would fail.
 
 ### Expected result
@@ -102,7 +106,7 @@ Store `app_v2`'s username and password as the new value of `lab04/db/app`. Updat
 The app still uses `app_v1`, because ESO checks again only after its `refreshInterval`, an hour. Make ESO sync now. Then watch the Secret change, the kubelet update the file, and the app move to `app_v2`. Confirm that the pod is the same one as in step 1 and that it never restarted.
 
 ### Hints
-- ESO syncs at once when an ExternalSecret's annotations change: `kubectl -n lab04-app annotate externalsecret db-app force-sync=$(date +%s) --overwrite`. Lowering `refreshInterval` works too, but it also makes ESO call Secrets Manager more often from then on.
+- ESO syncs at once when an ExternalSecret's annotations change: `kubectl -n lab04-app annotate externalsecret db-app force-sync=$(date +%s) --overwrite`. This is a lab shortcut, so you do not wait an hour; see below for production.
 - `kubectl -n lab04-app get secret db-app -o jsonpath='{.data.username}' | base64 -d` shows the Secret. The kubelet updates the mounted files on its next sync, usually within a minute.
 - The app logs `moved to new credentials` when it switches: `kubectl -n lab04-app logs deployment/sample-db`.
 - Compare `.metadata.uid` and `.status.containerStatuses[0].restartCount` of the app's pod with step 1.
@@ -111,19 +115,21 @@ The app still uses `app_v1`, because ESO checks again only after its `refreshInt
 ### Expected result
 `/api/check` answers `{"user":"app_v2"}`. The pod's UID is the one you recorded, its `restartCount` is 0, and `sampledb_credential_reloads_total` is 1. The traffic Job still shows `failed=0`.
 
+In production nobody annotates ExternalSecrets by hand. `refreshInterval` sets how long a new secret can take to reach the pods, and it is a trade-off: each refresh is one `GetSecretValue` call per ExternalSecret, and Secrets Manager charges per API call (USD 0.05 per 10,000 at the time of writing). A thousand ExternalSecrets refreshed every minute make about 43 million calls a month; every hour, about 720,000. Pick the longest interval your rotation can wait for: with alternating users the old credentials keep working until you retire them, so retire them only after one full `refreshInterval`, plus a minute for the kubelet, has passed.
+
 ## Step 6: Retire the old role and prove it
 
-Stop `app_v1` from logging in, and end any session it still has. Then prove that its old password is rejected, and that the traffic Job saw no failed request through the whole rotation.
+Retire `app_v1`. First make sure none of its sessions is left; then drop the role. Prove that its old password is rejected, and that the traffic Job saw no failed request through the whole rotation.
 
 ### Hints
-- `ALTER ROLE app_v1 NOLOGIN;` blocks new logins and keeps the role, so you can undo it with `LOGIN` if something still used it. `DROP ROLE` is final.
-- `NOLOGIN` does not close open sessions. Look for them first: `SELECT pid, application_name FROM pg_stat_activity WHERE usename = 'app_v1';`. Then end them with `pg_terminate_backend(pid)`. The app closed its old pool when it switched, so there should be none.
-- To test a password, connect from inside the Postgres pod to its own IP: `kubectl -n lab04-app exec -it postgres-0 -- sh -c 'psql -h "$(hostname -i)" -U app_v1 -d app'`. Do not use 127.0.0.1 or the local socket: this Postgres image trusts those and never checks a password.
-- The old password is still in Secrets Manager, as the version `AWSPREVIOUS`.
+- Open connections survive a password change, a `NOLOGIN` and even a `DROP ROLE`: Postgres checks credentials only when a session starts. After a drop, such a session shows no user name in `pg_stat_activity` at all, so look before you drop. Look first: `SELECT pid, application_name, backend_start FROM pg_stat_activity WHERE usename = 'app_v1';`. The app closed its old pool when it switched, so there should be none. End any leftover with `SELECT pg_terminate_backend(pid) ...`.
+- `DROP ROLE app_v1;` works because `app_v1` owns nothing: the privileges were granted to `app`. If a role owns objects, Postgres refuses the drop; `REASSIGN OWNED BY app_v1 TO app;` and then `DROP OWNED BY app_v1;` (in each database) clear it first.
+- `ALTER ROLE app_v1 NOLOGIN;` is the reversible choice: it blocks new logins and keeps the role, so `LOGIN` undoes it if a forgotten client still needed it. Teams often use `NOLOGIN` for one rotation period, then drop the role at the next rotation.
+- Test the old password the way the app connects, through the Service: `kubectl -n lab04-app exec -it postgres-0 -- psql -h postgres.lab04-app.svc -U app_v1 -d app`. The old password is in Secrets Manager as the version `AWSPREVIOUS`.
 - `kubectl -n lab04-traffic logs job/traffic | grep -c FAILED` counts failed requests.
 
 ### Expected result
-Logging in as `app_v1` fails with `role "app_v1" is not permitted to log in`. The app answers as `app_v2`, and the traffic Job's latest line still says `failed=0`.
+`pg_stat_activity` shows no `app_v1` session, the role is gone, and logging in with the old credentials fails with `password authentication failed for user "app_v1"`. The app answers as `app_v2`, and the traffic Job's latest line still says `failed=0`.
 
 ## Why a file, and why no subPath
 
@@ -133,6 +139,6 @@ Environment variables and `subPath` mounts can both carry a Secret, but neither 
 - **subPath mounts** are bind mounts of one file, made when the container starts. The kubelet updates a Secret volume by writing a new directory and swapping a symlink (`..data`) to it. A subPath mount still points at the old file, so the container never sees the change.
 - **A whole Secret volume, without subPath**, follows the symlink swap. The kubelet updates it within about a minute, and an app that re-reads its files, as this one does every 2 seconds, picks up the change without a restart.
 
-The app does one more thing: it opens a pool with the new credentials and switches only once that works. If the new credentials fail, it keeps the old pool and logs why. That is why the order is: role first, then secret, then revoke.
+The app does one more thing: it opens a pool with the new credentials and switches only once that works. If the new credentials fail, it keeps the old pool and logs why. That is why the order is: new role first, then the secret, then retire the old role.
 
 `lab labs reset` deletes `lab04-app`, `lab04-traffic` and the two `lab04/` secrets in Secrets Manager. Your `~/lab04` directory stays.

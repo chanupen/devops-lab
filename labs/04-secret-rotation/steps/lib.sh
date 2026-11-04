@@ -45,14 +45,14 @@ sql() {
   kubectl -n "$NS" exec postgres-0 -c postgres -- psql -U postgres -d app -tAc "$1" 2>/dev/null
 }
 
-# login <user> <password>: connect as user over the pod's own IP, where
-# Postgres checks the password (127.0.0.1 is trusted, so it proves nothing).
+# login <user> <password>: connect as user through the Service, as the app
+# does; the lab's pg_hba.conf asks every TCP connection for a password.
 # Prints current_user, or Postgres's error. The password goes on stdin.
 login() {
   # The single quotes are on purpose: the pod's shell expands these.
   # shellcheck disable=SC2016
-  printf '%s\n' "$2" | kubectl -n "$NS" exec -i postgres-0 -c postgres -- sh -c \
-    'read -r PGPASSWORD; export PGPASSWORD; psql -h "$(hostname -i | cut -d" " -f1)" -U "$1" -d app -tAc "select current_user" 2>&1 | tail -1' _ "$1"
+  printf '%s\n' "$2" | kubectl -n "$NS" exec -i postgres-0 -c postgres -- env U="$1" sh -c \
+    'read -r PGPASSWORD; export PGPASSWORD; psql -h postgres.lab04-app.svc -U "$U" -d app -tAc "select current_user" 2>&1 | tail -1'
 }
 
 # api <path>: GET the app through the API server's service proxy.
