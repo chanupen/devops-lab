@@ -69,6 +69,8 @@ type System struct {
 	// MotoSecrets counts the secrets Moto holds (Secrets Manager
 	// ListSecrets on 127.0.0.1:4566); nil checks only that it runs.
 	MotoSecrets func(ctx context.Context) (int, error)
+	// GHCR measures ghcr.io blob downloads; nil skips the check.
+	GHCR GHCRProbe
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -121,8 +123,10 @@ type Options struct {
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
 	// Stacks are the stacks deployed, from the state file.
-	Stacks  []string
-	Timeout time.Duration // per check
+	Stacks []string
+	// ZotHosts are lab.yaml's zot.addHosts (name -> address in lab-zot).
+	ZotHosts map[string]string
+	Timeout  time.Duration // per check
 }
 
 // Check is one named host check.
@@ -157,6 +161,7 @@ func Checks() []Check {
 		{"image cache", unitCheck("image cache", "lab-zot")},
 		{"lab registry", checkLabRegistry},
 		{"moto", checkMoto},
+		{"ghcr.io download", checkGHCR},
 		{"k8s support", checkK8sSupport},
 	}
 }

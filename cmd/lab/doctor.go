@@ -53,7 +53,10 @@ func newDoctorCmd() *cobra.Command {
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
+					opts.ZotHosts = cfg.Zot.AddHosts
 				}
+				repo, digest := local.ZotImageBlob()
+				sys.GHCR = doctor.HostGHCRProbe{Repo: repo, Digest: digest}
 				opts.Stacks = deployedStacks()
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
