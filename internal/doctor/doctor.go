@@ -153,6 +153,7 @@ func Checks() []Check {
 		{"scratch clusters", checkScratchClusters},
 		{"image cache", unitCheck("image cache", "lab-zot")},
 		{"lab registry", checkLabRegistry},
+		{"moto", checkMoto},
 		{"k8s support", checkK8sSupport},
 	}
 }

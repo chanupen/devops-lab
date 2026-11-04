@@ -162,3 +162,42 @@ func TestK8sSupportCheck(t *testing.T) {
 		})
 	}
 }
+
+// Moto is checked only while the secrets stack is deployed; an empty Moto
+// (restarted since lab up) is a warning, since lab up re-seeds it.
+func TestCheckMoto(t *testing.T) {
+	moto := Unit{Kind: "aws emulator", Name: "lab-moto", Nodes: 1, Running: true}
+	seeded := `{"secretsmanager":{"FakeSecret":[{"name":"lab/sample-db/app"}]}}`
+	tests := []struct {
+		name   string
+		stacks []string
+		units  []Unit
+		code   int
+		body   string
+		err    error
+		want   Status
+		text   string
+	}{
+		{"not deployed", []string{"core"}, nil, 0, "", nil, Skip, "not deployed"},
+		{"missing", []string{"secrets"}, nil, 0, "", nil, Fail, "lab-moto is missing"},
+		{"stopped", []string{"secrets"}, []Unit{{Kind: "aws emulator", Name: "lab-moto"}}, 0, "", nil, Stopped, "stopped"},
+		{"no answer", []string{"secrets"}, []Unit{moto}, 0, "", errors.New("connection refused"), Fail, "no answer"},
+		{"http error", []string{"secrets"}, []Unit{moto}, 500, "", nil, Fail, "HTTP 500"},
+		{"empty after restart", []string{"secrets"}, []Unit{moto}, 200, "{}", nil, Warn, "holds no secrets"},
+		{"seeded", []string{"secrets"}, []Unit{moto}, 200, seeded, nil, OK, "1 secret(s)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sys := System{
+				Units: func(context.Context) ([]Unit, error) { return tt.units, nil },
+				HTTPGet: func(context.Context, string) (int, []byte, error) {
+					return tt.code, []byte(tt.body), tt.err
+				},
+			}
+			r := checkMoto(context.Background(), sys, Options{Stacks: tt.stacks})
+			if r.Status != tt.want || !strings.Contains(r.Detail, tt.text) {
+				t.Errorf("checkMoto = %v %q, want %v %q", r.Status, r.Detail, tt.want, tt.text)
+			}
+		})
+	}
+}

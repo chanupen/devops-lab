@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -145,4 +146,52 @@ func checkK8sSupport(_ context.Context, _ System, opts Options) Result {
 			"%s", strings.Join(notes, "; "))
 	}
 	return ok("every deployed component states support for Kubernetes %s", opts.K8sVersion)
+}
+
+// motoData is Moto's state dump on the host (local.MotoEndpointHost). The
+// check counts secrets in it and never prints a value.
+const motoData = "http://127.0.0.1:4566/moto-api/data.json"
+
+// checkMoto reports the local AWS emulator while the secrets stack is
+// deployed: running, answering on 127.0.0.1:4566 and holding secrets.
+// Moto keeps no state, so after a restart it is empty until lab up
+// re-seeds it from the Secrets ESO keeps in the cluster.
+func checkMoto(ctx context.Context, sys System, opts Options) Result {
+	if !slices.Contains(opts.Stacks, "secrets") {
+		return Result{Status: Skip, Detail: "secrets stack not deployed"}
+	}
+	units, r, listed := listUnits(ctx, sys)
+	if !listed {
+		return r
+	}
+	i := slices.IndexFunc(units, func(u Unit) bool { return u.Kind == "aws emulator" && u.Name == "lab-moto" })
+	switch {
+	case i < 0:
+		return fail("lab up --stacks secrets", "lab-moto is missing, but the secrets stack is deployed")
+	case !units[i].Running:
+		return stopped("lab up (starts lab-moto and re-seeds it)", "stopped")
+	}
+	if sys.HTTPGet == nil {
+		return ok("running")
+	}
+	code, body, err := sys.HTTPGet(ctx, motoData)
+	if err != nil {
+		return fail("podman restart lab-moto, then lab up", "no answer on 127.0.0.1:4566: %s", firstLine(err.Error()))
+	}
+	if code != 200 {
+		return fail("podman restart lab-moto, then lab up", "HTTP %d from 127.0.0.1:4566", code)
+	}
+	var data struct {
+		SecretsManager struct {
+			FakeSecret []json.RawMessage `json:"FakeSecret"`
+		} `json:"secretsmanager"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return warn("", "answered on 127.0.0.1:4566 but its state is unreadable")
+	}
+	n := len(data.SecretsManager.FakeSecret)
+	if n == 0 {
+		return warn("lab up (re-seeds Moto from the cluster's Secrets)", "running, but holds no secrets: restarted since the last lab up?")
+	}
+	return ok("running on 127.0.0.1:4566, %d secret(s)", n)
 }
