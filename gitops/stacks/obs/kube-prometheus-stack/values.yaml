@@ -13,6 +13,20 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
     probeSelectorNilUsesHelmValues: false
+  # Components whose charts would need the ServiceMonitor CRD before obs
+  # exists (core, secrets): obs scrapes them itself. A missing target is
+  # harmless while its stack is down.
+  additionalServiceMonitors:
+    - name: cert-manager
+      namespaceSelector: {matchNames: [cert-manager]}
+      selector:
+        matchLabels: {app.kubernetes.io/name: cert-manager, app.kubernetes.io/component: controller}
+      endpoints: [{port: http-metrics, interval: 30s}]
+    - name: external-secrets
+      namespaceSelector: {matchNames: [external-secrets]}
+      selector:
+        matchLabels: {app.kubernetes.io/name: external-secrets}
+      endpoints: [{port: metrics, interval: 30s}]
 
 alertmanager:
   enabled: true
@@ -61,9 +75,13 @@ grafana:
 # KubePodCrashLooping waits 15 minutes upstream; most crash loops are
 # fixed sooner than that, so the lab's alert would rarely fire. 5 minutes
 # is still long enough to skip a pod that restarts once.
+# KubeNodeNotReady waits 15 minutes upstream, longer than a node-loss
+# drill; 2 minutes still skips a kubelet restart.
 customRules:
   KubePodCrashLooping:
     for: 5m
+  KubeNodeNotReady:
+    for: 2m
 
 # Alerts kube-prometheus-stack does not have, for faults the drills
 # (drills/) inject. Each drill names the alert that should catch it.
@@ -95,3 +113,87 @@ additionalPrometheusRulesMap:
             annotations:
               summary: No CoreDNS instance is up.
               description: Service discovery by name fails across the cluster; check the coredns Deployment in kube-system.
+          # cert-expiry: cert-manager renews a certificate at its renewal
+          # time. Still not renewed two minutes later means issuance fails,
+          # and the certificate runs out at its expiry time.
+          - alert: CertificateExpiringSoon
+            expr: |
+              time() - max by (namespace, name) (certmanager_certificate_renewal_timestamp_seconds) > 120
+              and on (namespace, name)
+              max by (namespace, name) (certmanager_certificate_expiration_timestamp_seconds) > time()
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} is past its renewal time and was not renewed.
+              description: cert-manager cannot issue it again; it expires at its notAfter. kubectl describe certificate, then its CertificateRequest and Issuer.
+          - alert: CertificateNotReady
+            expr: max by (namespace, name) (certmanager_certificate_ready_status{condition="False"}) == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} is not Ready.
+              description: Its Secret is missing, expired or does not match the spec; kubectl describe certificate.
+          # secret-drift: ESO cannot read an ExternalSecret's remote secret.
+          - alert: ExternalSecretSyncFailed
+            expr: max by (namespace, name) (externalsecret_status_condition{condition="Ready", status="False"}) == 1
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: ExternalSecret {{ $labels.namespace }}/{{ $labels.name }} cannot sync.
+              description: Its Kubernetes Secret keeps the last values it synced; kubectl describe externalsecret shows the provider's error.
+  # slow-db: sample-db's latency SLO, the pattern of lab 3 (SRE workbook
+  # multiwindow, multi-burn-rate). 99% of /api/check requests answer
+  # within 250 ms, over 30 days.
+  lab-slo-sample-db:
+    groups:
+      - name: lab-slo-sample-db
+        rules:
+          - record: sampledb:slo:objective_ratio
+            expr: vector(0.99)
+          - record: sampledb:sli_latency:error_ratio_rate2m
+            expr: |
+              1 - (
+                sum(rate(sampledb_http_request_duration_seconds_bucket{path="/api/check", le="0.25"}[2m]))
+                /
+                sum(rate(sampledb_http_request_duration_seconds_count{path="/api/check"}[2m]))
+              )
+          - record: sampledb:sli_latency:error_ratio_rate10m
+            expr: |
+              1 - (
+                sum(rate(sampledb_http_request_duration_seconds_bucket{path="/api/check", le="0.25"}[10m]))
+                /
+                sum(rate(sampledb_http_request_duration_seconds_count{path="/api/check"}[10m]))
+              )
+          - record: sampledb:sli_latency:error_ratio_rate1h
+            expr: |
+              1 - (
+                sum(rate(sampledb_http_request_duration_seconds_bucket{path="/api/check", le="0.25"}[1h]))
+                /
+                sum(rate(sampledb_http_request_duration_seconds_count{path="/api/check"}[1h]))
+              )
+          # Burn rate: the error ratio over the error budget (1%).
+          - alert: SampleDBLatencyFastBurn
+            expr: |
+              sampledb:sli_latency:error_ratio_rate10m > 14.4 * 0.01
+              and
+              sampledb:sli_latency:error_ratio_rate2m > 14.4 * 0.01
+            labels:
+              severity: page
+              slo: sample-db-latency
+            annotations:
+              summary: sample-db burns its latency error budget 14.4 times too fast.
+              description: More than 14.4% of /api/check requests take over 250 ms (10m and 2m windows); at this rate the 30-day budget is gone in about 2 days.
+          - alert: SampleDBLatencySlowBurn
+            expr: |
+              sampledb:sli_latency:error_ratio_rate1h > 6 * 0.01
+              and
+              sampledb:sli_latency:error_ratio_rate10m > 6 * 0.01
+            labels:
+              severity: page
+              slo: sample-db-latency
+            annotations:
+              summary: sample-db burns its latency error budget 6 times too fast.
+              description: More than 6% of /api/check requests take over 250 ms (1h and 10m windows).
