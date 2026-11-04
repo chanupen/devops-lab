@@ -6,7 +6,8 @@ postgres:
   storage: 1Gi
   storageClassName: ""   # the cluster's default
 credentials:
-  key: lab/sample-db/app # in Secrets Manager: {"username", "password"}
+  key: lab/sample-db/app        # in Secrets Manager: {"username", "password"}
+  adminKey: lab/sample-db/admin # Postgres's superuser; never rotated
   refreshInterval: 1m
 serviceMonitor:
   enabled: false

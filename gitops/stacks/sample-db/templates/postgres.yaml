@@ -1,5 +1,25 @@
-# Postgres. Its first start creates the app's role from the same Secret the
-# app reads; later rotations are done in SQL (lab 4 shows how).
+# Postgres. Its first start creates the superuser from db-admin, then the
+# init script makes the group role app and the app's login role from the
+# Secret the app reads. Later rotations are done in SQL (lab 4 shows how).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  10-app-role.sh: |
+    #!/bin/sh
+    # The group role app holds the privileges and cannot log in. The app
+    # logs in as a member of it, so a rotation adds a member and retires
+    # the old one without touching privileges.
+    set -eu
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      --set u="$APP_USER" --set p="$APP_PASSWORD" <<'SQL'
+    CREATE ROLE app NOLOGIN;
+    GRANT CONNECT, TEMPORARY ON DATABASE app TO app;
+    GRANT USAGE, CREATE ON SCHEMA public TO app;
+    CREATE ROLE :"u" LOGIN PASSWORD :'p' IN ROLE app;
+    SQL
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,9 +49,14 @@ spec:
           env:
             - {name: POSTGRES_DB, value: app}
             - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            # Read once, by the first start (initdb); never again.
             - name: POSTGRES_USER
-              valueFrom: {secretKeyRef: {name: db-app, key: username}}
+              valueFrom: {secretKeyRef: {name: db-admin, key: username}}
             - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: db-admin, key: password}}
+            - name: APP_USER
+              valueFrom: {secretKeyRef: {name: db-app, key: username}}
+            - name: APP_PASSWORD
               valueFrom: {secretKeyRef: {name: db-app, key: password}}
           ports: [{name: postgres, containerPort: 5432}]
           readinessProbe:
@@ -42,6 +67,10 @@ spec:
             limits: {memory: 256Mi}
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: init
+          configMap: {name: postgres-init}
   volumeClaimTemplates:
     - metadata:
         name: data

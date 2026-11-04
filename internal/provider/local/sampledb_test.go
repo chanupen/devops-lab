@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -146,5 +147,31 @@ func TestPodmanBuildAndPush(t *testing.T) {
 				t.Errorf("err = %v, want %q (requests %v)", err, tt.wantErr, *seen)
 			}
 		})
+	}
+}
+
+// The database gets two secrets: Postgres's superuser, never rotated, and
+// the app's login role app_v1, the one lab 4 rotates. Seeding twice keeps
+// the first values.
+func TestSeedSampleDB(t *testing.T) {
+	rt := newFakeRuntime()
+	rt.networks[KindNetwork] = true
+	rt.containers[MotoContainer] = ContainerInfo{Exists: true, Running: true}
+	p := testProvider(t, rt, &fakeClusters{nodes: map[string]int{}}, false)
+	s := &fakeSecrets{m: map[string]string{}}
+	p.secrets = s
+	for range 2 {
+		if err := p.SeedSampleDB(context.Background(), io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, user := range map[string]string{SampleDBAdminSecret: "postgres", SampleDBSecret: "app_v1"} {
+		var v map[string]string
+		if err := json.Unmarshal([]byte(s.m[name]), &v); err != nil || v["username"] != user || len(v["password"]) < 24 {
+			t.Errorf("%s = %q, want user %s and a random password", name, s.m[name], user)
+		}
+	}
+	if len(s.m) != 2 {
+		t.Errorf("secrets = %v, want 2", s.m)
 	}
 }

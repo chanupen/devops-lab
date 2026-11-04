@@ -16,10 +16,15 @@ import (
 
 // The sample-db app's image and its database credentials in Secrets
 // Manager. The stack reads them through ESO (the ClusterSecretStore).
+// Postgres's superuser has its own secret and is never rotated; the app
+// logs in as app_v1, a member of the NOLOGIN group role app that holds the
+// privileges, so a rotation adds app_v2 and retires app_v1 (lab 4).
 const (
-	SampleDBRepo   = "sample-db"
-	SampleDBSecret = "lab/sample-db/app" // {"username", "password"}
-	SampleDBUser   = "app"
+	SampleDBRepo        = "sample-db"
+	SampleDBSecret      = "lab/sample-db/app" // {"username", "password"}
+	SampleDBUser        = "app_v1"
+	SampleDBAdminSecret = "lab/sample-db/admin"
+	SampleDBAdminUser   = "postgres"
 )
 
 // BuildSampleDB builds the app from apps/sample-db through Podman's API,
@@ -57,18 +62,25 @@ func (p *Provider) BuildSampleDB(ctx context.Context, log io.Writer) (string, er
 	return ref, nil
 }
 
-// SeedSampleDB creates the app's database credentials in Moto unless they
-// exist. Postgres takes them at its first start; the app reads them from
-// the Secret ESO makes.
+// SeedSampleDB creates the database's admin and app credentials in Moto
+// unless they exist. Postgres takes them at its first start; the app reads
+// its own from the Secret ESO makes.
 func (p *Provider) SeedSampleDB(ctx context.Context, log io.Writer) error {
 	if err := p.motoReady(ctx, log); err != nil {
 		return err
 	}
-	created, err := SeedCredentials(ctx, p.secrets, SampleDBSecret, SampleDBUser)
-	if created {
-		logf(log, "created %s in %s with a random password", SampleDBSecret, MotoContainer)
+	for _, s := range []struct{ name, user string }{
+		{SampleDBAdminSecret, SampleDBAdminUser}, {SampleDBSecret, SampleDBUser},
+	} {
+		created, err := SeedCredentials(ctx, p.secrets, s.name, s.user)
+		if err != nil {
+			return err
+		}
+		if created {
+			logf(log, "created %s in %s with a random password", s.name, MotoContainer)
+		}
 	}
-	return err
+	return nil
 }
 
 // manifestDigest asks the lab registry for the digest of repo:tag.
