@@ -2,9 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -192,5 +201,47 @@ func TestHandler(t *testing.T) {
 	newHandler(db, m).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/check", nil))
 	if got := testutil.ToFloat64(m.dbErrors); got != 1 {
 		t.Errorf("db errors = %v, want 1", got)
+	}
+}
+
+// The HTTPS listener serves the key pair in its directory and picks up a
+// renewed one without a restart.
+func TestCertFilesReload(t *testing.T) {
+	dir := t.TempDir()
+	write := func(cn string, mod time.Time) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn},
+			NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kb, _ := x509.MarshalECPrivateKey(key)
+		_ = os.WriteFile(filepath.Join(dir, "tls.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+		_ = os.WriteFile(filepath.Join(dir, "tls.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600)
+		_ = os.Chtimes(filepath.Join(dir, "tls.crt"), mod, mod)
+	}
+	cn := func(c *tls.Certificate) string {
+		x, err := x509.ParseCertificate(c.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x.Subject.CommonName
+	}
+	c := newCertFiles(dir)
+	if _, err := c.get(nil); err == nil {
+		t.Fatal("no files: want an error")
+	}
+	t0 := time.Now().Add(-time.Hour)
+	write("first", t0)
+	if got, err := c.get(nil); err != nil || cn(got) != "first" {
+		t.Fatalf("first: %v", err)
+	}
+	write("second", t0.Add(time.Minute))
+	if got, err := c.get(nil); err != nil || cn(got) != "second" {
+		t.Fatalf("after renewal: %v", err)
 	}
 }

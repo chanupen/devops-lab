@@ -16,6 +16,7 @@ import (
 type Metrics struct {
 	reg        *prometheus.Registry
 	requests   *prometheus.CounterVec
+	duration   *prometheus.HistogramVec
 	dbErrors   prometheus.Counter
 	reconnects *prometheus.CounterVec
 	reloads    prometheus.Counter
@@ -30,6 +31,12 @@ func newMetrics() *Metrics {
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "sampledb_http_requests_total", Help: "HTTP requests by path and status code.",
 		}, []string{"path", "code"}),
+		// The latency SLO (the obs stack's lab-slo-sample-db rules) counts
+		// requests under 250 ms, so 0.25 must stay a bucket boundary.
+		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "sampledb_http_request_duration_seconds", Help: "HTTP request latency by path.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		}, []string{"path"}),
 		dbErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "sampledb_db_errors_total", Help: "Database queries that failed.",
 		}),
@@ -43,7 +50,7 @@ func newMetrics() *Metrics {
 			Name: "sampledb_db_user", Help: "1 for the database user the app connects as.",
 		}, []string{"user"}),
 	}
-	m.reg.MustRegister(m.requests, m.dbErrors, m.reconnects, m.reloads, m.user)
+	m.reg.MustRegister(m.requests, m.duration, m.dbErrors, m.reconnects, m.reloads, m.user)
 	return m
 }
 
@@ -65,7 +72,9 @@ func newHandler(db *DB, m *Metrics) http.Handler {
 	count := func(path string, h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			rw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+			start := time.Now()
 			h(rw, r)
+			m.duration.WithLabelValues(path).Observe(time.Since(start).Seconds())
 			m.requests.WithLabelValues(path, strconv.Itoa(rw.code)).Inc()
 		}
 	}

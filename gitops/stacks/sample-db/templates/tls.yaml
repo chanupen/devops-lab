@@ -1,0 +1,46 @@
+{{- if .Values.tls.enabled }}
+# sample-db's own CA: a self-signed root that cert-manager keeps in the
+# Secret sample-db-ca, and a CA Issuer that signs with it.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sample-db-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sample-db-ca
+spec:
+  isCA: true
+  commonName: sample-db-ca
+  secretName: sample-db-ca
+  duration: 87600h # 10 years
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {kind: Issuer, name: sample-db-selfsigned}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sample-db-ca
+spec:
+  ca:
+    secretName: {{ .Values.tls.caSecretName }}
+---
+# The app's serving certificate. cert-manager renews it at renewBefore;
+# the app picks up the renewed Secret without a restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sample-db-tls
+spec:
+  secretName: sample-db-tls
+  dnsNames:
+    - sample-db
+    - sample-db.{{ .Release.Namespace }}.svc
+  duration: {{ .Values.tls.duration }}
+  renewBefore: {{ .Values.tls.renewBefore }}
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  issuerRef: {kind: Issuer, name: {{ .Values.tls.issuer }}}
+{{- end }}

@@ -7,7 +7,11 @@ metadata:
   labels: {app: sample-db}
 spec:
   selector: {app: sample-db}
-  ports: [{name: http, port: 8080}]
+  ports:
+    - {name: http, port: 8080}
+    {{- if .Values.tls.enabled }}
+    - {name: https, port: 8443}
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,7 +36,14 @@ spec:
             - {name: DB_HOST, value: postgres}
             - {name: DB_NAME, value: app}
             - {name: CRED_DIR, value: /etc/db}
-          ports: [{name: http, containerPort: 8080}]
+            {{- if .Values.tls.enabled }}
+            - {name: TLS_DIR, value: /etc/tls}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 8080}
+            {{- if .Values.tls.enabled }}
+            - {name: https, containerPort: 8443}
+            {{- end }}
           livenessProbe:
             httpGet: {path: /healthz, port: http}
           readinessProbe:
@@ -47,6 +58,14 @@ spec:
             limits: {memory: 64Mi}
           volumeMounts:
             - {name: db, mountPath: /etc/db, readOnly: true}
+            {{- if .Values.tls.enabled }}
+            - {name: tls, mountPath: /etc/tls, readOnly: true}
+            {{- end }}
       volumes:
         - name: db
           secret: {secretName: db-app}
+        {{- if .Values.tls.enabled }}
+        # optional: the pod starts before cert-manager has issued it.
+        - name: tls
+          secret: {secretName: sample-db-tls, optional: true}
+        {{- end }}

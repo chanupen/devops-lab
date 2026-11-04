@@ -1,0 +1,34 @@
+{{- if .Values.client.enabled }}
+# Steady traffic for the latency SLO: /api/check twice a second, as a
+# client of the app would. Costs a few MiB.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-db-client
+  labels: {app: sample-db-client}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sample-db-client}
+  template:
+    metadata:
+      labels: {app: sample-db-client}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: client
+          image: {{ .Values.client.image }}
+          command: [sh, -c]
+          args:
+            - while true; do curl -s -o /dev/null --max-time 5 http://sample-db:8080/api/check; sleep 0.5; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 2m, memory: 4Mi}
+            limits: {memory: 16Mi}
+{{- end }}
