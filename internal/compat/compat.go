@@ -79,7 +79,9 @@ func TestedNotStated(v string, comps []Component, deployed func(stack string) bo
 //     v1.20.0-rc.1 (chart 3.10.0-rc.1), a release candidate.
 //   - External Secrets Operator 2.13 (chart 2.13.0): external-secrets.io's
 //     stability-support table lists Kubernetes 1.36 for 2.13 (one version;
-//     2.14 lists 1.37). ESO supports only its newest minor.
+//     2.14 lists 1.37). ESO supports only its latest release, and each
+//     release lists one or two Kubernetes minors, so a Kubernetes bump
+//     (k8sVersion, or a newer EKS choice) needs an ESO bump in the same PR.
 //   - Moto 5.2.5 (motoserver/moto) runs as a Podman container beside the
 //     cluster, so no Kubernetes range applies.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
