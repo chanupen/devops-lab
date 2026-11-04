@@ -9,6 +9,15 @@ metadata:
   name: postgres-init
   namespace: lab04-app
 data:
+  # Every TCP connection, 127.0.0.1 included, must give a password
+  # (scram-sha-256). Only the local Unix socket is trusted: the init
+  # script and an admin who runs kubectl exec use it. The image's own
+  # pg_hba.conf also trusts 127.0.0.1, which would let any password
+  # through from inside the pod.
+  pg_hba.conf: |
+    # TYPE  DATABASE  USER  ADDRESS  METHOD
+    local   all       all            trust
+    host    all       all   all      scram-sha-256
   10-app-role.sh: |
     #!/bin/sh
     set -eu
@@ -57,6 +66,7 @@ spec:
               valueFrom: {secretKeyRef: {name: db-app, key: username}}
             - name: APP_PASSWORD
               valueFrom: {secretKeyRef: {name: db-app, key: password}}
+          args: [postgres, -c, hba_file=/etc/postgresql/pg_hba.conf]
           ports: [{name: postgres, containerPort: 5432}]
           readinessProbe:
             exec: {command: [pg_isready, -U, postgres, -h, 127.0.0.1]}
@@ -67,8 +77,11 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
             - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: hba, mountPath: /etc/postgresql, readOnly: true}
       volumes:
         - name: data
           emptyDir: {}
         - name: init
-          configMap: {name: postgres-init}
+          configMap: {name: postgres-init, items: [{key: 10-app-role.sh, path: 10-app-role.sh}]}
+        - name: hba
+          configMap: {name: postgres-init, items: [{key: pg_hba.conf, path: pg_hba.conf}]}
