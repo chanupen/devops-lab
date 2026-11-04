@@ -201,8 +201,8 @@ func TestCatalogShape(t *testing.T) {
 			t.Errorf("%s does not depend on gitops", name)
 		}
 	}
-	// LocalStack is started by the local provider, never planned as a stack.
-	if g.Has("localstack") {
-		t.Error("localstack must not be a stack")
+	// Moto is started by the local provider, never planned as a stack.
+	if g.Has("moto") {
+		t.Error("moto must not be a stack")
 	}
 }

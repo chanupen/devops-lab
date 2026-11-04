@@ -411,8 +411,12 @@ func TestDefaultProviderRoutes(t *testing.T) {
 				t.Errorf("%s: Supports(%s) = %v, want %v", tt.gitops, s, p.Supports(s), tt.wantGitOps)
 			}
 		}
-		if p.Supports("secrets") {
-			t.Errorf("%s: secrets should not be routed yet", tt.gitops)
+		// secrets and sample-db need Moto and the image build too: routed
+		// only with GitOps, in local mode.
+		for _, s := range []string{"secrets", "sample-db"} {
+			if p.Supports(s) != tt.wantGitOps {
+				t.Errorf("%s: Supports(%s) = %v, want %v", tt.gitops, s, p.Supports(s), tt.wantGitOps)
+			}
 		}
 	}
 }

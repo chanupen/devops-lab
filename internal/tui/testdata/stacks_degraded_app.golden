@@ -13,8 +13,8 @@
  ○ ci          not deployed    │     +1 more condition                                              
  ○ policy      not deployed    │                                                                    
  ✕ sample-app  0/1 apps ready  │                                                                    
+ ○ sample-db   not deployed    │                                                                    
  ○ scaling     not deployed    │                                                                    
-                               │                                                                    
                                │                                                                    
                                │                                                                    
                                │                                                                    

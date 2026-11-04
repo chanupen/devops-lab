@@ -5,8 +5,8 @@
  ◐ 01  Bootstrap Argo CD from scratch  2/6                 │ ● ● ◐ ○ ○ ○                            
  ○ 02  Build, scan and promote an image by retagging  0/6  │ ✕ not done yet: podinfo is OutOfSync,  
  ○ 03  SLO and burn-rate alerts for the sample app  0/7    │   not Synced: argocd app sync podinfo  
- ○ 05  Kyverno policy that blocks images without a digest …│                                        
-                                                           │ Create an Application named podinfo in 
+ ○ 04  Rotate a database password without restarting the a…│                                        
+ ○ 05  Kyverno policy that blocks images without a digest …│ Create an Application named podinfo in 
                                                            │ the argocd namespace. Its source is    
                                                            │ the Helm chart at path charts/podinfo  
                                                            │ in                                     

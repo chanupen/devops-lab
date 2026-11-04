@@ -1,0 +1,52 @@
+# The app reads its credentials from files: the Secret is a volume (no
+# subPath), so the kubelet updates the files when ESO updates the Secret.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-db
+  labels: {app: sample-db}
+spec:
+  selector: {app: sample-db}
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-db
+  labels: {app: sample-db}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sample-db}
+  template:
+    metadata:
+      labels: {app: sample-db}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: {{ required "image is set by the sample-db stack (lab up --stacks sample-db)" .Values.image }}
+          env:
+            - {name: DB_HOST, value: postgres}
+            - {name: DB_NAME, value: app}
+            - {name: CRED_DIR, value: /etc/db}
+          ports: [{name: http, containerPort: 8080}]
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: db, mountPath: /etc/db, readOnly: true}
+      volumes:
+        - name: db
+          secret: {secretName: db-app}

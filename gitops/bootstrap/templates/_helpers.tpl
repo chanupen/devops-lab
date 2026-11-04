@@ -26,6 +26,7 @@ retry:
 - ghcr.io/stefanprodan/charts
 - ghcr.io/open-telemetry/opentelemetry-helm-charts
 - ghcr.io/kyverno/charts
+- ghcr.io/external-secrets/charts
 {{- end }}
 
 {{/* Metadata shared by every lab Application; pass (list . "name" "stack" "wave"). */}}

@@ -79,7 +79,7 @@ func TestGolden(t *testing.T) {
 		{"home_up", onMain, upCluster, nil, nil},
 		{"stacks_up", onMain, upCluster, []string{"2", "j", "j", "j"}, nil},
 		{"stacks_failed", failed, degraded, []string{"2", "/", "o", "b", "s", "enter"}, nil},
-		{"stacks_degraded_app", onMain, degraded, []string{"2", "G", "k"}, nil},
+		{"stacks_degraded_app", onMain, degraded, []string{"2", "G", "k", "k"}, nil},
 		{"home_deleted_branch", gone, upCluster, nil, func(m Model) Model { m.d.branchGone["feat/phase1-obs"] = true; return m }},
 		{"ops_log", failed, upCluster, []string{"5"}, nil},
 		{"ops_running", failed, upCluster, []string{"5"}, running},
@@ -90,7 +90,7 @@ func TestGolden(t *testing.T) {
 			m.d.readOnly = "lab up --stacks obs (pid 42 on /dev/pts/3, since 17:20)"
 			return m
 		}},
-		{"confirm_down", onMain, upCluster, []string{"2", "G", "k"}, func(m Model) Model {
+		{"confirm_down", onMain, upCluster, []string{"2", "G", "k", "k"}, func(m Model) Model {
 			m.confirm = &confirmState{req: Request{Down: true, Stacks: []string{"sample-app"}}, question: "Destroy sample-app?"}
 			return m
 		}},

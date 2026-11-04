@@ -79,8 +79,8 @@ func TestPlanUp(t *testing.T) {
 			name:        "fresh standard",
 			cfg:         cfgFor("local", "standard"),
 			st:          state.New(),
-			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app",
-			wantChanges: 9,
+			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app +sample-db",
+			wantChanges: 10,
 		},
 		{
 			name: "fully applied is all keep",
@@ -385,18 +385,18 @@ func TestPlanUpSupport(t *testing.T) {
 		{
 			name: "unsupported stacks are skipped with one warning", cfg: cfgFor("local", "standard"), supports: localSupports,
 			st:           state.New(),
-			want:         "+registry +cluster +gitops +core ~secrets +obs ~policy ~scaling +sample-app",
+			want:         "+registry +cluster +gitops +core ~secrets +obs ~policy ~scaling +sample-app ~sample-db",
 			wantChanges:  6,
-			wantWarnings: []string{"3 stacks skipped, not supported by the local provider yet: secrets, policy, scaling"},
+			wantWarnings: []string{"4 stacks skipped, not supported by the local provider yet: secrets, policy, scaling, sample-db"},
 			reasons:      map[string]string{"secrets": "not supported by the local provider yet"},
 		},
 		{
 			name: "stacks that need a skipped stack are skipped too", cfg: cfgFor("local", "full"), supports: allButSecrets,
 			st:           state.New(),
-			want:         "+registry +cluster +gitops +core ~secrets +obs +policy +scaling ~ci +chaos ~ai +sample-app",
+			want:         "+registry +cluster +gitops +core ~secrets +obs +policy +scaling ~ci +chaos ~ai +sample-app ~sample-db",
 			wantChanges:  9,
-			wantWarnings: []string{"3 stacks skipped, not supported by the local provider yet: secrets, ci, ai"},
-			reasons:      map[string]string{"ci": "needs secrets, which is skipped", "ai": "needs secrets, which is skipped"},
+			wantWarnings: []string{"4 stacks skipped, not supported by the local provider yet: secrets, ci, ai, sample-db"},
+			reasons:      map[string]string{"ci": "needs secrets, which is skipped", "ai": "needs secrets, which is skipped", "sample-db": "needs secrets, which is skipped"},
 		},
 		{
 			name: "minimal plus obs is all supported", cfg: minimalObs, supports: localSupports,
@@ -408,14 +408,14 @@ func TestPlanUpSupport(t *testing.T) {
 			name: "a deployed stack is never skipped", cfg: cfgFor("local", "standard"), supports: localSupports,
 			st: stateWith("local", map[string]string{"registry": state.Applied, "cluster": state.Applied, "gitops": state.Applied,
 				"core": state.Applied, "secrets": state.Applied, "obs": state.Applied, "sample-app": state.Applied}),
-			want:         "=registry =cluster =gitops =core =secrets =obs ~policy ~scaling =sample-app",
-			wantWarnings: []string{"2 stacks skipped, not supported by the local provider yet: policy, scaling"},
+			want:         "=registry =cluster =gitops =core =secrets =obs ~policy ~scaling =sample-app ~sample-db",
+			wantWarnings: []string{"3 stacks skipped, not supported by the local provider yet: policy, scaling, sample-db"},
 		},
 		{
 			name: "nil supports skips nothing", cfg: cfgFor("local", "standard"),
 			st:          state.New(),
-			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app",
-			wantChanges: 9,
+			want:        "+registry +cluster +gitops +core +secrets +obs +policy +scaling +sample-app +sample-db",
+			wantChanges: 10,
 		},
 	}
 	g := catalogGraph(t)

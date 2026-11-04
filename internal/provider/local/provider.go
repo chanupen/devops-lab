@@ -1,8 +1,8 @@
 // Package local is the local-mode provider: kind on rootless Podman, with Zot
 // as a pull-through registry cache.
 //
-// LocalStack is not a stack; Secrets() and ObjectStore() will start it when a
-// stack such as secrets needs those APIs.
+// Moto, the AWS API emulator, is not a stack: the provider starts it as a
+// container on the kind network when a stack such as secrets needs it.
 package local
 
 import (
@@ -30,6 +30,8 @@ type Options struct {
 	Kubeconfig string // where the lab cluster's kubeconfig is written
 	K8sVersion string // lab.yaml k8sVersion; picks the node image (NodeImage)
 	Purge      bool   // Destroy("registry") also removes the cache volume
+	// RepoRoot is the repo; sample-db's image is built from apps/sample-db.
+	RepoRoot string
 	// Stacks are the lab's active stacks (profile, extraStacks, asked for,
 	// deployed): only their rows of the compatibility table limit
 	// k8sVersion. Nil applies every local row.
@@ -49,6 +51,12 @@ type Provider struct {
 	zotReady func(ctx context.Context, log io.Writer) error
 	// nodesReady waits until the cluster in kubeconfig has want Ready nodes.
 	nodesReady func(ctx context.Context, kubeconfig string, want int, log io.Writer) error
+	// secrets is Secrets Manager on Moto; kube connects to the lab cluster.
+	secrets Secrets
+	kube    func() (*kube.Clients, error)
+	// registry is the lab registry's API from the host; client calls it.
+	registry string
+	client   *http.Client
 }
 
 // New returns a provider using the rootless Podman socket and the kind library.
@@ -68,6 +76,16 @@ func newProvider(rt Runtime, clusters func(io.Writer) Clusters, opts Options) *P
 			return waitHTTP(ctx, fmt.Sprintf("http://127.0.0.1:%d/v2/", ZotPort), 60*time.Second, log)
 		},
 		nodesReady: waitNodesReady,
+		secrets:    NewMotoSecrets(MotoEndpointHost),
+		registry:   fmt.Sprintf("http://127.0.0.1:%d", ZotPort),
+		client:     &http.Client{Timeout: 30 * time.Second},
+		kube: func() (*kube.Clients, error) {
+			cfg, err := kube.RESTConfig(opts.Kubeconfig)
+			if err != nil {
+				return nil, err
+			}
+			return kube.NewClients(kube.WarningsTo(cfg, io.Discard))
+		},
 	}
 }
 
@@ -92,7 +110,7 @@ func (p *Provider) Supports(stack string) bool {
 }
 
 // Stacks lists the stacks the local provider runs itself.
-func Stacks() []string { return []string{"registry", "cluster"} }
+func Stacks() []string { return []string{"registry", "cluster", "secrets"} }
 
 // AppURL is how a Gateway hostname is reached in local mode: the HTTPS port
 // the kind control plane publishes on 127.0.0.1.
@@ -122,6 +140,9 @@ func (p *Provider) Apply(ctx context.Context, stack string, log io.Writer) error
 		return p.applyRegistry(ctx, log)
 	case "cluster":
 		return p.applyCluster(ctx, log)
+	case "secrets":
+		// The emulator only; ESO and the store are GitOps apps.
+		return p.ensureMoto(ctx, log)
 	}
 	return fmt.Errorf("%s: %w", stack, ErrUnsupported)
 }
@@ -131,6 +152,8 @@ func (p *Provider) Destroy(ctx context.Context, stack string, log io.Writer) err
 	switch stack {
 	case "registry":
 		return p.destroyRegistry(ctx, log)
+	case "secrets":
+		return p.destroyMoto(ctx, log)
 	case "cluster":
 		return p.destroyCluster(log)
 	}

@@ -64,6 +64,9 @@ func Units(cs []ContainerInfo) []Unit {
 		case c.Name == ZotContainer:
 			cache = &Unit{Kind: "image cache", Name: c.Name}
 			u = cache
+		case c.Name == MotoContainer:
+			others = append(others, Unit{Kind: "aws emulator", Name: c.Name})
+			u = &others[len(others)-1]
 		default:
 			others = append(others, Unit{Kind: "container", Name: c.Name})
 			u = &others[len(others)-1]
@@ -114,7 +117,7 @@ func HostUnits(ctx context.Context) ([]Unit, error) {
 // upOwns reports whether lab up starts the unit: the main cluster or the
 // image cache.
 func (u Unit) upOwns() bool {
-	return u.Kind == "image cache" || (u.Kind == "cluster" && u.Name == ClusterName)
+	return u.Kind == "image cache" || u.Kind == "aws emulator" || (u.Kind == "cluster" && u.Name == ClusterName)
 }
 
 // StartStopped starts the stopped containers lab up owns, the main
@@ -165,6 +168,17 @@ func (p *Provider) StartStopped(ctx context.Context, log io.Writer) ([]Unit, err
 			if err := p.nodesReady(ctx, p.opts.Kubeconfig, len(u.Containers), log); err != nil {
 				return started, fmt.Errorf("cluster %s after starting its nodes: %w", ClusterName, err)
 			}
+		}
+	}
+	// Moto keeps no state: after any restart (a reboot, or podman restart)
+	// it is empty. Put the lab's secrets back from the cluster's Secrets
+	// before ESO next refreshes, so they still match the passwords the
+	// databases hold. Secrets Moto has are left alone.
+	if m, err := p.rt.Container(ctx, MotoContainer); err != nil {
+		return started, err
+	} else if m.Running {
+		if err := p.reseed(ctx, log); err != nil {
+			return started, fmt.Errorf("re-seed %s: %w", MotoContainer, err)
 		}
 	}
 	return started, nil

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sample-db
+description: The lab's DB-backed sample app (apps/sample-db) and its Postgres, credentials from Secrets Manager through ESO.
+type: application
+version: 0.1.0

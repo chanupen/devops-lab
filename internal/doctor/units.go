@@ -146,3 +146,37 @@ func checkK8sSupport(_ context.Context, _ System, opts Options) Result {
 	}
 	return ok("every deployed component states support for Kubernetes %s", opts.K8sVersion)
 }
+
+// checkMoto reports the local AWS emulator while the secrets stack is
+// deployed: running, answering Secrets Manager on 127.0.0.1:4566 and
+// holding secrets. Moto keeps no state, so after a restart it is empty
+// until lab up re-seeds it from the Secrets ESO keeps in the cluster. It
+// asks the API (ListSecrets), not Moto's state dump, which still lists
+// deleted secrets.
+func checkMoto(ctx context.Context, sys System, opts Options) Result {
+	if !slices.Contains(opts.Stacks, "secrets") {
+		return Result{Status: Skip, Detail: "secrets stack not deployed"}
+	}
+	units, r, listed := listUnits(ctx, sys)
+	if !listed {
+		return r
+	}
+	i := slices.IndexFunc(units, func(u Unit) bool { return u.Kind == "aws emulator" && u.Name == "lab-moto" })
+	switch {
+	case i < 0:
+		return fail("lab up --stacks secrets", "lab-moto is missing, but the secrets stack is deployed")
+	case !units[i].Running:
+		return stopped("lab up (starts lab-moto and re-seeds it)", "stopped")
+	}
+	if sys.MotoSecrets == nil {
+		return ok("running")
+	}
+	n, err := sys.MotoSecrets(ctx)
+	switch {
+	case err != nil:
+		return fail("podman restart lab-moto, then lab up", "Secrets Manager on 127.0.0.1:4566 does not answer: %s", firstLine(err.Error()))
+	case n == 0:
+		return warn("lab up (re-seeds Moto from the cluster's Secrets)", "running, but holds no secrets: restarted since the last lab up?")
+	}
+	return ok("running on 127.0.0.1:4566, %d secret(s)", n)
+}

@@ -48,7 +48,7 @@ const (
 )
 
 // appStacks are the stacks rendered by the bootstrap chart.
-var appStacks = []string{"core", "obs", "policy", "sample-app"}
+var appStacks = []string{"core", "obs", "policy", "secrets", "sample-app", "sample-db"}
 
 // stackNamespaces are created by a stack's apps (CreateNamespace) and are not
 // removed by Argo CD, so destroying the stack deletes them.
@@ -56,6 +56,8 @@ var stackNamespaces = map[string][]string{
 	"core":       {"cert-manager", "envoy-gateway-system"},
 	"obs":        {ObsNamespace},
 	"policy":     {"kyverno"},
+	"secrets":    {"external-secrets"},
+	"sample-db":  {"sample-db"},
 	"sample-app": {"podinfo"},
 }
 
@@ -216,9 +218,19 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 	default:
 		logf(log, "updating Application %s (%s at %s)", RootApp, repo.URL, r.opts.Revision)
 		err := updateRoot(ctx, apps, func(u *unstructured.Unstructured) error {
-			// Keep the stacks already turned on; refresh repo, revision and mode.
-			stacks, _, _ := unstructured.NestedMap(u.Object, "spec", "source", "helm", "valuesObject", "stacks")
-			u.Object["spec"] = rootApp(r.opts.Mode, repo, r.opts.Revision, stacks).Object["spec"]
+			// Keep the stacks already turned on and the values stacks set
+			// (SetValue); refresh repo, revision and mode.
+			old, _, _ := unstructured.NestedMap(u.Object, "spec", "source", "helm", "valuesObject")
+			stacks, _, _ := unstructured.NestedMap(old, "stacks")
+			spec := rootApp(r.opts.Mode, repo, r.opts.Revision, stacks).Object["spec"]
+			u.Object["spec"] = spec
+			for k, v := range old {
+				if k != "mode" && k != "repo" && k != "stacks" {
+					if err := unstructured.SetNestedField(u.Object, v, "spec", "source", "helm", "valuesObject", k); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
 		})
 		if err != nil {
@@ -226,6 +238,19 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 		}
 	}
 	return r.waitApps(ctx, c, "", true, log)
+}
+
+// SetValue sets valuesObject.<key> on the app-of-apps, for a value a stack
+// knows only at apply time (sample-db's image digest). applyGitOps keeps it.
+func (r *Runner) SetValue(ctx context.Context, key string, value map[string]any, log io.Writer) error {
+	c, err := r.clients(log)
+	if err != nil {
+		return err
+	}
+	logf(log, "setting %s on Application %s", key, RootApp)
+	return updateRoot(ctx, c.Dynamic.Resource(kube.AppGVR).Namespace(Namespace), func(u *unstructured.Unstructured) error {
+		return unstructured.SetNestedField(u.Object, value, "spec", "source", "helm", "valuesObject", key)
+	})
 }
 
 // setStack turns a stack on or off in the app-of-apps and waits until Argo CD

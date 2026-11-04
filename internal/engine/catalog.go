@@ -8,8 +8,8 @@ import (
 // Catalog returns the lab's stacks. Mode-specific details (KEDA or Karpenter,
 // Zot or ECR) live in providers and gitops overlays, not here.
 //
-// LocalStack is not a stack: the local provider starts it from Secrets() and
-// ObjectStore() when a stack such as secrets needs those APIs.
+// Moto (the local AWS emulator) is not a stack: the local provider starts
+// it for the stacks that need an AWS API, such as secrets.
 func Catalog() []Stack {
 	return []Stack{
 		// Zot locally (pull-through cache), ECR in cloud. It comes before the
@@ -32,6 +32,10 @@ func Catalog() []Stack {
 		// Needs the Gateway from core. Its ServiceMonitor is applied only when obs
 		// is present (gitops overlay), so minimal stays small.
 		{Name: "sample-app", DependsOn: []string{"core", "registry"}},
+		// The DB-backed sample app and Postgres, for lab 4 and the drills. Its
+		// credentials come from Secrets Manager through ESO; its image from the
+		// lab registry.
+		{Name: "sample-db", DependsOn: []string{"secrets", "registry"}},
 	}
 }
 
@@ -39,8 +43,8 @@ func Catalog() []Stack {
 // their dependencies.
 var profileStacks = map[string][]string{
 	"minimal":  {"registry", "cluster", "gitops", "core", "sample-app"},
-	"standard": {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "sample-app"},
-	"full":     {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "ci", "chaos", "ai", "sample-app"},
+	"standard": {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "sample-app", "sample-db"},
+	"full":     {"registry", "cluster", "gitops", "core", "secrets", "obs", "policy", "scaling", "ci", "chaos", "ai", "sample-app", "sample-db"},
 }
 
 // ProfileStacks returns the stacks a profile asks for.

@@ -53,6 +53,8 @@ var childApps = map[string][]string{
 	"core":       {"cert-manager", "core-gateway", "envoy-gateway", "metrics-server"},
 	"obs":        {"kube-prometheus-stack", "loki", "obs-routes", "otel-collector"},
 	"policy":     {"kyverno", "kyverno-policies"},
+	"secrets":    {"external-secrets", "secrets-store"},
+	"sample-db":  {"sample-db"},
 	"sample-app": {"podinfo-backend", "podinfo-frontend", "sample-app-routes"},
 }
 
@@ -485,7 +487,7 @@ func TestExpand(t *testing.T) {
 
 func TestSupports(t *testing.T) {
 	r := newRunner(Options{}, nil, nil)
-	for stack, want := range map[string]bool{"gitops": true, "core": true, "obs": true, "policy": true, "sample-app": true, "cluster": false, "secrets": false} {
+	for stack, want := range map[string]bool{"gitops": true, "core": true, "obs": true, "policy": true, "sample-app": true, "secrets": true, "sample-db": true, "cluster": false, "scaling": false} {
 		if r.Supports(stack) != want {
 			t.Errorf("Supports(%s) != %v", stack, want)
 		}

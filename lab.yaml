@@ -2,7 +2,10 @@
 mode: local          # local | cloud
 profile: minimal     # minimal | standard | full
 extraStacks: [obs]   # on top of the profile; minimal + obs is what the local provider runs today.
-                     # Add policy (Kyverno, about 0.8 GiB more) for lab 5: [obs, policy]
+                     # Add policy (Kyverno, about 0.8 GiB more) for lab 5: [obs, policy].
+                     # secrets (ESO, with Moto as the local Secrets Manager, about 0.17 GiB)
+                     # and sample-db (Postgres and its app, about 0.03 GiB) for lab 4 and
+                     # the drills: [obs, secrets, sample-db].
 gitops: argocd       # argocd | flux
 k8sVersion: "1.36"   # the local lab; kind node image follows it. Must be in internal/compat (1.36 max: Argo CD 3.5)
 

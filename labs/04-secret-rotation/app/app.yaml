@@ -1,0 +1,54 @@
+# The sample-db app. It reads its credentials from files in /etc/db, a
+# Secret volume (no subPath), checks them every 2 seconds, and moves to new
+# ones without a restart once a connection with them works.
+# SAMPLE_DB_IMAGE: the image the sample-db stack runs, by digest.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-db
+  namespace: lab04-app
+spec:
+  selector: {app: sample-db}
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-db
+  namespace: lab04-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sample-db}
+  template:
+    metadata:
+      labels: {app: sample-db}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: SAMPLE_DB_IMAGE
+          env:
+            - {name: DB_HOST, value: postgres}
+            - {name: DB_NAME, value: app}
+            - {name: CRED_DIR, value: /etc/db}
+          ports: [{name: http, containerPort: 8080}]
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: db, mountPath: /etc/db, readOnly: true}
+      volumes:
+        - name: db
+          secret: {secretName: db-app}

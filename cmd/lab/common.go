@@ -266,15 +266,17 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 	kubeconfig := filepath.Join(home, "kubeconfig")
 	l := labRunner{Router: engine.Router{}}
 	var cloud *labaws.Provider
+	var lp *local.Provider
 	switch cfg.Mode {
 	case "local":
 		p, err := local.New(local.Options{Home: home, Kubeconfig: kubeconfig, K8sVersion: cfg.K8sVersion, Purge: opts.Purge,
-			Stacks: activeStacks(cfg, home, opts.Stacks)})
+			RepoRoot: opts.RepoRoot, Stacks: activeStacks(cfg, home, opts.Stacks)})
 		if err != nil {
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
 		l.url, l.hint, l.start, l.checkVersion, l.checkCluster = p.AppURL, p.AccessHint(), p.StartStopped, p.CheckK8sVersion, p.CheckClusterVersion
+		lp = p
 	case "cloud":
 		p, err := newCloudProvider(cfg, home, opts)
 		if err != nil {
@@ -295,12 +297,64 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
+		if lp != nil {
+			// Local mode: the secrets stack needs Moto beside the cluster
+			// before ESO; sample-db needs its image built and its first
+			// credentials in Moto before its app syncs.
+			l.Router["secrets"] = seqRunner{lp, g}
+			l.Router["sample-db"] = sampleDBRunner{lp, g}
+		}
 		l.hosts = g.AppHosts
 	}
 	if cloud != nil {
 		return cloudRunner{labRunner: l, Provider: cloud}, nil
 	}
 	return l, nil
+}
+
+// seqRunner applies a stack with first, then second, and destroys it in
+// the reverse order: the local provider's part (a container beside the
+// cluster), then the GitOps part.
+type seqRunner struct{ first, second engine.Runner }
+
+func (r seqRunner) Apply(ctx context.Context, stack string, log io.Writer) error {
+	if err := r.first.Apply(ctx, stack, log); err != nil {
+		return err
+	}
+	return r.second.Apply(ctx, stack, log)
+}
+
+func (r seqRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
+	if err := r.second.Destroy(ctx, stack, log); err != nil {
+		return err
+	}
+	return r.first.Destroy(ctx, stack, log)
+}
+
+// sampleDBRunner applies the sample-db stack in local mode: build and push
+// the app's image, make its first credentials in Moto, give the image's
+// digest to the app-of-apps, then turn the stack on.
+type sampleDBRunner struct {
+	local  *local.Provider
+	gitops *gitops.Runner
+}
+
+func (r sampleDBRunner) Apply(ctx context.Context, stack string, log io.Writer) error {
+	ref, err := r.local.BuildSampleDB(ctx, log)
+	if err != nil {
+		return err
+	}
+	if err := r.local.SeedSampleDB(ctx, log); err != nil {
+		return err
+	}
+	if err := r.gitops.SetValue(ctx, "sampleDB", map[string]any{"image": ref}, log); err != nil {
+		return err
+	}
+	return r.gitops.Apply(ctx, stack, log)
+}
+
+func (r sampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
+	return r.gitops.Destroy(ctx, stack, log)
 }
 
 // stackSupport reports which stacks cfg's mode can run, without building a

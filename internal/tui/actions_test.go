@@ -176,12 +176,12 @@ func TestStackKeys(t *testing.T) {
 		confirm string
 	}{
 		{name: "u on Home needs a selection", st: labState(1), keys: []string{"u"}, flash: "acts on the selected stack"},
-		{name: "u brings the selected stack up", st: labState(1), keys: []string{"2", "G", "k", "u"}, wantReq: "lab up --stacks sample-app"},
+		{name: "u brings the selected stack up", st: labState(1), keys: []string{"2", "/", "-", "a", "p", "p", "enter", "u"}, wantReq: "lab up --stacks sample-app"},
 		{name: "r on a healthy stack explains", st: labState(1), keys: []string{"2", "r"}, flash: "registry has not failed"},
-		{name: "r retries a failed stack", st: failed, keys: []string{"2", "G", "k", "r"}, wantReq: "lab up --stacks sample-app"},
-		{name: "d asks first", st: labState(1), keys: []string{"2", "G", "k", "d"}, plan: downPlan, confirm: "Destroy sample-app?"},
-		{name: "d then n cancels", st: labState(1), keys: []string{"2", "G", "k", "d", "n"}, plan: downPlan, flash: "cancelled: lab down --stacks sample-app"},
-		{name: "d then y tears down", st: labState(1), keys: []string{"2", "G", "k", "d", "y"}, plan: downPlan, wantReq: "lab down --stacks sample-app"},
+		{name: "r retries a failed stack", st: failed, keys: []string{"2", "/", "-", "a", "p", "p", "enter", "r"}, wantReq: "lab up --stacks sample-app"},
+		{name: "d asks first", st: labState(1), keys: []string{"2", "/", "-", "a", "p", "p", "enter", "d"}, plan: downPlan, confirm: "Destroy sample-app?"},
+		{name: "d then n cancels", st: labState(1), keys: []string{"2", "/", "-", "a", "p", "p", "enter", "d", "n"}, plan: downPlan, flash: "cancelled: lab down --stacks sample-app"},
+		{name: "d then y tears down", st: labState(1), keys: []string{"2", "/", "-", "a", "p", "p", "enter", "d", "y"}, plan: downPlan, wantReq: "lab down --stacks sample-app"},
 		{name: "d on a stack that is not deployed", st: labState(1), keys: []string{"2", "/", "a", "i", "enter", "d"},
 			flash: "nothing to destroy: ai is not deployed"},
 	}

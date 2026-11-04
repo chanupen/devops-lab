@@ -49,6 +49,7 @@ func newDoctorCmd() *cobra.Command {
 			if mode == "local" {
 				sys.Units = doctorUnits
 				sys.LabRegistry = doctorLabRegistry
+				sys.MotoSecrets = local.NewMotoSecrets(local.MotoEndpointHost).Count
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
