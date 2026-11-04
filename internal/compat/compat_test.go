@@ -17,8 +17,8 @@ func TestFor(t *testing.T) {
 		mode string
 		want []string
 	}{
-		{"local", []string{"Argo CD", "Kyverno", "kind node images"}},
-		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD", "Kyverno"}},
+		{"local", []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "kind node images"}},
+		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD", "Kyverno", "External Secrets Operator"}},
 		{"other", nil},
 	}
 	for _, tt := range tests {
@@ -27,8 +27,8 @@ func TestFor(t *testing.T) {
 		}
 	}
 	for _, c := range Table {
-		if c.MinK8s == "" || c.Source == "" || c.AppVersion == "" || len(c.Modes) == 0 {
-			t.Errorf("%s: row needs MinK8s, AppVersion, Source and Modes", c.Name)
+		if (c.MinK8s == "" && !c.OutsideCluster) || c.Source == "" || c.AppVersion == "" || len(c.Modes) == 0 {
+			t.Errorf("%s: row needs MinK8s (unless it runs outside the cluster), AppVersion, Source and Modes", c.Name)
 		}
 	}
 }
@@ -36,19 +36,26 @@ func TestFor(t *testing.T) {
 // Both labs land on 1.36 today: Argo CD 3.5 is tested up to 1.36.
 func TestSupported(t *testing.T) {
 	vs := []string{"1.37", "1.33", "1.34", "1.36", "1.35"}
+	minimal := []string{"registry", "cluster", "gitops", "core", "sample-app"}
+	withSecrets := append(append([]string{}, minimal...), "secrets", "sample-db")
 	tests := []struct {
 		mode      string
+		active    []string
 		supported []string
 		preferred string
 	}{
-		{"local", []string{"1.34", "1.35", "1.36"}, "1.36"},
-		{"cloud", []string{"1.33", "1.34", "1.35", "1.36"}, "1.36"},
+		{"local", minimal, []string{"1.34", "1.35", "1.36"}, "1.36"},
+		{"cloud", minimal, []string{"1.33", "1.34", "1.35", "1.36"}, "1.36"},
+		// ESO states one version, 1.36: with secrets on, only that.
+		{"local", withSecrets, []string{"1.36"}, "1.36"},
+		{"cloud", withSecrets, []string{"1.36"}, "1.36"},
 	}
 	for _, tt := range tests {
-		if got := Supported(vs, For(tt.mode)); !slices.Equal(got, tt.supported) {
-			t.Errorf("%s: Supported = %v, want %v", tt.mode, got, tt.supported)
+		comps := ForStacks(tt.mode, tt.active)
+		if got := Supported(vs, comps); !slices.Equal(got, tt.supported) {
+			t.Errorf("%s %v: Supported = %v, want %v", tt.mode, tt.active, got, tt.supported)
 		}
-		if got := Preferred(vs, For(tt.mode)); got != tt.preferred {
+		if got := Preferred(vs, comps); got != tt.preferred {
 			t.Errorf("%s: Preferred = %s, want %s", tt.mode, got, tt.preferred)
 		}
 	}
@@ -122,9 +129,10 @@ func TestForStacks(t *testing.T) {
 		active []string
 		want   []string
 	}{
-		{"local", nil, []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"local", nil, []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "kind node images"}},
 		{"local", []string{"cluster", "gitops"}, []string{"Argo CD", "kind node images"}},
 		{"local", []string{"cluster", "gitops", "policy"}, []string{"Argo CD", "Kyverno", "kind node images"}},
+		{"local", []string{"cluster", "gitops", "secrets"}, []string{"Argo CD", "External Secrets Operator", "Moto", "kind node images"}},
 		{"cloud", []string{"cluster"}, []string{"Karpenter", "AWS Load Balancer Controller"}},
 	}
 	for _, tt := range tests {

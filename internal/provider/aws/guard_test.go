@@ -70,6 +70,7 @@ func TestCompatibilityMatchesPins(t *testing.T) {
 		"AWS Load Balancer Controller": LBCChart.Version,
 		"Argo CD":                      gitops.ArgoChartVersion,
 		"Kyverno":                      bootstrapPin(t, "policy.yaml", "kyverno"),
+		"External Secrets Operator":    bootstrapChartPin(t, "secrets.yaml", "external-secrets"),
 	}
 	if len(Compatibility) != len(pins) {
 		t.Fatalf("Compatibility has %d rows, want one per pinned component (%d)", len(Compatibility), len(pins))
@@ -357,4 +358,19 @@ func TestChooseVersionByStacks(t *testing.T) {
 			t.Errorf("stacks %v: %s, %v; want %s", tt.stacks, c.Version, err, tt.want)
 		}
 	}
+}
+
+// bootstrapChartPin is the targetRevision under "chart: <chart>" in a
+// bootstrap template.
+func bootstrapChartPin(t *testing.T, template, chart string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "gitops", "bootstrap", "templates", template))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`chart: ` + regexp.QuoteMeta(chart) + `\s+targetRevision: (\S+)`).FindSubmatch(b)
+	if m == nil {
+		t.Fatalf("no targetRevision for chart %s in %s", chart, template)
+	}
+	return string(m[1])
 }

@@ -523,18 +523,18 @@ func TestNodeImage(t *testing.T) {
 	}{
 		{"1.36", NodeImages["1.36"], ""},
 		{"1.34", NodeImages["1.34"], ""},
-		{"1.37", "", "outside the compatibility table: Argo CD v3.5.5 (1.33–1.36), Kyverno v1.19.2 (1.33–1.36) (local mode supports 1.34, 1.35, 1.36)"},
+		{"1.37", "", "outside the compatibility table: Argo CD v3.5.5 (1.33–1.36) (local mode supports 1.34, 1.35, 1.36)"},
 		{"1.33", "", "kind v0.33.0 has no node image for it (local mode supports 1.34, 1.35, 1.36)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.v, func(t *testing.T) {
-			got, err := NodeImage(tt.v, compat.For("local"))
+			got, err := NodeImage(tt.v, compat.ForStacks("local", minimalStacks))
 			if got != tt.want || (tt.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tt.wantErr)) {
 				t.Errorf("NodeImage(%s) = %q, %v; want %q, %q", tt.v, got, err, tt.want, tt.wantErr)
 			}
 		})
 	}
-	if vs := SupportedVersions(compat.For("local")); vs[len(vs)-1] != config.K8sVersion {
+	if vs := SupportedVersions(compat.ForStacks("local", minimalStacks)); vs[len(vs)-1] != config.K8sVersion {
 		t.Errorf("supported %v: the default pin %s is not the newest", vs, config.K8sVersion)
 	}
 }
@@ -680,6 +680,7 @@ func TestNodeImageByStacks(t *testing.T) {
 		wantErr string
 	}{
 		{"every row (nothing known)", "1.37", nil, "Argo CD v3.5.5 (1.33–1.36)"},
+		{"secrets on 1.35: ESO states only 1.36", "1.35", []string{"registry", "cluster", "gitops", "secrets"}, "External Secrets Operator v2.13.0 (1.36–1.36)"},
 		{"the minimal profile has gitops", "1.37", []string{"registry", "cluster", "gitops", "core", "sample-app"}, "Argo CD"},
 		{"cluster only", "1.37", []string{"registry", "cluster"}, ""},
 		{"policy on 1.36", "1.36", []string{"registry", "cluster", "gitops", "policy"}, ""},
@@ -697,3 +698,6 @@ func TestNodeImageByStacks(t *testing.T) {
 		t.Errorf("CheckK8sVersion with only cluster: %v", err)
 	}
 }
+
+// minimalStacks is the minimal profile, for tests of the default lab.
+var minimalStacks = []string{"registry", "cluster", "gitops", "core", "sample-app"}

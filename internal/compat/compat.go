@@ -27,6 +27,9 @@ type Component struct {
 	Modes        []string // the lab modes that install it
 	// Stack is the lab stack that installs it; "" for every lab of the mode.
 	Stack string
+	// OutsideCluster marks a component that runs beside the cluster (a
+	// Podman container), so no Kubernetes version range applies to it.
+	OutsideCluster bool
 	// StatedMaxK8s is set when MaxK8s comes from upstream's tests, not a
 	// stated support range: the highest version upstream states. Versions
 	// above it and up to MaxK8s are "tested, not stated" (TestedNotStated).
@@ -74,6 +77,11 @@ func TestedNotStated(v string, comps []Component, deployed func(stack string) bo
 //     and marks 1.36 as tested, not stated (StatedMaxK8s 1.35); lab doctor
 //     warns while the policy stack runs on it. The only newer release is
 //     v1.20.0-rc.1 (chart 3.10.0-rc.1), a release candidate.
+//   - External Secrets Operator 2.13 (chart 2.13.0): external-secrets.io's
+//     stability-support table lists Kubernetes 1.36 for 2.13 (one version;
+//     2.14 lists 1.37). ESO supports only its newest minor.
+//   - Moto 5.2.5 (motoserver/moto) runs as a Podman container beside the
+//     cluster, so no Kubernetes range applies.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
 //     1.37.0 (internal/provider/local NodeImages, digests from the release
 //     notes).
@@ -87,6 +95,12 @@ var Table = []Component{
 	{Name: "Kyverno", ChartVersion: "3.9.2", AppVersion: "v1.19.2", MinK8s: "1.33", MaxK8s: "1.36",
 		Source: "kyverno release-1.19 tests-conformance.yaml (tested v1.33–v1.36); kyverno.io releases page lists v1.33–v1.35",
 		Modes:  []string{"local", "cloud"}, Stack: "policy", StatedMaxK8s: "1.35"},
+	{Name: "External Secrets Operator", ChartVersion: "2.13.0", AppVersion: "v2.13.0", MinK8s: "1.36", MaxK8s: "1.36",
+		Source: "external-secrets.io/latest/introduction/stability-support (2.13: Kubernetes 1.36)",
+		Modes:  []string{"local", "cloud"}, Stack: "secrets"},
+	{Name: "Moto", ChartVersion: "5.2.5", AppVersion: "5.2.5", OutsideCluster: true,
+		Source: "runs as the lab-moto Podman container beside the cluster: no Kubernetes range",
+		Modes:  []string{"local"}, Stack: "secrets"},
 	{Name: "kind node images", ChartVersion: "v0.33.0", AppVersion: "v0.33.0", MinK8s: "1.34", MaxK8s: "1.37",
 		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}, Stack: "cluster"},
 }
@@ -122,6 +136,9 @@ func ForStacks(mode string, active []string) []Component {
 
 // Supports reports whether the component's stated range includes v.
 func (c Component) Supports(v string) bool {
+	if c.OutsideCluster {
+		return true
+	}
 	if c.MinK8s != "" && Less(v, c.MinK8s) {
 		return false
 	}
@@ -130,6 +147,9 @@ func (c Component) Supports(v string) bool {
 
 // Range is "1.33–1.36", or "1.19+" without an upper bound.
 func (c Component) Range() string {
+	if c.OutsideCluster {
+		return "outside the cluster"
+	}
 	if c.MaxK8s == "" {
 		return c.MinK8s + "+"
 	}
