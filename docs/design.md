@@ -66,7 +66,7 @@ Local mode emulates AWS APIs with Moto (`motoserver/moto` 5.2.5, Apache-2.0), pi
 - The free Hobby plan needs a LocalStack account per user and is for non-commercial use only, which does not fit a repo that may become public and be used by others.
 - The last image that runs without a token, 4.14, gets no fixes or security patches.
 
-Moto speaks the Secrets Manager API that ESO's AWS provider uses, so the provider and the lab commands are the same as on AWS; only the endpoint differs. It keeps no state across restarts, so `lab up` re-seeds it from the Kubernetes Secrets ESO keeps. While the secrets stack is deployed, `lab doctor` checks that `lab-moto` runs, answers on 127.0.0.1:4566 and holds secrets; an empty Moto (restarted since the last `lab up`) is a warning, fixed by `lab up`.
+Moto speaks the Secrets Manager API that ESO's AWS provider uses, so the provider and the lab commands are the same as on AWS; only the endpoint differs. It keeps no state across restarts, so `lab up` re-seeds it from the Kubernetes Secrets ESO keeps. An ExternalSecret with `spec.target.template` builds its Secret from the remote value, so its Secret is not that value: re-seeding skips it and logs a warning. While the secrets stack is deployed, `lab doctor` checks that `lab-moto` runs, answers on 127.0.0.1:4566 and holds secrets; an empty Moto (restarted since the last `lab up`) is a warning, fixed by `lab up`.
 
 ### Memory budget on the Fedora box
 
@@ -90,7 +90,7 @@ A reboot leaves the lab's containers (`lab-*`: the kind nodes and `lab-zot`) in 
 - `lab up` checks the Kubernetes pin first (see Kubernetes version), then starts the main cluster's nodes and `lab-zot` before anything else, then waits for the nodes if it started them. A stopped scratch cluster is left to `lab labs start`, and any other stopped `lab-*` container is reported with its `podman start` command, not started.
 - `lab down` starts the main cluster's nodes and `lab-zot` first too, so destroying the in-cluster stacks can reach the API server.
 - `lab labs start` starts `lab-zot` and the scratch cluster's node when they are there but stopped. Without Zot it says images come straight from the registries.
-- `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
+- `lab doctor` checks the main cluster, the scratch clusters and `lab-zot`, and reports a drill still in the lab. A stopped one shows as `○ stopped` with its `podman start` command. Stopped is not a failure.
 - The TUI's Home screen shows `○ stopped` and the command for a stopped cluster or `lab-zot`, in the header too. It lists the containers in the background: at start, every five file checks, and when the cluster goes down or comes back.
 
 ## Architecture
@@ -157,7 +157,7 @@ One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a
 1. **Home**: mode, cluster health (`○ stopped` with the `podman start` command when a reboot stopped it), running stacks, the image cache, TTL countdown, last five operations. Empty state says which key to press next.
 2. **Stacks**: the module catalog with install state, dependencies, endpoints and versions.
 3. **Labs**: the labs with progress (● done, ◐ current, ○ not started). `enter` opens the current step's text, `v` verifies it, `h` shows its next hint, `n`/`p` move between steps.
-4. **Drills**: break/fix scenarios. Start a fault, a timer runs, `verify` stops it and records your time.
+4. **Drills**: break/fix scenarios with your best times. `enter` starts the selected drill and `R` a random one (each after a prompt); `a` says you found the fault, `v` verifies the fix, `h` shows a hint, `x` aborts. The header shows the running drill and its timer (`drill: oom 04:12/30:00`, `?` for a random one).
 5. **Ops log**: every operation with its full streamed output and the equivalent CLI command.
 6. **Cost** (cloud mode): running resources, hourly rate, spend this session, budget left, TTL.
 
@@ -213,7 +213,7 @@ Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/o
 | core | metrics-server, Envoy Gateway (Gateway API), cert-manager, as Argo CD apps | gitops | Cluster add-ons, ingress, TLS |
 | ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
 | secrets | External Secrets Operator; Secrets Manager from Moto locally, AWS in cloud | gitops | Secret sync, rotation, Pod Identity |
-| obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
+| obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`; plus the drills' alerts), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
 | policy | Kyverno 1.19 (chart 3.9.2, one replica per controller, policy exceptions on) and the Pod Security Standards "baseline" policies in Audit mode: they report, never block. Labs add Enforce policies scoped to their own namespaces. Not in the minimal profile: `extraStacks: [obs, policy]` or `lab up --stacks policy` | gitops | Admission control, policy as code |
 | scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
 | chaos | Chaos Mesh | obs | Fault injection for drills |
@@ -255,17 +255,27 @@ The first set:
 
 ### Drills
 
-Each drill injects one fault into the sample app, starts a timer and records time to detect and time to recover.
+Each drill injects one fault into the sample app on the main lab, starts a timer and records time to alert, time to detect and time to recover. `drills/README.md` describes the format and the rules; `drills/<id>/` holds `drill.yaml` (id, title, level, stacks, time limit, the alert that should catch it, hints, the namespaces it touches, the objects to save), a README whose intro is what the learner is told, and `inject.sh`, `verify.sh` (read-only, exit 0 = recovered), `restore.sh` and `solution.sh`.
 
-| Drill | Fault injected | What you should find |
-| --- | --- | --- |
-| bad-deploy | Image tag that crashes on start | CrashLoopBackOff, roll back through Git |
-| cert-expiry | Certificate with a short lifetime | cert-manager renewal failing, issuer misconfigured |
-| oom | Memory limit set too low | OOMKilled pods, right-size the limit |
-| node-loss | A worker node removed | Rescheduling, PodDisruptionBudget behaviour |
-| dns | CoreDNS scaled to zero | Service discovery failures across the app |
-| slow-db | Network latency on the database | SLO burn alert fires, trace shows the slow span |
-| secret-drift | Secret deleted in the store | External Secrets sync error, app fails to start |
+| Drill | Fault injected | What you should find | Alert | Status |
+| --- | --- | --- | --- | --- |
+| bad-deploy | A release whose image exits at start, deployed through Argo CD | CrashLoopBackOff; roll back through Argo CD | `KubePodCrashLooping` | built |
+| oom | A release that keeps 128 MB in memory, under its 64Mi limit | OOMKilled pods; right-size requests and limits in the Application | `KubeContainerOOMKilled` (added to obs) | built |
+| dns | CoreDNS scaled to zero, as a downscaler would | Service discovery failures across the app; explain who scaled it | `CoreDNSDown` (added to obs) | built |
+| cert-expiry | Certificate with a short lifetime | cert-manager renewal failing, issuer misconfigured | | planned |
+| node-loss | A worker node removed | Rescheduling, PodDisruptionBudget behaviour | | planned |
+| slow-db | Network latency on the database | SLO burn alert fires, trace shows the slow span | | planned |
+| secret-drift | Secret deleted in the store | External Secrets sync error, app fails to start | | planned |
+
+`lab drills list | start <id> | start --random | status | hint | ack | verify | abort | history`. `start --random` picks a drill whose stacks are up and hides its ID and alert until the run ends, for interview practice. `ack` stops the detect timer; a passing `verify` stops the recover timer, then lab puts back what the drill changed. The alert time comes from Alertmanager (through the API server's service proxy), or from Prometheus's `ALERTS` series for an alert that resolved before lab looked; an alert that fires only after recovery is recorded as not fired. History and best times live in `~/.lab/state.json`. One drill at a time, and not while a lab is started; `start`, `verify` and `abort` take the lab lock.
+
+**Safety.** Before the fault goes in, lab saves every object in the drill's `snapshot` list into `state.json` (`activeDrill`). Restore puts them back (content, labels, annotations; deletes what did not exist), runs `restore.sh` and checks every saved object is as it was; if not, the drill stays active with the error and `lab drills abort` tries again. A failed inject is restored at once. After a crash or a reboot the state file still holds the drill: `lab drills abort` restores it, `lab up` restores it before it plans, and `lab doctor` reports it (warning while it runs, failure past its limit or when its inject or restore did not finish). The time limit (default 30 minutes) is a transient systemd user timer that runs `lab drills abort --expired` just after the deadline and retries while another lab holds the lock; an open TUI restores an expired drill itself. Drills touch only the sample app's namespaces and the Applications they save; `dns` touches CoreDNS, which lab does not need (it talks to the API server).
+
+**GitOps.** A fault made with kubectl would be undone by self-heal, and a fault in Git would reach `main`. The drills that change an app release the way a CD tool with Argo CD write-back does: Helm parameters on the app's Application. Argo CD deploys the fault, keeps it, and records it in its history; Git never changes. For the drill's app only, lab-bootstrap gets `ignoreDifferences` on those parameters and on `syncPolicy.automated`, with `RespectIgnoreDifferences=true`, so the app-of-apps leaves them alone and an emergency rollback can pause auto-sync. The realistic fix is then the one that works (an Argo CD rollback, a change to the desired state); `kubectl edit` is undone by self-heal, and verify checks that the running release came from Argo CD. Both Applications are in the snapshot, so restore returns lab-bootstrap and the app to exactly what Git renders.
+
+**Alerts.** The obs stack sets `KubePodCrashLooping`'s `for` to 5 minutes (15 upstream) and adds `KubeContainerOOMKilled` and `CoreDNSDown` (rules `lab-drills`), which kube-prometheus-stack lacks.
+
+`go test -tags e2e -run E2EDrills ./internal/drills/` runs each drill on the main lab twice: inject, verify fails, the alert fires, the solution, verify passes; then inject and abort. Every Application and the drill's namespaces must be back exactly as before.
 
 ## Configuration and repository layout
 
@@ -295,12 +305,18 @@ profiles:
     budgetMonthlyUSD: 30
     owner: chanupen
 
+zot:                       # optional; only lab-zot uses it (podman --add-host), never /etc/hosts
+  addHosts:                # lab doctor's "ghcr.io download" check suggests an address when GitHub's CDN is slow
+    pkg-containers.githubusercontent.com: 185.199.109.154
+
 repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
   url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap tracks main
   sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 
 Versions and the budget figure are placeholders; pin them when phase 1 starts.
+
+**Image cache host overrides.** Zot pulls every ghcr.io layer from GitHub's CDN (`pkg-containers.githubusercontent.com`). `lab doctor`'s "ghcr.io download" check shows the addresses DNS returns for it and downloads part of a pinned ghcr.io layer; below 1 MiB/s it warns, tries the other CDN addresses and suggests the fastest as `zot.addHosts`. lab passes those to `lab-zot` only. They are part of its config hash, so `lab up` re-applies the registry stack when they change (the cache volume is kept).
 
 ### Kubernetes version
 
@@ -316,6 +332,7 @@ Both modes check their Kubernetes version against one compatibility table, `inte
 The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo apps it renders track `main`, so work reaches the lab by merging.
 
 - **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
+- **A rotated deploy key:** `lab up --stacks gitops --refresh-repo` re-applies the gitops stack, which reloads Argo CD's repository Secret from `repo.sshKeyFile`; without it an applied gitops stack is unchanged.
 - **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
 - **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). The header's Kubernetes version is the `lab.yaml` pin. Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, in local mode the node's Kubernetes version (✕ with the fix when it is not the pin), Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
 
