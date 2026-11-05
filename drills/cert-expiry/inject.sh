@@ -15,7 +15,8 @@ good_release sample-db
 short=(tls.duration=1h tls.renewBefore=58m)
 echo "release 1: one-hour certificates"
 release sample-db "${short[@]}"
-duration() { [ "$(kubectl -n $ns get certificate sample-db-tls -o jsonpath='{.spec.duration}')" = 1h0m0s ]; }
+# The API server keeps the duration as written: 1h from the parameter.
+duration() { case "$(kubectl -n $ns get certificate sample-db-tls -o jsonpath='{.spec.duration}')" in 1h | 1h0m0s) ;; *) return 1 ;; esac; }
 wait_for 180 "Argo CD to apply the one-hour lifetime" duration
 # What cmctl renew does: mark the certificate for issuance now.
 kubectl -n $ns patch certificate sample-db-tls --subresource=status --type json -p "$(
