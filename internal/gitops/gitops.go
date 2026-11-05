@@ -253,6 +253,24 @@ func (r *Runner) SetValue(ctx context.Context, key string, value map[string]any,
 	})
 }
 
+// Value returns the app-of-apps value key (as SetValue set it), or nil when
+// it or the app-of-apps does not exist.
+func (r *Runner) Value(ctx context.Context, key string) (map[string]any, error) {
+	c, err := r.clients(io.Discard)
+	if err != nil {
+		return nil, err
+	}
+	u, err := c.Dynamic.Resource(kube.AppGVR).Namespace(Namespace).Get(ctx, RootApp, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	v, _, err := unstructured.NestedMap(u.Object, "spec", "source", "helm", "valuesObject", key)
+	return v, err
+}
+
 // setStack turns a stack on or off in the app-of-apps and waits until Argo CD
 // has added (and made healthy) or removed its apps.
 func (r *Runner) setStack(ctx context.Context, stack string, on bool, log io.Writer) error {

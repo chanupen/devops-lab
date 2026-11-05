@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"log/slog"
@@ -33,6 +34,8 @@ func run() error {
 	flag.StringVar(&cfg.Port, "db-port", envOr("DB_PORT", "5432"), "Postgres port")
 	flag.StringVar(&cfg.Database, "db-name", envOr("DB_NAME", "app"), "database")
 	flag.StringVar(&cfg.Listen, "listen", envOr("LISTEN", ":8080"), "HTTP address")
+	flag.StringVar(&cfg.TLSDir, "tls-dir", envOr("TLS_DIR", ""), "directory with tls.crt and tls.key: serve HTTPS too, reloading them when they change")
+	flag.StringVar(&cfg.TLSListen, "tls-listen", envOr("TLS_LISTEN", ":8443"), "HTTPS address")
 	flag.DurationVar(&cfg.Every, "check-every", 2*time.Second, "how often to look at the credential files")
 	flag.Parse()
 
@@ -44,12 +47,27 @@ func run() error {
 	db := newDB(cfg, pgxConnector(cfg), m, log)
 	go db.Watch(ctx)
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: newHandler(db, m), ReadHeaderTimeout: 5 * time.Second}
+	h := newHandler(db, m)
+	srv := &http.Server{Addr: cfg.Listen, Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	servers := []*http.Server{srv}
+	if cfg.TLSDir != "" {
+		tlsSrv := &http.Server{Addr: cfg.TLSListen, Handler: h, ReadHeaderTimeout: 5 * time.Second,
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: newCertFiles(cfg.TLSDir).get}}
+		servers = append(servers, tlsSrv)
+		go func() {
+			log.Info("listening", "addr", cfg.TLSListen, "tls", cfg.TLSDir)
+			if err := tlsSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("https", "err", err)
+			}
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		for _, s := range servers {
+			_ = s.Shutdown(shutdown)
+		}
 	}()
 	log.Info("listening", "addr", cfg.Listen, "credentials", cfg.CredDir)
 	defer db.Close()
@@ -67,6 +85,10 @@ type Config struct {
 	Database string
 	Listen   string
 	Every    time.Duration
+	// TLSDir holds the certificate cert-manager issues (a Secret volume);
+	// empty serves HTTP only.
+	TLSDir    string
+	TLSListen string
 }
 
 func envOr(k, def string) string {

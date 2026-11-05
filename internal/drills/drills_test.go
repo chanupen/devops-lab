@@ -235,7 +235,8 @@ func testSetup(t *testing.T) (*Manager, *dynamicfake.FakeDynamicClient, *fakeRun
 		t.Fatal(err)
 	}
 	d := Drill{ID: "dns", Title: "dns", Stacks: []string{"sample-app"}, TimeLimit: 30 * time.Minute, Dir: t.TempDir(),
-		Alert: Alert{Name: "CoreDNSDown"}, Hints: []string{"look at kube-system", "look at the replicas"}, Snapshot: []Ref{corednsRef}}
+		Alert: Alert{Name: "CoreDNSDown"}, Hints: []string{"look at kube-system", "look at the replicas"}, Snapshot: []Ref{corednsRef},
+		Cause: "coredns-down", Causes: map[string]string{"coredns-down": "CoreDNS was scaled to zero", "netpol": "A NetworkPolicy", "crash": "The backend crashes"}}
 	m := &Manager{Drills: []Drill{d}, Store: store, Kube: func() (dynamic.Interface, error) { return dyn, nil },
 		Kubeconfig: "/kc", Runner: r, Now: c.now}
 	return m, dyn, r, c
@@ -268,9 +269,20 @@ func TestDrillRun(t *testing.T) {
 	if _, err := m.Start(ctx, "dns", false, io.Discard); err == nil || !strings.Contains(err.Error(), "one at a time") {
 		t.Errorf("second start: %v", err)
 	}
-	c.advance(2 * time.Minute)
-	if r, err := m.Ack(ctx); err != nil || r.TimeTo(r.Acked) != 2*time.Minute || r.TimeTo(r.AlertFired) != 90*time.Second {
-		t.Fatalf("ack: %+v, %v", r, err)
+	if _, _, err := m.Ack(ctx, ""); !errors.Is(err, ErrNoCause) {
+		t.Errorf("ack without a cause: %v", err)
+	}
+	if _, _, err := m.Ack(ctx, "dns-typo"); err == nil || !strings.Contains(err.Error(), "--list") {
+		t.Errorf("ack with an unknown cause: %v", err)
+	}
+	c.advance(time.Minute)
+	// A wrong cause is recorded, and the detect timer runs on.
+	if r, right, err := m.Ack(ctx, "netpol"); err != nil || right || !r.Acked.IsZero() || len(r.Acks) != 1 || r.WrongAcks() != 1 {
+		t.Fatalf("wrong ack: right %v, %+v, %v", right, r, err)
+	}
+	c.advance(time.Minute)
+	if r, right, err := m.Ack(ctx, "coredns-down"); err != nil || !right || r.TimeTo(r.Acked) != 2*time.Minute || r.TimeTo(r.AlertFired) != 90*time.Second || len(r.Acks) != 2 {
+		t.Fatalf("ack: right %v, %+v, %v", right, r, err)
 	}
 	if n, total, h, err := m.Hint(); err != nil || n != 1 || total != 2 || h != "look at kube-system" {
 		t.Errorf("hint = %d/%d %q, %v", n, total, h, err)
@@ -289,7 +301,8 @@ func TestDrillRun(t *testing.T) {
 		t.Fatalf("verify after the fix: %+v, %v", res, err)
 	}
 	r := res.Run
-	if r.Outcome != state.DrillRecovered || r.TimeTo(r.Recovered) != 4*time.Minute || r.Verifies != 2 || r.Hints != 1 || r.Snapshot != nil {
+	if r.Outcome != state.DrillRecovered || r.TimeTo(r.Recovered) != 4*time.Minute || r.Verifies != 2 || r.Hints != 1 || r.Snapshot != nil ||
+		len(r.Acks) != 2 || r.Acks[0].Right || !r.Acks[1].Right {
 		t.Errorf("finished run = %+v", r)
 	}
 	if len(timer.cancelled) != 1 {
@@ -500,7 +513,8 @@ func TestLoad(t *testing.T) {
 		}
 	}
 	write("drill.yaml", "id: dns\ntitle: DNS\nlevel: intermediate\nstacks: [sample-app]\ntimeLimit: 20m\n"+
-		"alert: {name: CoreDNSDown}\nhints: [a]\ntouches: [kube-system]\n"+
+		"alert: {name: CoreDNSDown}\nhints: [a]\ntouches: [kube-system]\ncause: down\n"+
+		"causes: {down: CoreDNS is down, netpol: A NetworkPolicy, crash: A crash}\n"+
 		"snapshot:\n  - {apiVersion: apps/v1, resource: deployments, namespace: kube-system, name: coredns}\n")
 	write("README.md", "# DNS\n\nThe pager says the app is down.\n\n## Debrief\n\nCoreDNS was at zero.\n")
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "inject.sh") {
@@ -534,8 +548,67 @@ func TestRepoDrills(t *testing.T) {
 		if d.Alert.Name == "" {
 			t.Errorf("%s names no alert", d.ID)
 		}
+		if len(d.Spoilers) == 0 {
+			t.Errorf("%s lists no spoilers for its verify messages", d.ID)
+		}
+		for _, h := range d.Hints[:len(d.Hints)-1] {
+			if strings.Contains(h, d.CauseText()) {
+				t.Errorf("%s: a hint before the last quotes the cause", d.ID)
+			}
+		}
 	}
-	if strings.Join(ids, " ") != "bad-deploy dns oom" {
+	if strings.Join(ids, " ") != "bad-deploy cert-expiry dns node-loss oom secret-drift slow-db" {
 		t.Errorf("drills = %v", ids)
+	}
+}
+
+// The last hint names the cause; earlier ones do not. A random drill's
+// ack takes every drill's causes, so the list does not give it away.
+func TestHintCauseAndRandomCauses(t *testing.T) {
+	ctx := context.Background()
+	m, _, _, _ := testSetup(t)
+	other := Drill{ID: "oom", Causes: map[string]string{"low-limit": "A memory limit too low"}}
+	m.Drills = append(m.Drills, other)
+	if _, err := m.Start(ctx, "dns", false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, h, _ := m.Hint(); strings.Contains(h, "cause") {
+		t.Errorf("first hint names the cause: %q", h)
+	}
+	if _, _, h, _ := m.Hint(); !strings.HasSuffix(h, "The cause: CoreDNS was scaled to zero.") {
+		t.Errorf("last hint = %q", h)
+	}
+	r, d, _, _ := m.Active()
+	if len(m.AckCauses(r, d)) != 3 {
+		t.Errorf("causes for a named drill: %v", m.AckCauses(r, d))
+	}
+	r.Random = true
+	if c := m.AckCauses(r, d); len(c) != 4 || c["low-limit"] == "" {
+		t.Errorf("causes for a random drill: %v", c)
+	}
+}
+
+// A test run (the e2e test, LAB_DRILLS_TEST=1) restores like any other
+// but never reaches the history; its run directory is removed.
+func TestTestRunKeepsHistory(t *testing.T) {
+	ctx := context.Background()
+	m, _, _, _ := testSetup(t)
+	m.Test = true
+	run, err := m.Start(ctx, "dns", false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.RunDir(run.Run)); err != nil {
+		t.Fatalf("run dir: %v", err)
+	}
+	if _, err := m.Abort(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := m.Store.Load()
+	if st.ActiveDrill != nil || len(st.Drills) != 0 {
+		t.Errorf("test run: active %+v, history %v", st.ActiveDrill, st.Drills)
+	}
+	if _, err := os.Stat(m.RunDir(run.Run)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run dir left behind: %v", err)
 	}
 }

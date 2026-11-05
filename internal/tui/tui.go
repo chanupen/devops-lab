@@ -554,6 +554,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.flash = "cancelled: " + c.command()
 		return m, nil
+	case m.drills.pick != nil:
+		return m.pickKey(k)
 	case m.palette != nil:
 		switch k {
 		case "esc":

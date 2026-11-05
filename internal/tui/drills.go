@@ -19,14 +19,26 @@ import (
 type DrillActions struct {
 	Start  func(ctx context.Context, id string, random bool) (state.DrillRun, error)
 	Verify func(ctx context.Context) (drills.Result, error)
-	Ack    func(ctx context.Context) (state.DrillRun, error)
-	Hint   func() (n, total int, hint string, err error)
-	Abort  func(ctx context.Context) (state.DrillRun, error)
+	// Ack names a cause; right reports whether it was the drill's.
+	Ack func(ctx context.Context, cause string) (run state.DrillRun, right bool, err error)
+	// AckCauses are the causes ack takes for the running drill, in order.
+	AckCauses func() []Cause
+	Hint      func() (n, total int, hint string, err error)
+	Abort     func(ctx context.Context) (state.DrillRun, error)
 	// Expire restores the active drill once its time limit has passed;
 	// an open TUI holds the lab lock, so the time-limit timer cannot.
 	Expire func(ctx context.Context) (bool, error)
 	// CheckAlert records when the drill's alert fired.
 	CheckAlert func(ctx context.Context) (state.DrillRun, error)
+}
+
+// Cause is one suspect lab drills ack takes.
+type Cause struct{ ID, Text string }
+
+// causePicker is the list a opens: the learner picks the cause they found.
+type causePicker struct {
+	causes []Cause
+	cursor int
 }
 
 // drillsModel is screen 4: the drills, the running one with its timers.
@@ -35,6 +47,7 @@ type drillsModel struct {
 	busy   string    // the command running, if any
 	hints  *[]string // hints shown this session; a pointer, so copies share it
 	last   string    // the last verify's reason, or a finished run's times
+	pick   *causePicker
 }
 
 func newDrillsModel() drillsModel { return drillsModel{hints: &[]string{}} }
@@ -89,10 +102,77 @@ func (m Model) drillsKey(k string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.askDrill(drillReq{kind: "abort"}, "Abort the drill and put everything back?")
-	case "a", "h", "v":
+	case "a":
+		return m.openCausePicker()
+	case "h", "v":
 		return m.drillAction(k)
 	}
 	return m, nil
+}
+
+// openCausePicker lists the causes ack takes; enter acks the selected one.
+func (m Model) openCausePicker() (tea.Model, tea.Cmd) {
+	if m.d.st.ActiveDrill == nil {
+		m.flash = "no drill is running: enter starts the selected one, R a random one"
+		return m, nil
+	}
+	if why := m.drillBlocked("lab drills ack <cause>"); why != "" {
+		m.flash = why
+		return m, nil
+	}
+	var causes []Cause
+	if m.opts.Drills.AckCauses != nil {
+		causes = m.opts.Drills.AckCauses()
+	}
+	if len(causes) == 0 {
+		m.flash = "run it in a shell: $ lab drills ack --list"
+		return m, nil
+	}
+	m.drills.pick = &causePicker{causes: causes}
+	return m, nil
+}
+
+// pickKey handles a key while the cause list is open: j/k or a number
+// moves, enter acks, esc closes it.
+func (m Model) pickKey(k string) (tea.Model, tea.Cmd) {
+	p := m.drills.pick
+	switch k {
+	case "esc", "q":
+		m.drills.pick = nil
+		m.flash = "cancelled: lab drills ack"
+	case "j", "down":
+		p.cursor = min(p.cursor+1, len(p.causes)-1)
+	case "k", "up":
+		p.cursor = max(p.cursor-1, 0)
+	case "enter":
+		c := p.causes[p.cursor]
+		m.drills.pick = nil
+		return m.ack(c.ID)
+	default:
+		if len(k) == 1 && k[0] >= '1' && k[0] <= '9' && int(k[0]-'1') < len(p.causes) {
+			p.cursor = int(k[0] - '1')
+		}
+	}
+	return m, nil
+}
+
+// ack runs lab drills ack <cause> in the background.
+func (m Model) ack(cause string) (tea.Model, tea.Cmd) {
+	command := "lab drills ack " + cause
+	if why := m.drillBlocked(command); why != "" {
+		m.flash = why
+		return m, nil
+	}
+	acts := m.opts.Drills
+	m.drills.busy, m.flash = command, statusProgressing.symbol()+" $ "+command
+	return m, func() tea.Msg {
+		run, right, err := acts.Ack(context.Background(), cause)
+		note := fmt.Sprintf("detected after %s; now fix it, then v", clock(run.TimeTo(run.Acked)))
+		if err == nil && !right {
+			err = fmt.Errorf("not the cause: %s; the detect timer runs on (h for a hint)", cause)
+		}
+		return drillMsg{command: command, run: run, err: err, note: note}
+	}
 }
 
 // drillBlocked says why a drill action cannot run now, or "".
@@ -140,9 +220,9 @@ func (m Model) runDrill(r drillReq) (Model, tea.Cmd) {
 	}
 }
 
-// drillAction runs ack, hint or verify for the running drill.
+// drillAction runs hint or verify for the running drill.
 func (m Model) drillAction(k string) (tea.Model, tea.Cmd) {
-	verb := map[string]string{"a": "ack", "h": "hint", "v": "verify"}[k]
+	verb := map[string]string{"h": "hint", "v": "verify"}[k]
 	command := "lab drills " + verb
 	if m.d.st.ActiveDrill == nil {
 		m.flash = "no drill is running: enter starts the selected one, R a random one"
@@ -154,13 +234,7 @@ func (m Model) drillAction(k string) (tea.Model, tea.Cmd) {
 	}
 	acts := m.opts.Drills
 	m.drills.busy, m.flash = command, statusProgressing.symbol()+" $ "+command
-	switch k {
-	case "a":
-		return m, func() tea.Msg {
-			run, err := acts.Ack(context.Background())
-			return drillMsg{command: command, run: run, err: err, note: fmt.Sprintf("detected after %s; now fix it, then v", clock(run.TimeTo(run.Acked)))}
-		}
-	case "h":
+	if k == "h" {
 		return m, func() tea.Msg {
 			n, total, h, err := acts.Hint()
 			if err == nil && n <= total && !strings.HasPrefix(h, "No more hints") {
@@ -357,11 +431,25 @@ func (dm drillsModel) runText(d *data, r state.DrillRun, now time.Time, w int) s
 		}
 	}
 	if r.Acked.IsZero() {
-		fmt.Fprintf(&b, " %s detect: not yet · a when you have found it\n", statusOff.symbol())
+		fmt.Fprintf(&b, " %s detect: not yet · a names the cause you found\n", statusOff.symbol())
 	} else {
 		fmt.Fprintf(&b, " %s detect: %s\n", statusHealthy.symbol(), clock(r.TimeTo(r.Acked)))
 	}
-	fmt.Fprintf(&b, " hints %d/%d · verify runs %d\n", r.Hints, len(x.Hints), r.Verifies)
+	fmt.Fprintf(&b, " hints %d/%d · verify runs %d", r.Hints, len(x.Hints), r.Verifies)
+	if wrong := r.WrongAcks(); wrong > 0 {
+		fmt.Fprintf(&b, " · wrong acks %d", wrong)
+	}
+	b.WriteString("\n")
+	if p := dm.pick; p != nil {
+		b.WriteString("\n" + bold.Render(" What did you find?") + faint.Render("  j/k or 1-9 · enter acks · esc cancels") + "\n")
+		for i, c := range p.causes {
+			row := fmt.Sprintf(" %d %s", i+1, c.Text)
+			if i == p.cursor {
+				row = lipgloss.NewStyle().Reverse(true).Render(row)
+			}
+			b.WriteString(row + "\n")
+		}
+	}
 	if dm.last != "" {
 		b.WriteString(hanging("", dm.last, w-1) + "\n")
 	}

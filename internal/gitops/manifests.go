@@ -25,6 +25,15 @@ end
 return hs
 `
 
+// appIgnorePreDeleteFinalizers keeps an app-of-apps in sync with an
+// Application whose chart has PreDelete hooks (Kyverno's). The Argo CD
+// controller adds pre-delete-finalizer.argocd.argoproj.io finalizers to such
+// an Application itself; Git does not have them, so without this the parent
+// is OutOfSync again a second after every sync and self-heals in a loop.
+const appIgnorePreDeleteFinalizers = `jqPathExpressions:
+  - '.metadata.finalizers[]? | select(startswith("pre-delete-finalizer.argocd.argoproj.io"))'
+`
+
 // argoValues are the Argo CD chart values. Dex and notifications are off; the
 // UI is reached with a port-forward, so the server runs without TLS.
 func argoValues() map[string]any {
@@ -37,8 +46,9 @@ func argoValues() map[string]any {
 		"configs": map[string]any{
 			"params": map[string]any{"server.insecure": true},
 			"cm": map[string]any{
-				"resource.customizations.health.argoproj.io_Application": appHealthLua,
-				"timeout.reconciliation":                                 "60s",
+				"resource.customizations.health.argoproj.io_Application":            appHealthLua,
+				"resource.customizations.ignoreDifferences.argoproj.io_Application": appIgnorePreDeleteFinalizers,
+				"timeout.reconciliation": "60s",
 			},
 		},
 	}

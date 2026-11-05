@@ -1,0 +1,27 @@
+id: secret-drift
+title: The app's database secret is gone from Secrets Manager
+level: intermediate
+stacks: [secrets, sample-db, obs]
+timeLimit: 30m
+# Added by the drills to the obs stack (lab-drills rules), from ESO's
+# externalsecret_status_condition metric.
+alert:
+  name: ExternalSecretSyncFailed
+  labels: {namespace: sample-db, name: db-app}
+hints:
+  - "The app answers, so look at what feeds it: kubectl -n sample-db get externalsecret. Which one is not Ready, and what does kubectl -n sample-db describe externalsecret db-app say?"
+  - "ESO reads lab/sample-db/app from Secrets Manager (Moto locally; the commands are the AWS ones, see lab 4 for the aws function). Ask Secrets Manager about it: aws secretsmanager describe-secret --secret-id lab/sample-db/app. Look at DeletedDate."
+  - "Why does the app still work? kubectl -n sample-db get secret db-app: ESO keeps the last Secret it synced (deletionPolicy Retain). What breaks first: a rotation, a new namespace or cluster, or the end of the recovery window?"
+  - "Do not create the secret again with a new password: the database has the old one. A deleted secret keeps its value and versions for its recovery window: aws secretsmanager restore-secret --secret-id lab/sample-db/app, then let ESO sync (kubectl -n sample-db annotate externalsecret db-app force-sync=$(date +%s) --overwrite)."
+cause: secret-deleted
+causes:
+  secret-deleted: The app's secret was deleted in Secrets Manager and waits out its recovery window
+  password-rotated: The database password was rotated without updating the app
+  store-credentials: The ClusterSecretStore's credentials for Secrets Manager are wrong
+  eso-down: The External Secrets Operator is not running
+  postgres-down: Postgres is down
+spoilers: [deleted, deletion, DeletedDate, restore-secret, recovery]
+touches: [sample-db]
+snapshot:
+  - {apiVersion: external-secrets.io/v1, resource: externalsecrets, namespace: sample-db, name: db-app}
+  - {apiVersion: v1, resource: secrets, namespace: sample-db, name: db-app}

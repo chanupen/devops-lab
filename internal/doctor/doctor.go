@@ -177,6 +177,9 @@ type DrillState struct {
 	Deadline time.Time
 	Error    string // the last restore error
 	Now      time.Time
+	// Fix replaces the default fix (an e2e test run's drill is aborted
+	// with its own --state).
+	Fix string
 }
 
 // checkDrill reports a drill whose fault is still in the lab. A running
@@ -188,7 +191,10 @@ func checkDrill(_ context.Context, _ System, opts Options) Result {
 	if d == nil {
 		return ok("none running")
 	}
-	const fix = "lab drills abort (or lab up) puts back what the drill changed, from the state file"
+	fix := "lab drills abort (or lab up) puts back what the drill changed, from the state file"
+	if d.Fix != "" {
+		fix = d.Fix
+	}
 	switch {
 	case d.Phase == "restoring":
 		detail := d.Label + ": putting the lab back did not finish"
@@ -201,8 +207,11 @@ func checkDrill(_ context.Context, _ System, opts Options) Result {
 	case !d.Now.Before(d.Deadline):
 		return fail(fix, "%s: past its time limit (%s) and not restored yet", d.Label, d.Deadline.Local().Format("15:04"))
 	}
-	return warn("lab drills status; lab drills verify or lab drills abort ends it",
-		"%s is running: the sample app is broken on purpose until %s", d.Label, d.Deadline.Local().Format("15:04"))
+	running := "lab drills status; lab drills verify or lab drills abort ends it"
+	if d.Fix != "" {
+		running = d.Fix
+	}
+	return warn(running, "%s is running: the sample app is broken on purpose until %s", d.Label, d.Deadline.Local().Format("15:04"))
 }
 
 // Run executes the checks concurrently and returns results in input order.

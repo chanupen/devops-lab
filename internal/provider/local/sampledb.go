@@ -62,6 +62,24 @@ func (p *Provider) BuildSampleDB(ctx context.Context, log io.Writer) (string, er
 	return ref, nil
 }
 
+// SampleDBStale says why the deployed sample-db image (deployed, as the
+// app-of-apps has it) is not the one apps/sample-db builds now, or "" when
+// it is. lab up re-applies the sample-db stack then, which builds it.
+func (p *Provider) SampleDBStale(ctx context.Context, deployed string) (string, error) {
+	if p.opts.RepoRoot == "" || deployed == "" {
+		return "", nil
+	}
+	sum, err := dirHash(filepath.Join(p.opts.RepoRoot, "apps", "sample-db"))
+	if err != nil {
+		return "", err
+	}
+	digest, err := p.manifestDigest(ctx, SampleDBRepo, sum[:12])
+	if err != nil || !strings.HasSuffix(deployed, "@"+digest) {
+		return "apps/sample-db differs from the image it runs", nil
+	}
+	return "", nil
+}
+
 // SeedSampleDB creates the database's admin and app credentials in Moto
 // unless they exist. Postgres takes them at its first start; the app reads
 // its own from the Secret ESO makes.

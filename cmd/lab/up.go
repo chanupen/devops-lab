@@ -136,27 +136,48 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 
 // restoreDrill puts back a drill that is still in the lab (a crash, a
 // reboot, a drill left running) before lab up changes anything: its fault
-// is drift, and lab up makes the lab match lab.yaml and Git.
+// is drift, and lab up makes the lab match lab.yaml and Git. That includes
+// a drill an interrupted e2e test run left in e2e/state.json beside the
+// state file; a running e2e test holds the lab lock, so lab up never gets
+// here while it runs.
 func restoreDrill(cmd *cobra.Command, flags labFlags, mode string, store *state.Store) error {
 	if mode != "local" {
 		return nil
 	}
+	e2e := flags
+	e2e.statePath = state.E2EPath(store.Path())
+	for _, c := range []struct {
+		flags labFlags
+		store *state.Store
+		what  string
+	}{
+		{flags, store, "a drill"},
+		{e2e, state.NewStore(e2e.statePath), "an e2e test run's drill"},
+	} {
+		if err := restoreOneDrill(cmd, c.flags, c.store, c.what); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreOneDrill(cmd *cobra.Command, flags labFlags, store *state.Store, what string) error {
 	st, err := store.Load()
 	if err != nil || st.ActiveDrill == nil {
 		return err
 	}
 	m, err := drillsManager(flags)
 	if err != nil {
-		return fmt.Errorf("a drill is still in the lab, but lab cannot load the drills to put it back: %w", err)
+		return fmt.Errorf("%s is still in the lab, but lab cannot load the drills to put it back: %w", what, err)
 	}
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "a drill is still in the lab (%s); putting everything it changed back first\n", st.ActiveDrill.Phase)
+	_, _ = fmt.Fprintf(out, "%s is still in the lab (%s); putting everything it changed back first\n", what, st.ActiveDrill.Phase)
 	return drillOp(cmd, m, "lab up (restores the drill)", "restore", func(w io.Writer) error {
 		_, _, err := m.RestoreForUp(cmd.Context(), w)
 		if err != nil {
-			return fmt.Errorf("restoring the drill: %w; lab up changes nothing until it is back (lab drills abort tries again)", err)
+			return fmt.Errorf("restoring the drill: %w; lab up changes nothing until it is back (lab drills abort --state %s tries again)", err, store.Path())
 		}
-		_, _ = fmt.Fprintln(out, "● the drill is restored (lab drills history shows it)")
+		_, _ = fmt.Fprintln(out, "● the drill is restored")
 		return nil
 	})
 }

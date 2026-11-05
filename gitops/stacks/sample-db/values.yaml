@@ -11,3 +11,18 @@ credentials:
   refreshInterval: 1m
 serviceMonitor:
   enabled: false
+# TLS for in-cluster clients: the app serves HTTPS on 8443 with a
+# certificate from cert-manager (a CA of its own in this namespace) and
+# reloads it on renewal. issuer and caSecretName name the Issuer the
+# certificate uses and the Secret that Issuer signs with.
+tls:
+  enabled: true
+  issuer: sample-db-ca
+  caSecretName: sample-db-ca
+  duration: 2160h    # 90 days
+  renewBefore: 720h  # renew with 30 days left
+# A small client that calls /api/check twice a second, so the latency SLO
+# (obs stack, lab-slo-sample-db) has traffic to measure.
+client:
+  enabled: true
+  image: docker.io/curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40

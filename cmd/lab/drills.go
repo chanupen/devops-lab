@@ -55,7 +55,7 @@ func drillsManager(f labFlags) (*drills.Manager, error) {
 	}
 	kubeconfig := filepath.Join(filepath.Dir(path), "kubeconfig")
 	m := &drills.Manager{Drills: all, Store: state.NewStore(path), Kubeconfig: kubeconfig, Runner: labs.ExecRunner{},
-		Env: local.LabRegistryEnv(),
+		Env: append(local.LabRegistryEnv(), local.MotoEnv()...), Test: os.Getenv(drills.TestEnv) == "1",
 		Kube: func() (dynamic.Interface, error) {
 			cfg, err := kube.RESTConfig(kubeconfig)
 			if err != nil {
@@ -143,7 +143,19 @@ func tuiDrillActions(m *drills.Manager) tui.DrillActions {
 			})
 			return res, err
 		},
-		Ack:  m.Ack,
+		Ack: m.Ack,
+		AckCauses: func() []tui.Cause {
+			r, d, ok, err := m.Active()
+			if err != nil || !ok {
+				return nil
+			}
+			causes := m.AckCauses(r, d)
+			var out []tui.Cause
+			for _, id := range drills.SortedIDs(causes) {
+				out = append(out, tui.Cause{ID: id, Text: causes[id]})
+			}
+			return out
+		},
 		Hint: m.Hint,
 		Abort: func(ctx context.Context) (state.DrillRun, error) {
 			var r state.DrillRun
@@ -227,8 +239,36 @@ func writeDrillList(w io.Writer, all []drills.Drill, st state.State) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(w, "\n○ needs stacks that are not up (lab up --stacks <stack>). lab drills start <id>, or --random to practise blind.")
+	_, err := io.WriteString(w, drillListFooter(all, st))
 	return err
+}
+
+// drillListFooter says how to start a drill, with a real ID, and, only
+// when a drill needs stacks that are down, which ones and how to bring
+// them up.
+func drillListFooter(all []drills.Drill, st state.State) string {
+	var down []string
+	for _, d := range all {
+		for _, s := range d.Stacks {
+			if !st.IsApplied(s) && !slices.Contains(down, s) {
+				down = append(down, s)
+			}
+		}
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	if len(down) > 0 {
+		slices.Sort(down)
+		fmt.Fprintf(&b, "○ needs stacks that are not up: lab up --stacks %s\n", strings.Join(down, ","))
+	}
+	ready := drills.Eligible(all, st)
+	switch {
+	case len(ready) > 0:
+		fmt.Fprintf(&b, "lab drills start %s, or lab drills start --random to practise blind.\n", ready[0].ID)
+	case len(all) > 0:
+		b.WriteString("No drill can start until those stacks are up.\n")
+	}
+	return b.String()
 }
 
 // clock is a duration as 4m12s.
@@ -419,20 +459,39 @@ func newDrillsHintCmd() *cobra.Command {
 
 func newDrillsAckCmd() *cobra.Command {
 	var f labFlags
+	var list bool
 	cmd := &cobra.Command{
-		Use:   "ack",
-		Short: "Say you have found the fault: stops the detect timer",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "ack <cause>",
+		Short: "Name the cause you found: the right one stops the detect timer",
+		Long: "Names the cause you think you found, from the drill's list (lab drills ack --list). The right\n" +
+			"cause stops the detect timer; a wrong one is recorded and the timer runs on. History shows both.",
+		Example: "  lab drills ack --list\n  lab drills ack <cause>",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := drillsManager(f)
 			if err != nil {
 				return err
 			}
-			r, err := m.Ack(cmd.Context())
+			out := cmd.OutOrStdout()
+			r, d, err := runningDrill(m)
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
+			if list || len(args) == 0 {
+				_, _ = io.WriteString(out, causeList(m.AckCauses(r, d)))
+				if !list {
+					return drills.ErrNoCause
+				}
+				return nil
+			}
+			r, right, err := m.Ack(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if !right {
+				_, _ = fmt.Fprintf(out, "✕ not the cause: %s. The detect timer runs on; look again (lab drills hint).\n", args[0])
+				return exitError{code: 1}
+			}
 			_, _ = fmt.Fprintf(out, "● detected after %s. Now fix it, then lab drills verify.\n", clock(r.TimeTo(r.Acked)))
 			alert := "alert " + r.Alert
 			if r.Random {
@@ -447,7 +506,27 @@ func newDrillsAckCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	cmd.Flags().BoolVar(&list, "list", false, "list the causes ack takes for the running drill")
 	return cmd
+}
+
+func runningDrill(m *drills.Manager) (state.DrillRun, drills.Drill, error) {
+	r, d, ok, err := m.Active()
+	if err == nil && !ok {
+		err = errors.New("no drill is running: lab drills start <id>, or lab drills start --random")
+	}
+	return r, d, err
+}
+
+// causeList is the causes ack takes, one per line.
+func causeList(causes map[string]string) string {
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 0, 2, 2, ' ', 0)
+	for _, id := range drills.SortedIDs(causes) {
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", id, causes[id])
+	}
+	_ = tw.Flush()
+	return "Causes (lab drills ack <cause>):\n" + b.String()
 }
 
 func newDrillsVerifyCmd() *cobra.Command {
@@ -495,6 +574,9 @@ func writeDrillResult(w io.Writer, m *drills.Manager, r state.DrillRun) error {
 	d, _ := m.Find(r.Drill)
 	var b strings.Builder
 	fmt.Fprintf(&b, "\ndrill %s (%s): %s\n", r.Drill, d.Title, r.Outcome)
+	if c := d.CauseText(); c != "" {
+		fmt.Fprintf(&b, "  the cause: %s\n", c)
+	}
 	b.WriteString(runTimes(r))
 	st, err := m.Store.Load()
 	if err == nil {
@@ -518,8 +600,20 @@ func runTimes(r state.DrillRun) string {
 	default:
 		alert = "did not fire (" + r.Alert + ")"
 	}
-	return fmt.Sprintf("  time to alert:   %s\n  time to detect:  %s\n  time to recover: %s\n  hints: %d, verify runs: %d\n",
-		alert, clockOrDash(r.TimeTo(r.Acked)), clockOrDash(r.TimeTo(r.Recovered)), r.Hints, r.Verifies)
+	return fmt.Sprintf("  time to alert:   %s\n  time to detect:  %s\n  time to recover: %s\n  hints: %d, verify runs: %d, %s\n",
+		alert, clockOrDash(r.TimeTo(r.Acked)), clockOrDash(r.TimeTo(r.Recovered)), r.Hints, r.Verifies, ackSummary(r))
+}
+
+// ackSummary is how many acks a run took and how many were wrong.
+func ackSummary(r state.DrillRun) string {
+	switch n, wrong := len(r.Acks), r.WrongAcks(); {
+	case n == 0:
+		return "no ack"
+	case wrong == 0:
+		return fmt.Sprintf("%d ack", n)
+	default:
+		return fmt.Sprintf("%d acks, %d wrong", n, wrong)
+	}
 }
 
 func newDrillsAbortCmd() *cobra.Command {
@@ -576,11 +670,18 @@ func newDrillsAbortCmd() *cobra.Command {
 
 func newDrillsHistoryCmd() *cobra.Command {
 	var f labFlags
+	var reset, yes bool
 	cmd := &cobra.Command{
-		Use:   "history",
+		Use:   "history [--reset [<id>]]",
 		Short: "List finished drill runs and the best times per drill",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Long: "Lists every finished run with its times and acks, then the best times per drill.\n" +
+			"--reset deletes the history (of one drill with an ID) after a prompt.",
+		Example: "  lab drills history\n  lab drills history --reset dns",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 && !reset {
+				return errors.New("an ID goes with --reset: lab drills history --reset " + args[0])
+			}
 			path := f.statePath
 			if path == "" {
 				var err error
@@ -588,7 +689,26 @@ func newDrillsHistoryCmd() *cobra.Command {
 					return err
 				}
 			}
-			st, err := state.NewStore(path).Load()
+			store := state.NewStore(path)
+			if reset {
+				id, what := "", "every drill's history"
+				if len(args) == 1 {
+					id, what = args[0], "the history of drill "+args[0]
+				}
+				if err := confirm(cmd, yes, "Delete "+what+"?"); err != nil {
+					return err
+				}
+				var n int
+				if err := store.Update(func(s *state.State) error {
+					n = s.ResetDrills(id)
+					return nil
+				}); err != nil {
+					return err
+				}
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted %d run(s)\n", n)
+				return err
+			}
+			st, err := store.Load()
 			if err != nil {
 				return err
 			}
@@ -596,7 +716,26 @@ func newDrillsHistoryCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	cmd.Flags().BoolVar(&reset, "reset", false, "delete the history (of one drill with an ID), after a prompt")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "with --reset: do not ask")
 	return cmd
+}
+
+// ackColumn is a run's acks in the history: the causes named, wrong
+// ones marked.
+func ackColumn(r state.DrillRun) string {
+	if len(r.Acks) == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, len(r.Acks))
+	for _, a := range r.Acks {
+		mark := "✕ "
+		if a.Right {
+			mark = "● "
+		}
+		parts = append(parts, mark+a.Cause)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func writeDrillHistory(w io.Writer, runs []state.DrillRun) error {
@@ -605,7 +744,7 @@ func writeDrillHistory(w io.Writer, runs []state.DrillRun) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "STARTED\tDRILL\tOUTCOME\tALERT\tDETECT\tRECOVER\tHINTS")
+	_, _ = fmt.Fprintln(tw, "STARTED\tDRILL\tOUTCOME\tALERT\tDETECT\tRECOVER\tHINTS\tACKS")
 	for _, r := range runs {
 		id := r.Drill
 		if r.Random {
@@ -621,8 +760,8 @@ func writeDrillHistory(w io.Writer, runs []state.DrillRun) error {
 		if started.IsZero() {
 			started = r.Ended
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n", started.Local().Format("Jan 02 15:04"), id, r.Outcome, alert,
-			clockOrDash(r.TimeTo(r.Acked)), clockOrDash(r.TimeTo(r.Recovered)), r.Hints)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", started.Local().Format("Jan 02 15:04"), id, r.Outcome, alert,
+			clockOrDash(r.TimeTo(r.Acked)), clockOrDash(r.TimeTo(r.Recovered)), r.Hints, ackColumn(r))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

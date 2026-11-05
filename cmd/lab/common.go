@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -327,6 +328,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			// credentials in Moto before its app syncs.
 			l.Router["secrets"] = seqRunner{lp, g}
 			l.Router["sample-db"] = sampleDBRunner{lp, g}
+			l.stale = staleWithSampleDB(l.stale, lp, g)
 		}
 		l.hosts = g.AppHosts
 	}
@@ -334,6 +336,32 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		return cloudRunner{labRunner: l, Provider: cloud}, nil
 	}
 	return l, nil
+}
+
+// staleWithSampleDB adds the sample-db stack to what lab up re-applies when
+// apps/sample-db no longer matches the image the app-of-apps deploys (the
+// app changed in the repo or on a branch). Best effort: when the cluster
+// or the registry cannot answer, it adds nothing.
+func staleWithSampleDB(next func(context.Context) (map[string]string, error), lp *local.Provider, g *gitops.Runner) func(context.Context) (map[string]string, error) {
+	return func(ctx context.Context) (map[string]string, error) {
+		out := map[string]string{}
+		if next != nil {
+			m, err := next(ctx)
+			if err != nil {
+				return nil, err
+			}
+			maps.Copy(out, m)
+		}
+		v, err := g.Value(ctx, "sampleDB")
+		if err != nil || v == nil {
+			return out, nil
+		}
+		deployed, _ := v["image"].(string)
+		if why, err := lp.SampleDBStale(ctx, deployed); err == nil && why != "" {
+			out["sample-db"] = why
+		}
+		return out, nil
+	}
 }
 
 // seqRunner applies a stack with first, then second, and destroys it in

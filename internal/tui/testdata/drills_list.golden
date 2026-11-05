@@ -3,12 +3,12 @@
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────
  Drills                       │ A release that crashes on start                                     
  ● bad-deploy  beginner       │ bad-deploy · beginner · limit 30:00 · needs sample-app, obs         
- ● dns         intermediate   │ alert: KubePodCrashLooping                                          
- ● oom         intermediate   │ 1 run(s), 1 recovered · best detect 2m0s, recover 5m0s              
-                              │                                                                     
-                              │ The pager goes off: the sample app's frontend at                    
-                              │ https://podinfo.localtest.me:8443 returns errors since a few        
-                              │ minutes ago. Nobody merged anything to Git today. Find what broke,  
+ ○ cert-expiry intermediate   │ alert: KubePodCrashLooping                                          
+ ● dns         intermediate   │ 1 run(s), 1 recovered · best detect 2m0s, recover 5m0s              
+ ● node-loss   intermediate   │                                                                     
+ ● oom         intermediate   │ The pager goes off: the sample app's frontend at                    
+ ○ secret-drift intermediate  │ https://podinfo.localtest.me:8443 returns errors since a few        
+ ○ slow-db     advanced       │ minutes ago. Nobody merged anything to Git today. Find what broke,  
                               │ roll it back the way your team deploys (Argo CD), and run lab       
                               │ drills verify.                                                      
                               │                                                                     

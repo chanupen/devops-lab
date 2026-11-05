@@ -111,12 +111,14 @@ If a phase slips, cut TUI screens before labs.
 
 ## Drills
 
-- Format and rules in `drills/README.md`: `drills/<id>/` with `drill.yaml` (id, title, level, stacks, timeLimit, alert, hints, touches, snapshot), README (intro = the page), `inject.sh`, `verify.sh`, `restore.sh`, `solution.sh`; shared `drills/lib.sh`.
-- CLI: `lab drills list | start <id> | start --random | status | hint | ack | verify | abort | history`; TUI screen 4. One drill at a time, never while a lab is started; `start`, `verify`, `abort` take the lab lock.
+- Format and rules in `drills/README.md`: `drills/<id>/` with `drill.yaml` (id, title, level, stacks, timeLimit, alert, hints, cause, causes, spoilers, touches, snapshot), README (intro = the page), `inject.sh`, `verify.sh`, `restore.sh`, `solution.sh`; shared `drills/lib.sh`. Drills: bad-deploy, oom, dns, cert-expiry, node-loss, slow-db, secret-drift.
+- CLI: `lab drills list | start <id> | start --random | status | hint | ack <cause> | verify | abort | history [--reset [id]]`; TUI screen 4. One drill at a time, never while a lab is started; `start`, `verify`, `abort` take the lab lock.
+- `ack` takes one of drill.yaml's `causes` (`ack --list`); only `cause` stops the detect timer, wrong acks are recorded. verify describes the symptom until recovery, never the cause (`spoilers`, checked by e2e); the cause shows at the end, on abort and with the last hint.
+- Test runs (e2e, `LAB_DRILLS_TEST=1`) never go into the learner's history. Use it for your own checks on the main lab.
 - Before inject, lab saves the `snapshot` objects into `~/.lab/state.json`; restore puts them back and checks them. `lab drills abort`, `lab up` and the time-limit timer (systemd user timer) restore; `lab doctor` reports an active drill. Never leave a fault behind.
-- Faults that change an app go through Argo CD (Helm parameters on the Application, lab-bootstrap told to ignore them for that app), never through Git. Drills touch only the sample app's namespaces, except `dns` (CoreDNS).
+- Faults that change an app go through Argo CD (Helm parameters on the Application, lab-bootstrap told to ignore them for that app), never through Git. Drills touch only the sample app's namespaces, except `dns` (CoreDNS), `node-loss` (stops a kind node; restore starts every stopped node) and `slow-db` (`tc netem` in Postgres's network namespace from the kind node; restore deletes every netem rule). Non-Kubernetes state restore needs goes in `DRILL_STATE`.
 - Each drill names its alert; ones kube-prometheus-stack lacks live in the obs stack's `lab-drills` rules.
-- e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -timeout 90m ./internal/drills/`.
+- e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -timeout 60m ./internal/drills/` (needs the obs, sample-app, secrets and sample-db stacks). It holds the lab lock and keeps its runs in `~/.lab/e2e/state.json`; `lab doctor` reports a run it left behind and `lab up` restores it (`-run E2EKilledDrill` tests that).
 
 ## `lab doctor` checks (phase 0)
 

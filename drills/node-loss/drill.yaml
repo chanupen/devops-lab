@@ -1,0 +1,22 @@
+id: node-loss
+title: A worker node is gone
+level: intermediate
+stacks: [sample-app, obs]
+timeLimit: 30m
+# kube-prometheus-stack's rule; the obs stack sets its "for" to 2m (upstream: 15m).
+alert:
+  name: KubeNodeNotReady
+hints:
+  - "Start where users are: kubectl -n podinfo get pods -o wide. Which pods are not serving, and where do they run? Then kubectl get nodes."
+  - "kubectl describe node <name>: Conditions say when the kubelet last reported. Its pods stay as they were (Running, but not Ready) until the node controller evicts them, 300 s after the node.kubernetes.io/unreachable taint (the pods' tolerationSeconds); then their Deployment makes new ones elsewhere."
+  - "The nodes are containers of this host's rootless Podman: podman ps -a --filter label=io.x-k8s.kind.cluster=lab. Is one of them not running?"
+  - "podman start <node>, then kubectl get nodes -w until it is Ready, and check the app. Then the question that matters: why did one node take the app down? Count the replicas, see where they ran, and ask what a PodDisruptionBudget would have changed."
+cause: worker-stopped
+causes:
+  worker-stopped: A worker node stopped, with the app's only replicas on it
+  bad-release: A new frontend release crashes
+  network-policy: A NetworkPolicy cuts the frontend off
+  dns-down: Cluster DNS is down
+  gateway-down: The Gateway's proxy is down
+spoilers: [node, NotReady, worker, stopped, podman, kubelet]
+touches: [podinfo]

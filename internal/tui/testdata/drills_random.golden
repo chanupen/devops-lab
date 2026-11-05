@@ -3,12 +3,12 @@
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────
  Drills                       │ A random drill  (which one shows when it ends)                      
  ● bad-deploy  beginner       │ ◐ running 01:00 · 29:00 left · lab puts everything back at 02:54    
- ● dns         intermediate   │ ○ the alert: not fired yet                                          
- ● oom         intermediate   │ ○ detect: not yet · a when you have found it                        
-                              │ hints 0/4 · verify runs 0                                           
-                              │                                                                     
-                              │ The pager goes off: users of the sample app at                      
-                              │ https://podinfo.localtest.me:8443 report errors. Nobody says what   
+ ○ cert-expiry intermediate   │ ○ the alert: not fired yet                                          
+ ● dns         intermediate   │ ○ detect: not yet · a names the cause you found                     
+ ● node-loss   intermediate   │ hints 0/4 · verify runs 0                                           
+ ● oom         intermediate   │                                                                     
+ ○ secret-drift intermediate  │ The pager goes off: users of the sample app at                      
+ ○ slow-db     advanced       │ https://podinfo.localtest.me:8443 report errors. Nobody says what   
                               │ changed. Find what is broken, fix it the way the team runs this     
                               │ cluster (GitOps through Argo CD), and run lab drills verify.        
                               │                                                                     

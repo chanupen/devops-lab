@@ -13,6 +13,15 @@ hints:
   - "Nothing in Git changed. Who deployed that image? argocd app history podinfo-frontend (argocd --core, or the UI at https://argocd.localtest.me:8443) lists every release."
   - "Argo CD refuses to roll back while auto-sync is on: argocd app set podinfo-frontend --sync-policy none, then argocd app rollback podinfo-frontend <id of the last good release>."
   - "No good release in the history? Undo the release itself through Argo CD: argocd app unset podinfo-frontend -p image.repository -p image.tag, and Argo CD syncs the release in Git."
+cause: bad-release
+causes:
+  bad-release: A new frontend release whose container exits at start
+  backend-down: The backend is down, so the frontend fails its calls
+  node-memory: The node is out of memory and evicts the frontend
+  gateway-route: The Gateway's route to the frontend is broken
+  registry-down: The registry cannot serve the frontend's image
+# Words verify.sh must not print before recovery.
+spoilers: ["6.15.1", release, image]
 touches: [podinfo, argocd]
 snapshot:
   - {apiVersion: argoproj.io/v1alpha1, resource: applications, namespace: argocd, name: lab-bootstrap}

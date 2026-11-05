@@ -13,6 +13,14 @@ hints:
   - "Exit code 137 with reason OOMKilled: the kernel killed the process at its cgroup's memory limit. Compare the limit (kubectl -n podinfo get deploy podinfo-backend -o yaml) with what the app needs."
   - "How much does it need? The release loads data into memory at start (look at the container's args). kubectl top only sees a pod that lives long enough; Grafana's or Prometheus's container_memory_working_set_bytes keeps the peaks."
   - "Fix the desired state, not the Deployment: Argo CD's self-heal undoes kubectl edit. argocd app set podinfo-backend -p resources.requests.memory=... -p resources.limits.memory=..."
+cause: memory-limit
+causes:
+  memory-limit: The backend's memory limit is below what the release needs
+  node-memory: The node is out of memory and evicts pods
+  liveness-probe: A liveness probe kills the backend
+  bad-release: A new backend release crashes on a bug
+  cpu-throttle: CPU throttling makes the backend time out
+spoilers: [limit, OOM, memory, "128"]
 touches: [podinfo, argocd]
 snapshot:
   - {apiVersion: argoproj.io/v1alpha1, resource: applications, namespace: argocd, name: lab-bootstrap}

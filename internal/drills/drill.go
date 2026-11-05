@@ -32,6 +32,14 @@ type Drill struct {
 	// Alert is the alert from the obs stack that should catch the fault.
 	Alert Alert    `yaml:"alert"`
 	Hints []string `yaml:"hints"`
+	// Cause is the key in Causes of what really broke. lab drills ack
+	// takes one of Causes; only Cause stops the detect timer. The cause
+	// stays hidden until the drill ends, it is aborted, or the last hint.
+	Cause  string            `yaml:"cause"`
+	Causes map[string]string `yaml:"causes"`
+	// Spoilers are words verify.sh must not print before recovery: they
+	// would name the cause. The e2e test checks them.
+	Spoilers []string `yaml:"spoilers"`
 	// Touches are the namespaces whose objects the fault may change. The
 	// e2e test compares their workloads before and after a drill.
 	Touches []string `yaml:"touches"`
@@ -63,6 +71,19 @@ func (r Ref) String() string {
 		return r.Resource + "/" + r.Name
 	}
 	return r.Resource + "/" + r.Namespace + "/" + r.Name
+}
+
+// CauseText describes the drill's cause.
+func (d Drill) CauseText() string { return d.Causes[d.Cause] }
+
+// CauseIDs are the keys of Causes, sorted, so their order gives nothing away.
+func (d Drill) CauseIDs() []string {
+	ids := make([]string, 0, len(d.Causes))
+	for id := range d.Causes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // Limit is the drill's time limit.
@@ -162,6 +183,17 @@ func (d Drill) check() error {
 	}
 	if len(d.Hints) == 0 {
 		bad("drill.yaml needs hints")
+	}
+	switch {
+	case len(d.Causes) < 3:
+		bad("drill.yaml needs causes: three or more suspects for lab drills ack")
+	case d.Causes[d.Cause] == "":
+		bad("cause %q is not one of causes", d.Cause)
+	}
+	for id := range d.Causes {
+		if !idPattern.MatchString(id) {
+			bad("cause %q is not words-with-dashes", id)
+		}
 	}
 	if len(d.Touches) == 0 {
 		bad("drill.yaml must list the namespaces it touches")

@@ -1,0 +1,23 @@
+id: slow-db
+title: The database got slow
+level: advanced
+stacks: [sample-db, obs]
+timeLimit: 30m
+# Added by the drills to the obs stack (lab-slo-sample-db rules): sample-db's
+# latency SLO with lab 3's multiwindow, multi-burn-rate alerts.
+alert:
+  name: SampleDBLatencyFastBurn
+hints:
+  - "The page is about latency, not errors. How slow, since when, and for which requests? In Prometheus or Grafana: histogram_quantile(0.99, sum by (le) (rate(sampledb_http_request_duration_seconds_bucket{path=\"/api/check\"}[2m])))."
+  - "/api/check runs one query. Is Postgres slow, or the way to it? Time the same query inside the Postgres pod, over its local socket: kubectl -n sample-db exec postgres-0 -- psql -U postgres -d app -c '\\timing' -c 'select current_user'. Then look at the pod's network."
+  - "A pod's network has its own queueing rules (tc). The Postgres image has no tc, so bring one: kubectl -n sample-db debug postgres-0 -it --profile=netadmin --target=postgres --image=docker.io/nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61 -- tc qdisc show dev eth0"
+  - "Remove what should not be there (tc qdisc del dev eth0 root in the same kind of debug container), check the latency drops, and think about who could have put it there and how you would notice sooner."
+cause: netem-delay
+causes:
+  netem-delay: Added network latency on Postgres's interface (a tc netem rule)
+  slow-query: A slow query or a missing index in Postgres
+  cpu-throttle: CPU throttling of the app or of Postgres
+  pool-exhausted: The app's connection pool is exhausted
+  disk-io: Slow disk I/O under Postgres
+spoilers: [netem, tc, qdisc, delay, network]
+touches: [sample-db]
