@@ -243,3 +243,35 @@ func TestInstanceLive(t *testing.T) {
 		t.Errorf("not listed: %+v", l)
 	}
 }
+
+func TestSpotRequestAndFleetLive(t *testing.T) {
+	tags := []ec2types.Tag{{Key: aws.String("lab"), Value: aws.String("true")}}
+	spot := func(s ec2types.SpotInstanceState) *ec2.DescribeSpotInstanceRequestsOutput {
+		return &ec2.DescribeSpotInstanceRequestsOutput{SpotInstanceRequests: []ec2types.SpotInstanceRequest{{State: s, Tags: tags}}}
+	}
+	fleet := func(typ ec2types.FleetType, st ec2types.FleetStateCode) *ec2.DescribeFleetsOutput {
+		return &ec2.DescribeFleetsOutput{Fleets: []ec2types.FleetData{{Type: typ, FleetState: st, Tags: tags}}}
+	}
+	tests := []struct {
+		name string
+		live Live
+		gone bool
+	}{
+		{"spot closed", spotRequestLive(spot(ec2types.SpotInstanceStateClosed)), true},
+		{"spot cancelled", spotRequestLive(spot(ec2types.SpotInstanceStateCancelled)), true},
+		{"spot active", spotRequestLive(spot(ec2types.SpotInstanceStateActive)), false},
+		{"spot missing", spotRequestLive(&ec2.DescribeSpotInstanceRequestsOutput{}), true},
+		{"instant fleet", fleetLive(fleet(ec2types.FleetTypeInstant, ec2types.FleetStateCodeActive)), true},
+		{"maintain fleet", fleetLive(fleet(ec2types.FleetTypeMaintain, ec2types.FleetStateCodeActive)), false},
+		{"deleted fleet", fleetLive(fleet(ec2types.FleetTypeMaintain, ec2types.FleetStateCodeDeleted)), true},
+		{"fleet missing", fleetLive(&ec2.DescribeFleetsOutput{}), true},
+	}
+	for _, tt := range tests {
+		if !tt.live.Known || tt.live.Gone != tt.gone {
+			t.Errorf("%s: live = %+v, want gone %v", tt.name, tt.live, tt.gone)
+		}
+		if !tt.gone && tt.live.Tags["lab"] != "true" {
+			t.Errorf("%s: tags = %v", tt.name, tt.live.Tags)
+		}
+	}
+}

@@ -49,6 +49,8 @@ data "aws_iam_policy_document" "reaper" {
       # Confirm before acting: the tagging API lags deletions by up to an hour.
       "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables", "ec2:DescribeInternetGateways",
       "ec2:DescribeLaunchTemplates", "ecr:DescribeRepositories", "secretsmanager:DescribeSecret",
+      # Karpenter launch records: closed spot requests and instant fleets are not billed.
+      "ec2:DescribeSpotInstanceRequests", "ec2:DescribeFleets",
       "codebuild:ListBuildsForProject", "codebuild:BatchGetBuilds",
     ]
     resources = ["*"]

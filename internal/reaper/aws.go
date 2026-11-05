@@ -68,6 +68,16 @@ func (a *AWS) Check(ctx context.Context, arn string) (Live, error) {
 		if out, err = a.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids}); err == nil {
 			live = instanceLive(out)
 		}
+	case service == "ec2" && typ == "spot-instances-request":
+		var out *ec2.DescribeSpotInstanceRequestsOutput
+		if out, err = a.EC2.DescribeSpotInstanceRequests(ctx, &ec2.DescribeSpotInstanceRequestsInput{SpotInstanceRequestIds: ids}); err == nil {
+			live = spotRequestLive(out)
+		}
+	case service == "ec2" && typ == "fleet":
+		var out *ec2.DescribeFleetsOutput
+		if out, err = a.EC2.DescribeFleets(ctx, &ec2.DescribeFleetsInput{FleetIds: ids}); err == nil {
+			live = fleetLive(out)
+		}
 	case service == "ec2" && typ == "volume":
 		var out *ec2.DescribeVolumesOutput
 		if out, err = a.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: ids}); err == nil {
@@ -186,6 +196,35 @@ func instanceLive(out *ec2.DescribeInstancesOutput) Live {
 		return Live{Known: true, Gone: true}
 	}
 	return Live{Known: true, Tags: ec2Tags(i.Tags)}
+}
+
+// spotRequestLive: a closed, cancelled or failed spot request bills
+// nothing (its instance is checked on its own); the API lists it for
+// hours after Karpenter's node goes.
+func spotRequestLive(out *ec2.DescribeSpotInstanceRequestsOutput) Live {
+	if len(out.SpotInstanceRequests) == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	r := out.SpotInstanceRequests[0]
+	switch r.State {
+	case ec2types.SpotInstanceStateClosed, ec2types.SpotInstanceStateCancelled, ec2types.SpotInstanceStateFailed:
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(r.Tags)}
+}
+
+// fleetLive: an instant fleet (how Karpenter launches nodes) is a record
+// of one launch. It bills nothing and cannot be deleted; its instances are
+// checked on their own. Other fleets are gone once deleted.
+func fleetLive(out *ec2.DescribeFleetsOutput) Live {
+	if len(out.Fleets) == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	f := out.Fleets[0]
+	if f.Type == ec2types.FleetTypeInstant || strings.HasPrefix(string(f.FleetState), "deleted") {
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(f.Tags)}
 }
 
 func ec2Live(n int, tags func() []ec2types.Tag) Live {
