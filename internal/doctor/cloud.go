@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
 
@@ -88,6 +89,10 @@ func checkReaper(ctx context.Context, p CloudProbe) Result {
 }
 
 func checkLabProfile(ctx context.Context, p CloudProbe) Result {
+	var fixer interface{ Fix() string } // a profile that does not resolve says what to check
+	if errors.As(p.SessionErr, &fixer) {
+		return fail(fixer.Fix(), "%v", p.SessionErr)
+	}
 	if p.SessionErr != nil {
 		return fail("lab cloud login (asks for the MFA code), or lab cloud baseline apply --profile devops if lab-admin does not exist yet",
 			"profile %s: %v", p.Profile, p.SessionErr)
