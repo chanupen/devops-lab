@@ -203,7 +203,7 @@ Keys follow k9s habits so there is nothing new to learn.
 
 The lab is a set of stacks; each stack is a module that declares its dependencies and runs in both modes. The tool itself only creates registry, cluster and gitops; every later stack is an Argo CD Application. Moto is not a stack: the local provider starts it when a stack such as secrets needs an AWS API. `lab up` applies the profile plus `lab.yaml`'s `extraStacks`; deployed stacks outside it are removed only with `lab up --prune`. A stack the mode's provider cannot run yet, and any stack that needs one, is shown in the plan as `- <stack>  skip: not supported by the local provider yet` with one warning, and the rest is applied; `lab up` never reports a stack as "to apply" and then fails on it.
 
-Chart values live in `gitops/stacks/<stack>/` and local-only values in `gitops/overlays/local/<stack>/`; multi-source Argo CD apps take the chart from its Helm repo and both value files from this repo. Grafana's admin login is a Secret the obs stack generates in the cluster (`monitoring/grafana-admin`, never in Git); read it with `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
+Chart values live in `gitops/stacks/<stack>/` and each mode's differences in `gitops/overlays/<mode>/<stack>/` (`local`, `cloud`); multi-source Argo CD apps take the chart from its Helm repo and both value files from this repo. Grafana's admin login is a Secret the obs stack generates in the cluster (`monitoring/grafana-admin`, never in Git); read it with `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
 
 | Stack | Installs | Depends on | Practises |
 | --- | --- | --- | --- |
@@ -378,7 +378,7 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 - **TTL on everything.** `lab up --mode cloud` writes an `expires-at` tag on every resource. The TUI shows a countdown and warns at 30 and 10 minutes; `lab extend 1h` adds time.
 - **Server-side reaper.** A small Lambda on an EventBridge schedule (every 15 minutes) destroys anything past its `expires-at`. It is created once with the account baseline, not with each lab, so it works when the laptop is closed.
 - **AWS Budgets.** Monthly budget with alerts at 50%, 80% and 100% to email; at 100% an action blocks new EC2 launches.
-- **Cheap by default.** Spot nodes through Karpenter, no NAT gateway (public subnets with tight security groups for lab nodes), one load balancer shared by all routes through Gateway API, short log retention.
+- **Cheap by default.** Spot nodes through Karpenter, no NAT gateway (public subnets with tight security groups for lab nodes), no load balancer (`lab tunnel` reaches the Gateway), short log retention.
 - **Live cost meter.** The Cost screen reads Cost Explorer for actual spend and estimates the current hourly rate from running resources.
 
 **Access and safety**
@@ -390,6 +390,26 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 - `lab down` destroys in reverse dependency order, then checks for leftovers by tag (load balancers, ENIs, EBS volumes, Elastic IPs) and lists anything still billed. Each tagged resource is looked up directly, because the tagging API lists deleted resources for up to an hour; terminated or missing ones are listed apart as stale index entries and ignored. The teardown build's final email does the same.
 
 EKS clusters bill for the control plane by the hour, so a 4-hour session costs a few US dollars; check current rates on the AWS pricing pages before setting the budget.
+
+### Cloud GitOps overlay
+
+`lab up --mode cloud` runs the same stacks as local mode: registry and cluster through OpenTofu, then gitops and every in-cluster stack through Argo CD with `gitops/overlays/cloud/`. Everything that differs by mode is in that overlay or in `internal/provider/aws`:
+
+| Stack | Cloud overlay | Provider side |
+| --- | --- | --- |
+| core | Envoy's Service is a ClusterIP (EnvoyProxy `lab-clusterip`); `lab tunnel` forwards 127.0.0.1:8080/8443 to it, so the URLs stay `https://<app>.localtest.me:8443`. Certificate and Argo CD route as in local mode. | — |
+| obs | No etcd, controller manager, scheduler or kube-proxy jobs (AWS runs the control plane). Prometheus keeps 6 hours (at most 1.5 GB) on a 2 GiB gp3 volume; Loki keeps 24 hours in an emptyDir. | — |
+| sample-app | Same routes. | — |
+| secrets | The ClusterSecretStore `lab-secrets` names no credentials: ESO reads AWS Secrets Manager with EKS Pod Identity, a role that may read only `lab/*` and `labNN/*` secrets. No endpoint override, no keys. | The role and its association are in the cluster module. |
+| sample-db | Postgres on a 1 GiB `lab-gp3` volume. | The image is built by the host's Podman for linux/arm64 (the Containerfile cross-compiles) and pushed to ECR by digest; the credentials go to Secrets Manager with the lab tags (`component=sample-db`); `lab down` deletes them without a recovery window. |
+| policy | Small requests, as locally. | — |
+| bootstrap | No chart mirror: Argo CD pulls charts from their registries. | — |
+
+- **Storage.** lab installs the EBS CSI driver (Helm, before GitOps, like the Load Balancer Controller) with the default StorageClass `lab-gp3` (gp3, encrypted, `reclaimPolicy: Delete`) and the lab tags on every volume (`extraVolumeTags`, updated by `lab extend`). `lab down` deletes every claim and waits for the volumes before removing the driver, and deletes any lab-tagged CSI volume still unattached after the cluster is gone. The leftovers check and the reaper see a volume that survives both.
+- **Registry.** ECR has one repository per image under `lab/` (`lab/sample-db`, `lab/lab02-hello`): ECR makes no repository on push. In cloud mode `LAB_REGISTRY_PUSH` and `LAB_REGISTRY_PULL` are both `<account>.dkr.ecr.ap-south-1.amazonaws.com/lab`.
+- **Secrets Manager and the reaper.** The reaper deletes expired lab-tagged secrets (`secretsmanager:DeleteSecret` with `ForceDeleteWithoutRecovery`, on `aws:ResourceTag/lab = true`), and treats one scheduled for deletion as gone.
+- **Adding a stack to a running cluster.** A running EKS cluster keeps its version, so `lab up` refuses to add a stack whose compatibility row leaves that version out, before anything changes, and says to start a new cluster (`lab down`, `lab up`).
+- **Tests.** `go test ./internal/gitops/` renders the app-of-apps for both modes with every stack on, and every Application it makes (helm template of the pinned chart with both value files, or kustomize build). In cloud mode no object may be a LoadBalancer Service or an Ingress, Envoy must be a ClusterIP, nothing may name Zot or Moto, and every volume claim must use `lab-gp3`; no Terraform module may have a NAT gateway, and every module tags through `default_tags`. Charts are cached in the user cache after the first run.
 
 ### Account baseline
 
