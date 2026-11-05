@@ -125,6 +125,11 @@ func (e *Engine) runStep(ctx context.Context, step Step, command string, w io.Wr
 	start := e.now()
 	_, _ = fmt.Fprintf(tw, "%s: %s %s\n", command, step.Action, step.Stack)
 	var err error
+	if step.With != "" {
+		_, _ = fmt.Fprintf(tw, "nothing to run: removed with the %s\n", step.With)
+		_ = tw.Flush()
+		return nil
+	}
 	if step.Action == Apply {
 		err = e.runner.Apply(ctx, step.Stack, tw)
 	} else {

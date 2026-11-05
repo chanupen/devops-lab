@@ -35,7 +35,7 @@ func newPlanCmd() *cobra.Command {
 			eng := engine.New(g, store, nil)
 			var p engine.Plan
 			if destroy {
-				p, err = eng.PlanDown(cfg, engine.DownOptions{})
+				p, err = eng.PlanDown(cfg, downOptions(cfg.Mode, nil))
 			} else {
 				p, err = eng.PlanUp(cfg, engine.PlanOptions{Prune: prune, Revision: revision, Supports: stackSupport(cfg)})
 			}

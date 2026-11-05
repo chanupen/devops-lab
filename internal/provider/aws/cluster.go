@@ -14,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -132,49 +135,92 @@ func (a *clusterAddons) Install(ctx context.Context, c ClusterInfo, tags map[str
 	return nil
 }
 
-// Remove implements inCluster: load balancers first (the controller must be
-// running to delete them), then Karpenter's nodes, then the releases.
+// Remove implements inCluster. It never waits on app health: a whole
+// environment goes with the cluster, so lab only releases what would
+// outlive it, in the order removeSteps gives.
 func (a *clusterAddons) Remove(ctx context.Context, log io.Writer) error {
 	clients, err := a.clients(log)
 	if err != nil {
 		return err
 	}
-	if err := deleteLoadBalancers(ctx, clients, a.cfg, log); err != nil {
-		return err
-	}
-	// The EBS CSI driver must still run to delete the volumes behind the
-	// claims; the sweep after tofu destroy catches any it leaves.
-	if err := deleteVolumes(ctx, clients, log); err != nil {
-		_, _ = fmt.Fprintf(log, "volumes: %v\n", err)
-	}
-	if err := clients.Dynamic.Resource(NodePoolGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-		_, _ = fmt.Fprintf(log, "delete NodePools: %v\n", err)
-	} else {
-		wctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		err := kube.WaitAllGone(wctx, clients.Dynamic, NodeClaimGVR, log)
-		cancel()
-		if err != nil {
-			_, _ = fmt.Fprintf(log, "Karpenter nodes: %v\n", err)
+	var errs []error
+	for _, s := range a.removeSteps(clients) {
+		_, _ = fmt.Fprintf(log, "teardown: %s\n", s.name)
+		if err := s.run(ctx, log); err != nil {
+			if s.fatal {
+				return fmt.Errorf("%s: %w", s.name, err)
+			}
+			_, _ = fmt.Fprintf(log, "%s: %v\n", s.name, err)
+			errs = append(errs, fmt.Errorf("%s: %w", s.name, err))
 		}
 	}
-	// Deleting the EC2NodeClass lets Karpenter remove the instance profiles
-	// it made for the node role; IAM cannot delete a role still in one.
-	if err := clients.Dynamic.Resource(EC2NodeClassGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
-		_, _ = fmt.Fprintf(log, "delete EC2NodeClasses: %v\n", err)
-	} else {
-		wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err := kube.WaitAllGone(wctx, clients.Dynamic, EC2NodeClassGVR, log)
-		cancel()
-		if err != nil {
-			_, _ = fmt.Fprintf(log, "EC2NodeClasses: %v\n", err)
-		}
-	}
-	return errors.Join(
-		a.helm.Uninstall(ctx, EBSCSIChart.Name, EBSCSIChart.Namespace, log),
-		a.helm.Uninstall(ctx, LBCChart.Name, LBCChart.Namespace, log),
-		a.helm.Uninstall(ctx, KarpenterChart.Name, KarpenterChart.Namespace, log),
-	)
+	return errors.Join(errs...)
 }
+
+// removeStep is one step of Remove. A fatal step stops the teardown: going
+// on would leak what it guards (a load balancer, an EBS volume) once tofu
+// deletes the cluster.
+type removeStep struct {
+	name  string
+	fatal bool
+	run   func(ctx context.Context, log io.Writer) error
+}
+
+// removeSteps is the teardown order. GitOps stops first, so Argo CD does
+// not recreate what lab deletes. Load balancers go while their controller
+// runs, and their network interfaces with them. Stateful workloads stop so
+// their claims can go, and the EBS CSI driver deletes the volumes. Then
+// Karpenter's nodes, its node classes (and instance profiles), and the
+// releases. tofu destroy and the EC2 sweeps after it catch the rest.
+func (a *clusterAddons) removeSteps(c *kube.Clients) []removeStep {
+	return []removeStep{
+		{name: "stop Argo CD", run: func(ctx context.Context, log io.Writer) error { return stopGitOps(ctx, c, log) }},
+		{name: "load balancers", fatal: true, run: func(ctx context.Context, log io.Writer) error {
+			return deleteLoadBalancers(ctx, c, a.cfg, log)
+		}},
+		{name: "load balancer network interfaces", fatal: true, run: func(ctx context.Context, log io.Writer) error {
+			return waitLoadBalancerENIs(ctx, a.cfg, ClusterName, log)
+		}},
+		{name: "volumes", fatal: true, run: func(ctx context.Context, log io.Writer) error { return deleteVolumes(ctx, c, log) }},
+		{name: "Karpenter nodes", run: func(ctx context.Context, log io.Writer) error {
+			if err := c.Dynamic.Resource(NodePoolGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+				return err
+			}
+			wctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			return kube.WaitAllGone(wctx, c.Dynamic, NodeClaimGVR, log)
+		}},
+		// Deleting the EC2NodeClass lets Karpenter remove the instance
+		// profiles it made for the node role; IAM cannot delete a role
+		// still in one.
+		{name: "Karpenter node classes", run: func(ctx context.Context, log io.Writer) error {
+			if err := c.Dynamic.Resource(EC2NodeClassGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+				return err
+			}
+			wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			return kube.WaitAllGone(wctx, c.Dynamic, EC2NodeClassGVR, log)
+		}},
+		{name: "releases", run: func(ctx context.Context, log io.Writer) error {
+			return errors.Join(
+				a.helm.Uninstall(ctx, EBSCSIChart.Name, EBSCSIChart.Namespace, log),
+				a.helm.Uninstall(ctx, LBCChart.Name, LBCChart.Namespace, log),
+				a.helm.Uninstall(ctx, KarpenterChart.Name, KarpenterChart.Namespace, log),
+			)
+		}},
+	}
+}
+
+// stopGitOps scales Argo CD's application controller to zero, so self-heal
+// does not bring back the Services and claims lab deletes. A cluster
+// without Argo CD is fine.
+func stopGitOps(ctx context.Context, c *kube.Clients, log io.Writer) error {
+	_, _ = fmt.Fprintf(log, "scale StatefulSet %s/%s to 0\n", gitops.Namespace, argoController)
+	return scaleToZero(ctx, c.Core.AppsV1().StatefulSets(gitops.Namespace), argoController)
+}
+
+// argoController is Argo CD's application controller StatefulSet.
+const argoController = "argocd-application-controller"
 
 func (a *clusterAddons) clients(log io.Writer) (*kube.Clients, error) {
 	cfg, err := kube.RESTConfig(a.kubeconfig)
@@ -239,6 +285,11 @@ func deleteLoadBalancers(ctx context.Context, c *kube.Clients, cfg aws.Config, l
 // controller deletes the EBS volumes (reclaimPolicy Delete) while it still
 // runs.
 func deleteVolumes(ctx context.Context, c *kube.Clients, log io.Writer) error {
+	// A claim in use is not deleted until its pod goes, so stop the
+	// workloads first.
+	if err := stopWorkloads(ctx, c, log); err != nil {
+		return err
+	}
 	pvcs, err := c.Core.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -268,6 +319,98 @@ func deleteVolumes(ctx context.Context, c *kube.Clients, log io.Writer) error {
 			return fmt.Errorf("%d EBS volumes still exist: %s", len(left), strings.Join(left, ", "))
 		}
 		_, _ = fmt.Fprintf(log, "%d EBS volumes still deleting\n", len(left))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// stopWorkloads scales every Deployment and StatefulSet outside
+// kube-system to zero. Operators stop with them, so none scales a
+// StatefulSet back up (the Prometheus operator would). kube-system keeps
+// the EBS CSI driver, Karpenter and the Load Balancer Controller, which the
+// rest of the teardown needs.
+func stopWorkloads(ctx context.Context, c *kube.Clients, log io.Writer) error {
+	apps := c.Core.AppsV1()
+	deps, err := apps.Deployments("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, d := range deps.Items {
+		if d.Namespace == "kube-system" || (d.Spec.Replicas != nil && *d.Spec.Replicas == 0) {
+			continue
+		}
+		_, _ = fmt.Fprintf(log, "scale Deployment %s/%s to 0\n", d.Namespace, d.Name)
+		if err := scaleToZero(ctx, apps.Deployments(d.Namespace), d.Name); err != nil {
+			return err
+		}
+	}
+	sets, err := apps.StatefulSets("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, s := range sets.Items {
+		if s.Namespace == "kube-system" || (s.Spec.Replicas != nil && *s.Spec.Replicas == 0) {
+			continue
+		}
+		_, _ = fmt.Fprintf(log, "scale StatefulSet %s/%s to 0\n", s.Namespace, s.Name)
+		if err := scaleToZero(ctx, apps.StatefulSets(s.Namespace), s.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scaler is the scale subresource of Deployments and StatefulSets.
+type scaler interface {
+	GetScale(ctx context.Context, name string, opts metav1.GetOptions) (*autoscalingv1.Scale, error)
+	UpdateScale(ctx context.Context, name string, scale *autoscalingv1.Scale, opts metav1.UpdateOptions) (*autoscalingv1.Scale, error)
+}
+
+func scaleToZero(ctx context.Context, s scaler, name string) error {
+	sc, err := s.GetScale(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	sc.Spec.Replicas = 0
+	_, err = s.UpdateScale(ctx, name, sc, metav1.UpdateOptions{})
+	return err
+}
+
+// waitLoadBalancerENIs waits until the cluster's VPC holds no load
+// balancer network interface ("ELB ..."): AWS removes them some time
+// after the load balancer, and tofu cannot delete subnets that hold one.
+func waitLoadBalancerENIs(ctx context.Context, cfg aws.Config, cluster string, log io.Writer) error {
+	out, err := eks.NewFromConfig(cfg).DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
+	if err != nil {
+		return err
+	}
+	if out.Cluster == nil || out.Cluster.ResourcesVpcConfig == nil || out.Cluster.ResourcesVpcConfig.VpcId == nil {
+		return nil
+	}
+	vpc := *out.Cluster.ResourcesVpcConfig.VpcId
+	c := ec2.NewFromConfig(cfg)
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		enis, err := c.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{Filters: []ec2types.Filter{
+			{Name: aws.String("vpc-id"), Values: []string{vpc}},
+			{Name: aws.String("description"), Values: []string{"ELB *"}},
+		}})
+		if err != nil {
+			return err
+		}
+		if len(enis.NetworkInterfaces) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d load balancer network interfaces still in %s", len(enis.NetworkInterfaces), vpc)
+		}
+		_, _ = fmt.Fprintf(log, "%d load balancer network interfaces still deleting\n", len(enis.NetworkInterfaces))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

@@ -50,7 +50,7 @@ func (a tuiActions) Plan(_ context.Context, req tui.Request) (engine.Plan, error
 	}
 	eng := engine.New(g, a.store, nil)
 	if req.Down {
-		return eng.PlanDown(a.cfg, engine.DownOptions{Stacks: req.Stacks})
+		return eng.PlanDown(a.cfg, downOptions(a.cfg.Mode, req.Stacks))
 	}
 	return eng.PlanUp(a.cfg, engine.PlanOptions{Stacks: req.Stacks, Supports: stackSupport(a.cfg)})
 }
@@ -74,7 +74,7 @@ func (a tuiActions) Run(ctx context.Context, req tui.Request, progress func(tui.
 	eng := engine.New(g, a.store, nil)
 	var p engine.Plan
 	if req.Down {
-		p, err = eng.PlanDown(a.cfg, engine.DownOptions{Stacks: req.Stacks})
+		p, err = eng.PlanDown(a.cfg, downOptions(a.cfg.Mode, req.Stacks))
 	} else {
 		p, err = eng.PlanUp(a.cfg, engine.PlanOptions{Stacks: req.Stacks, Supports: prov.Supports})
 	}

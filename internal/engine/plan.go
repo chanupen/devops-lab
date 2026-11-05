@@ -27,6 +27,9 @@ type Step struct {
 	Stack  string `json:"stack"`
 	Action Action `json:"action"`
 	Reason string `json:"reason"`
+	// With is set on a destroy that runs nothing: the stack lives in this
+	// stack (the cluster) and goes when it does.
+	With string `json:"with,omitempty"`
 }
 
 // Plan is an ordered list of steps for one mode and profile.
@@ -74,6 +77,12 @@ type DownOptions struct {
 	// Stacks destroys only these stacks and the deployed stacks that need
 	// them, dependents first. Empty destroys everything deployed.
 	Stacks []string
+	// WithCluster names the stack the others run in. When the whole
+	// environment goes (no Stacks), the deployed stacks that depend on it
+	// are not destroyed one by one, waiting on app health; they go with
+	// it (Step.With), and its destroy releases what would outlive it.
+	// Empty destroys every stack itself.
+	WithCluster string
 }
 
 // RevisionStack is the stack whose Git revision a plan tracks.
@@ -157,7 +166,7 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 	}
 	if opts.Prune {
 		for _, s := range reversed(extra) {
-			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + profile})
+			p.Steps = append(p.Steps, Step{s, Destroy, "not in profile " + profile, ""})
 		}
 	}
 	skipped := map[string]bool{}
@@ -167,33 +176,33 @@ func PlanUp(g *Graph, cfg config.Config, st state.State, opts PlanOptions) (Plan
 		if why := skipReason(g, cfg.Mode, s, opts.Supports, skipped); why != "" && !deployed(st, s) {
 			skipped[s] = true
 			skips = append(skips, s)
-			p.Steps = append(p.Steps, Step{s, Skip, why})
+			p.Steps = append(p.Steps, Step{s, Skip, why, ""})
 			continue
 		}
 		switch {
 		case s == RevisionStack && ss.Status == state.Applied && st.Revision != rev:
-			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev)})
+			p.Steps = append(p.Steps, Step{s, Apply, fmt.Sprintf("revision %s -> %s", orUnrecorded(st.Revision), rev), ""})
 		case s == RevisionStack && ss.Status == state.Applied && opts.RefreshRepo:
-			p.Steps = append(p.Steps, Step{s, Apply, "reload the repository Secret from repo.sshKeyFile"})
+			p.Steps = append(p.Steps, Step{s, Apply, "reload the repository Secret from repo.sshKeyFile", ""})
 		case ss.Status == state.Applied && opts.Reapply[s] != "":
-			p.Steps = append(p.Steps, Step{s, Apply, opts.Reapply[s]})
+			p.Steps = append(p.Steps, Step{s, Apply, opts.Reapply[s], ""})
 		case ss.Status == state.Applied:
-			p.Steps = append(p.Steps, Step{s, Keep, "applied"})
+			p.Steps = append(p.Steps, Step{s, Keep, "applied", ""})
 		case ss.Status == state.Failed:
-			p.Steps = append(p.Steps, Step{s, Apply, "retry: " + ss.Error})
+			p.Steps = append(p.Steps, Step{s, Apply, "retry: " + ss.Error, ""})
 		default:
-			p.Steps = append(p.Steps, Step{s, Apply, "not deployed"})
+			p.Steps = append(p.Steps, Step{s, Apply, "not deployed", ""})
 		}
 	}
 	if len(opts.Stacks) > 0 {
 		for _, s := range extra {
-			p.Steps = append(p.Steps, Step{s, Keep, "not selected"})
+			p.Steps = append(p.Steps, Step{s, Keep, "not selected", ""})
 		}
 	} else if !opts.Prune && len(extra) > 0 {
 		// Desired stacks never depend on extras (desired is closed under
 		// dependencies), so listing extras last keeps the order valid.
 		for _, s := range extra {
-			p.Steps = append(p.Steps, Step{s, Keep, keepReason})
+			p.Steps = append(p.Steps, Step{s, Keep, keepReason, ""})
 		}
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d deployed %s not in profile %s, kept: %s. Run lab up --prune to remove.",
 			len(extra), plural(len(extra), "stack is", "stacks are"), profile, strings.Join(extra, ", ")))
@@ -255,13 +264,15 @@ func PlanDown(g *Graph, cfg config.Config, st state.State, opts DownOptions) (Pl
 			continue
 		}
 		switch {
+		case len(opts.Stacks) == 0 && g.inside(s, opts.WithCluster) && deployed(st, opts.WithCluster):
+			p.Steps = append(p.Steps, Step{Stack: s, Action: Destroy, Reason: "removed with the " + opts.WithCluster, With: opts.WithCluster})
 		case len(opts.Stacks) == 0:
-			p.Steps = append(p.Steps, Step{s, Destroy, "lab down"})
+			p.Steps = append(p.Steps, Step{s, Destroy, "lab down", ""})
 		case slices.Contains(opts.Stacks, s):
-			p.Steps = append(p.Steps, Step{s, Destroy, "selected"})
+			p.Steps = append(p.Steps, Step{s, Destroy, "selected", ""})
 		default:
 			if by := g.neededBy(s, opts.Stacks); by != "" {
-				p.Steps = append(p.Steps, Step{s, Destroy, "needs " + by})
+				p.Steps = append(p.Steps, Step{s, Destroy, "needs " + by, ""})
 			}
 		}
 	}
