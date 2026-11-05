@@ -467,6 +467,10 @@ func TestArgoValues(t *testing.T) {
 	if !strings.Contains(lua, "obj.status.health.status") {
 		t.Errorf("Application health check missing: %q", lua)
 	}
+	ign, _ := get("configs", "cm", "resource.customizations.ignoreDifferences.argoproj.io_Application").(string)
+	if !strings.Contains(ign, "pre-delete-finalizer.argocd.argoproj.io") {
+		t.Errorf("Application pre-delete finalizers not ignored: %q", ign)
+	}
 }
 
 func TestExpand(t *testing.T) {
