@@ -118,6 +118,9 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 						return err
 					}
 				}
+				if err := prefetchCharts(cmd.Context(), prov, p, cmd.OutOrStdout()); err != nil {
+					return err
+				}
 				if err := run(cmd, prov, g, store, p, command); err != nil {
 					warnHalfBuilt(cmd, flags, store)
 					return err
@@ -345,4 +348,22 @@ func cloudDownCommand(flags labFlags) string {
 		c += " --state " + flags.statePath
 	}
 	return c
+}
+
+// prefetchCharts fetches the Helm charts the plan's applies install from
+// the host, before the first stack runs. A chart repository that does not
+// answer then fails lab up with nothing built, instead of after the
+// cluster stack has run for ten minutes.
+func prefetchCharts(ctx context.Context, prov provider, p engine.Plan, out io.Writer) error {
+	pf, ok := prov.(chartPrefetcher)
+	if !ok {
+		return nil
+	}
+	var stacks []string
+	for _, s := range p.Steps {
+		if s.Action == engine.Apply {
+			stacks = append(stacks, s.Stack)
+		}
+	}
+	return pf.PrefetchCharts(ctx, stacks, out)
 }

@@ -91,6 +91,9 @@ func (a tuiActions) Run(ctx context.Context, req tui.Request, progress func(tui.
 	if missing := unsupported(p, prov); len(missing) > 0 {
 		return p, fmt.Errorf("the %s provider cannot run %s yet", p.Mode, strings.Join(missing, ", "))
 	}
+	if err := prefetchCharts(ctx, prov, p, out); err != nil {
+		return p, err
+	}
 	_, _ = fmt.Fprintf(out, "\n$ %s\n", cmd)
 	store := teeStore{Store: a.store, tee: out}
 	err = engine.New(g, store, prov).Execute(ctx, p, cmd, func(e engine.Event) {

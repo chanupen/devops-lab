@@ -73,6 +73,7 @@ func newCloudProvider(cfg config.Config, home string, opts runOptions) (*labaws.
 		TofuHome:   filepath.Join(filepath.Dir(home), "tofu"),
 		Tofu:       tofu,
 		Kubeconfig: filepath.Join(home, "kubeconfig"),
+		ChartCache: chartCache("cloud", home),
 		Profile:    labaws.DefaultProfile,
 		Owner:      cfg.Cloud.Owner,
 		TTL:        time.Duration(cfg.Cloud.TTL),

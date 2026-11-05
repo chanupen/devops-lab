@@ -70,7 +70,8 @@ const GrafanaSecret = "grafana-admin"
 // NewHelm returns the Helm v4 SDK client the GitOps runner uses, for
 // providers that install a chart themselves before GitOps exists (the cloud
 // provider's Karpenter and Load Balancer Controller).
-func NewHelm(kubeconfig, home string) Helm { return newSDKHelm(kubeconfig, home) }
+// charts is the chart cache the local and cloud labs share.
+func NewHelm(kubeconfig, home, charts string) Helm { return newSDKHelm(kubeconfig, home, charts) }
 
 // Helm installs and removes one release. The Helm v4 SDK implements it; tests
 // use a fake.
@@ -81,6 +82,10 @@ type Helm interface {
 	// Uninstall removes the release; a missing release is not an error.
 	Uninstall(ctx context.Context, name, namespace string, log io.Writer) error
 }
+
+// ArgoCDChart is the Argo CD release the gitops stack installs from the
+// host, without values: lab up prefetches its chart.
+var ArgoCDChart = HelmRelease{Name: Release, Namespace: Namespace, RepoURL: ArgoChartRepo, Chart: ArgoChart, Version: ArgoChartVersion}
 
 // HelmRelease is a chart from a Helm repository, or, with an empty
 // RepoURL, an oci:// chart reference.
@@ -114,9 +119,10 @@ type Runner struct {
 	password func() (string, error)
 }
 
-// New returns a Runner that reaches the cluster through kubeconfig.
-func New(opts Options, kubeconfig, helmHome string) *Runner {
-	return newRunner(opts, newSDKHelm(kubeconfig, helmHome), func(log io.Writer) (*kube.Clients, error) {
+// New returns a Runner that reaches the cluster through kubeconfig. Chart
+// archives go to charts, the cache the local and cloud labs share.
+func New(opts Options, kubeconfig, helmHome, charts string) *Runner {
+	return newRunner(opts, newSDKHelm(kubeconfig, helmHome, charts), func(log io.Writer) (*kube.Clients, error) {
 		cfg, err := kube.RESTConfig(kubeconfig)
 		if err != nil {
 			return nil, err
@@ -188,11 +194,9 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 		return fmt.Errorf("deploy key: %w", err)
 	}
 	logf(log, "installing Argo CD (chart %s %s)", ArgoChart, ArgoChartVersion)
-	if err := r.helm.Ensure(ctx, HelmRelease{
-		Name: Release, Namespace: Namespace,
-		RepoURL: ArgoChartRepo, Chart: ArgoChart, Version: ArgoChartVersion,
-		Values: argoValues(), Timeout: r.opts.Timeout,
-	}, log); err != nil {
+	argo := ArgoCDChart
+	argo.Values, argo.Timeout = argoValues(), r.opts.Timeout
+	if err := r.helm.Ensure(ctx, argo, log); err != nil {
 		return fmt.Errorf("install Argo CD: %w", err)
 	}
 	c, err := r.clients(log)

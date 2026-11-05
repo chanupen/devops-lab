@@ -15,6 +15,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -645,5 +646,74 @@ func TestUpCloudFailureSaysLabDown(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// prefetchProvider is a fakeProvider whose charts fail or succeed.
+type prefetchProvider struct {
+	*fakeProvider
+	err    error
+	stacks []string
+}
+
+func (p *prefetchProvider) PrefetchCharts(_ context.Context, stacks []string, log io.Writer) error {
+	p.stacks = stacks
+	_, _ = io.WriteString(log, "prefetch\n")
+	return p.err
+}
+
+// TestUpPrefetchesChartsFirst: lab up fetches charts for the stacks it
+// applies before the first stack, and a fetch failure applies nothing.
+func TestUpPrefetchesChartsFirst(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantCalls []string
+	}{
+		{"charts fetched, stacks run", nil, []string{"apply registry", "apply cluster"}},
+		{"chart repo down, nothing runs", errors.New("charts: fetch chart argo-cd: timeout; nothing was applied"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			pp := &prefetchProvider{fakeProvider: &fakeProvider{}, err: tt.err}
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { return pp, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"up", "--stacks", "cluster", "--config", cfgPath, "--state", statePath})
+			err := cmd.Execute()
+			if (err != nil) != (tt.err != nil) {
+				t.Fatalf("err %v, want %v\n%s", err, tt.err, out.String())
+			}
+			if !slices.Equal(pp.calls, tt.wantCalls) {
+				t.Errorf("provider calls %v, want %v", pp.calls, tt.wantCalls)
+			}
+			if !slices.Equal(pp.stacks, []string{"registry", "cluster"}) {
+				t.Errorf("prefetched for %v, want the applied stacks", pp.stacks)
+			}
+			if i, j := strings.Index(out.String(), "prefetch"), strings.Index(out.String(), "$ lab up"); tt.err == nil && (i < 0 || j < i) {
+				t.Errorf("prefetch must come before the first stack:\n%s", out.String())
+			}
+		})
+	}
+}
+
+func TestChartCacheShared(t *testing.T) {
+	if l, c := chartCache("local", "/h/.lab"), chartCache("cloud", "/h/.lab/cloud"); l != c || l != "/h/.lab/helm/charts" {
+		t.Errorf("local %s, cloud %s: want both /h/.lab/helm/charts", l, c)
+	}
+}
+
+func TestPrefetchChartsPicksStacks(t *testing.T) {
+	// No charts for the stacks: nothing to fetch, no network.
+	l := labRunner{charts: map[string][]gitops.HelmRelease{"gitops": {gitops.ArgoCDChart}}}
+	var log bytes.Buffer
+	if err := l.PrefetchCharts(context.Background(), []string{"registry", "core"}, &log); err != nil || log.Len() != 0 {
+		t.Errorf("err %v, log %q: want nothing fetched", err, log.String())
 	}
 }

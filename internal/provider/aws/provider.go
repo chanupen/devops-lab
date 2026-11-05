@@ -40,6 +40,7 @@ func Stacks() []string { return []string{"registry", "cluster"} }
 type Options struct {
 	RepoRoot   string        // the repo: modules are under infra/terraform/aws/cluster
 	Home       string        // the cloud lab's home, ~/.lab/cloud: expires-at, kubeconfig, helm
+	ChartCache string        // Helm chart archives, shared with the local lab: ~/.lab/helm/charts
 	TofuHome   string        // where module work dirs go, ~/.lab/tofu
 	Tofu       string        // path to the tofu binary
 	Kubeconfig string        // written after the cluster apply
@@ -109,7 +110,7 @@ func New(ctx context.Context, s Session, opts Options) (*Provider, error) {
 	}
 	p := &Provider{opts: opts, cfg: cfg, env: env, account: account, myIP: PublicIP, now: time.Now,
 		teardown: func(ctx context.Context) (string, error) { return RunningTeardown(ctx, cfg) }}
-	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"))
+	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"), opts.ChartCache)
 	p.secrets = NewSecrets(cfg)
 	p.inCluster = &clusterAddons{helm: p.helm, kubeconfig: opts.Kubeconfig, cfg: cfg, timeout: opts.Timeout}
 	return p, nil

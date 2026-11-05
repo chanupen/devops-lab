@@ -46,6 +46,12 @@ var (
 	}
 )
 
+// ClusterCharts are the charts the cluster stack installs from the host;
+// lab up prefetches them before anything is built.
+func ClusterCharts() []gitops.HelmRelease {
+	return []gitops.HelmRelease{KarpenterChart, LBCChart, EBSCSIChart}
+}
+
 // GP3StorageClass is the cloud lab's default StorageClass.
 const GP3StorageClass = "lab-gp3"
 

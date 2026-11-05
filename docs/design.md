@@ -189,6 +189,7 @@ Keys follow k9s habits so there is nothing new to learn.
 - Watch Kubernetes with client-go informers; never poll `kubectl`.
 - `lab up` or `lab down` in another shell shows up within 2 seconds: the TUI checks the modification times of `state.json` and the kubeconfig (a file check, not a cluster call), re-reads the state, and restarts its informers when the cluster changes.
 - Call libraries, not CLIs: Helm SDK, kind library, terraform-exec, AWS SDK v2. Shell-outs only where no library exists.
+- Helm charts lab installs from the host (Argo CD; in cloud mode Karpenter, the AWS Load Balancer Controller and the EBS CSI driver) live in one cache both modes share, `~/.lab/helm/charts`, keyed by chart and version. `lab up` and the TUI fetch every chart the plan needs before the first stack runs, so an unreachable chart repository stops the run with nothing built. A download is tried 6 times with backoff (5 s doubling to 1 min) on top of Helm's 120 s request timeout, about 14 minutes in all.
 - Log panes use a ring buffer (5,000 lines) and redraw at most 20 times a second, so memory and CPU stay flat.
 - Long lists render only the visible rows.
 

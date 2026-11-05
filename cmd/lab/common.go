@@ -142,6 +142,44 @@ type labRunner struct {
 	start func(context.Context, io.Writer) ([]local.Unit, error)
 	// stale lists deployed stacks to re-apply, with why; nil in cloud mode.
 	stale func(context.Context) (map[string]string, error)
+	// charts are the Helm charts each stack installs from the host, and
+	// where they are cached; lab up fetches them before it applies anything.
+	charts                map[string][]gitops.HelmRelease
+	helmHome, chartsCache string
+}
+
+// chartPrefetcher is implemented by providers whose stacks install Helm
+// charts from the host.
+type chartPrefetcher interface {
+	PrefetchCharts(ctx context.Context, stacks []string, log io.Writer) error
+}
+
+// PrefetchCharts implements chartPrefetcher: it puts the charts the given
+// stacks install into the shared cache, so a chart repository that does
+// not answer stops lab up before anything is built.
+func (l labRunner) PrefetchCharts(ctx context.Context, stacks []string, log io.Writer) error {
+	var rs []gitops.HelmRelease
+	for _, s := range stacks {
+		rs = append(rs, l.charts[s]...)
+	}
+	if len(rs) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(log, "\nHelm charts, fetched before any stack runs:")
+	if err := gitops.FetchCharts(ctx, l.helmHome, l.chartsCache, rs, log); err != nil {
+		return fmt.Errorf("charts: %w; nothing was applied", err)
+	}
+	return nil
+}
+
+// chartCache is the Helm chart cache both modes share: ~/.lab/helm/charts
+// for the default state, beside the state file otherwise. A cloud lab's
+// home is the cloud directory inside the lab home.
+func chartCache(mode, home string) string {
+	if mode == "cloud" {
+		home = filepath.Dir(home)
+	}
+	return filepath.Join(home, "helm", "charts")
 }
 
 // staleReporter is implemented by providers that can tell a deployed stack
@@ -282,7 +320,8 @@ type providerFactory func(cfg config.Config, home string, opts runOptions) (prov
 // in-cluster stacks to the GitOps runner, which is the same in every mode.
 func defaultProvider(cfg config.Config, home string, opts runOptions) (provider, error) {
 	kubeconfig := filepath.Join(home, "kubeconfig")
-	l := labRunner{Router: engine.Router{}}
+	l := labRunner{Router: engine.Router{}, charts: map[string][]gitops.HelmRelease{},
+		helmHome: filepath.Join(home, "helm"), chartsCache: chartCache(cfg.Mode, home)}
 	var cloud *labaws.Provider
 	var lp *local.Provider
 	switch cfg.Mode {
@@ -308,6 +347,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
+		l.charts["cluster"] = labaws.ClusterCharts()
 		// No load balancer: lab tunnel forwards the same ports a local lab
 		// publishes, so the URLs are the same too.
 		l.url = local.AppURL
@@ -318,7 +358,8 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
 	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) { // Flux is the second option and not built yet
-		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
+		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, l.helmHome, l.chartsCache)
+		l.charts[engine.RevisionStack] = []gitops.HelmRelease{gitops.ArgoCDChart}
 		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
