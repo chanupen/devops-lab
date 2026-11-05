@@ -112,6 +112,18 @@ func TestSpotNodePool(t *testing.T) {
 	if len(want) > 0 {
 		t.Errorf("missing requirements %v", want)
 	}
+	// No micro or small nodes: with prefix delegation they take 32 pods on
+	// 1-2 GiB.
+	memFloor := false
+	for _, r := range reqs {
+		m := r.(map[string]any)
+		if m["key"] == "karpenter.k8s.aws/instance-memory" && m["operator"] == "Gt" && slices.Equal(m["values"].([]any), []any{"4000"}) {
+			memFloor = true
+		}
+	}
+	if !memFloor {
+		t.Error("no 4 GiB memory floor")
+	}
 	// lab extend changes the node class tags; that must not roll nodes.
 	budgets := field(t, np, "spec", "disruption", "budgets").([]any)
 	if b := budgets[0].(map[string]any); b["nodes"] != "0" || !slices.Equal(b["reasons"].([]any), []any{"Drifted"}) {

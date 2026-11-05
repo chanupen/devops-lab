@@ -380,7 +380,7 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 - **Server-side reaper.** A small Lambda on an EventBridge schedule (every 15 minutes) destroys anything past its `expires-at`. It is created once with the account baseline, not with each lab, so it works when the laptop is closed.
 - **AWS Budgets.** Monthly budget with alerts at 50%, 80% and 100% to email; at 100% an action blocks new EC2 launches.
 - **Cheap by default.** Spot nodes through Karpenter, no NAT gateway (public subnets with tight security groups for lab nodes), no load balancer (`lab tunnel` reaches the Gateway), short log retention.
-- **Small nodes hold enough pods.** The VPC CNI runs with prefix delegation, so a t4g.small is not capped at 11 pods. The managed node group's max pods follows it; Karpenter's EC2NodeClass sets 16 pods per vCPU (at most 110), which keeps kube-reserved memory small on 2 GiB nodes. DaemonSets (node-exporter, the OTel Collector) run as `system-node-critical`, so they win a full node's last slot.
+- **Small nodes hold enough pods.** The VPC CNI runs with prefix delegation, so a t4g.small is not capped at 11 pods. The managed node group's max pods follows it; Karpenter's EC2NodeClass sets 16 pods per vCPU (at most 110), and the spot NodePool asks for at least 4 GiB (t4g.medium and up): with 32 pods a t4g.micro took Argo CD by its small requests and ran out of memory (session 4). DaemonSets (node-exporter, the OTel Collector) run as `system-node-critical`, so they win a full node's last slot.
 - **Live cost meter.** The Cost screen reads Cost Explorer for actual spend and estimates the current hourly rate from running resources.
 
 **Access and safety**

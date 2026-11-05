@@ -75,6 +75,10 @@ const (
 	MaxPods     = 110
 )
 
+// SpotMinMemoryMiB is the spot NodePool's floor, exclusive: 4 GiB nodes
+// (t4g.medium) and up.
+const SpotMinMemoryMiB = "4000"
+
 // SpotCPULimit caps the spot NodePool: at most 8 vCPUs of spot nodes.
 const SpotCPULimit = "8"
 
@@ -520,7 +524,7 @@ func EC2NodeClass(c ClusterInfo, tags map[string]string) *unstructured.Unstructu
 			// The VPC CNI runs with prefix delegation, which Karpenter does
 			// not detect: without this, max pods follows the ENI limit (11
 			// on a t4g.small). 16 per vCPU keeps kube-reserved memory, which
-			// grows with max pods, small on 2 GiB nodes.
+			// grows with max pods, small on the smallest (4 GiB) nodes.
 			"kubelet": map[string]any{"podsPerCore": int64(PodsPerCore), "maxPods": int64(MaxPods)},
 			"metadataOptions": map[string]any{
 				"httpEndpoint": "enabled", "httpTokens": "required", "httpPutResponseHopLimit": int64(1),
@@ -560,6 +564,10 @@ func SpotNodePool() *unstructured.Unstructured {
 					req("karpenter.sh/capacity-type", "In", "spot"),
 					req("karpenter.k8s.aws/instance-category", "In", "c", "m", "r", "t"),
 					req("karpenter.k8s.aws/instance-cpu", "Lt", "9"),
+					// At least 4 GiB. With prefix delegation a t4g.micro (1 GiB)
+					// takes 32 pods; Karpenter packed Argo CD onto one by its
+					// small requests and the node ran out of memory.
+					req("karpenter.k8s.aws/instance-memory", "Gt", SpotMinMemoryMiB),
 				},
 				"expireAfter": "24h",
 			}},
