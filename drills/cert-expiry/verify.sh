@@ -2,8 +2,8 @@
 # Recovered: sample-db's certificate is renewed (its renewal time is not
 # overdue) and Ready, the CA Issuer is Ready with the CA Secret cert-manager
 # manages, and the fix came through Argo CD (its last sync is not the bad
-# release). Until the certificate renews, the message describes the
-# symptom only.
+# release). Until the certificate renews, or while the CA Secret the Issuer
+# names does not exist, the message describes the symptom only.
 # shellcheck source=SCRIPTDIR/../lib.sh
 . "$(dirname "$0")/../lib.sh"
 need_cluster
@@ -16,8 +16,14 @@ if [ -z "$renew" ] || [ "$(date -d "$renew" +%s)" -lt $(($(date +%s) - 60)) ]; t
 fi
 [ "$(jq -r '.status.conditions[]? | select(.type == "Ready") | .status' <<<"$c")" = True ] || fail "sample-db's certificate is not Ready"
 i=$(kubectl -n $ns get issuer sample-db-ca -o json) || fail "no Issuer sample-db-ca"
-[ "$(jq -r '.spec.ca.secretName' <<<"$i")" = sample-db-ca ] ||
-  fail "the certificate renews, but its Issuer signs with $(jq -r .spec.ca.secretName <<<"$i"), a Secret cert-manager does not manage: fix the release instead"
+ca=$(jq -r '.spec.ca.secretName' <<<"$i")
+if [ "$ca" != sample-db-ca ]; then
+  # Name the Secret only once it exists: then the learner has found it and
+  # created it by hand. Before that the renewal is still ahead: symptom only.
+  kubectl -n $ns get secret "$ca" >/dev/null 2>&1 ||
+    fail "sample-db's certificate is due for renewal at $(date -d "$renew" +%H:%M) and is not renewed yet: it expires at $(date -d "$expires" +%H:%M 2>/dev/null || echo "$expires")"
+  fail "the certificate renews, but its Issuer signs with $ca, a Secret cert-manager does not manage: fix the release instead"
+fi
 [ "$(jq -r '.status.conditions[]? | select(.type == "Ready") | .status' <<<"$i")" = True ] || fail "the Issuer sample-db-ca is not Ready"
 last=$(kubectl -n argocd get application sample-db -o json | jq -r '.status.history[-1].source.helm.parameters // [] | map(.name + "=" + .value) | join(" ")')
 case "$last" in
