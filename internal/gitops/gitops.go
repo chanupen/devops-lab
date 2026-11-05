@@ -381,11 +381,12 @@ func (r *Runner) deleteNamespaces(ctx context.Context, c *kube.Clients, names []
 // Application is Synced and Healthy. With a stack, it also waits until that
 // stack's apps exist (on) or are gone (off).
 //
-// In cloud mode an apply also fails as soon as a pod has been unschedulable
-// for UnschedulableGrace, with the scheduler's reason, instead of waiting
-// out the timeout: Karpenter places a schedulable pod well within it, so a
-// pod still waiting will not start (a full node, a DaemonSet over the pod
-// limit, the spot CPU limit).
+// In cloud mode an apply also fails, with the reason, as soon as the
+// cluster shows it will not get there (kube.Stuck under StuckRules): a node
+// NotReady or a pod unschedulable for 3 minutes, or a container crash
+// looping after 3 restarts. Waiting out the 30-minute timeout tells nothing
+// more. Local mode keeps waiting: lab namespaces on the main cluster may
+// hold a learner's crash-looping pod on purpose.
 func (r *Runner) waitApps(ctx context.Context, c *kube.Clients, stack string, on bool, log io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
@@ -394,7 +395,7 @@ func (r *Runner) waitApps(ctx context.Context, c *kube.Clients, stack string, on
 		ctx, stop = context.WithCancelCause(ctx)
 		defer stop(nil)
 		go func() {
-			if msg := kube.WatchUnschedulable(ctx, c.Core, UnschedulableGrace); msg != "" {
+			if msg := kube.WatchStuck(ctx, c.Core, StuckRules); msg != "" {
 				stop(errors.New(msg))
 			}
 		}()
@@ -408,9 +409,10 @@ func (r *Runner) waitApps(ctx context.Context, c *kube.Clients, stack string, on
 	return err
 }
 
-// UnschedulableGrace is how long a cloud apply lets a pod stay
-// unschedulable. Karpenter launches a spot node in one to two minutes.
-const UnschedulableGrace = 4 * time.Minute
+// StuckRules is when a cloud apply gives up early. Karpenter launches a
+// spot node in one to two minutes, and a new node is NotReady for less
+// than one.
+var StuckRules = kube.StuckRules{Grace: 3 * time.Minute, Restarts: 3}
 
 // appsDone is the wait condition, kept pure for tests.
 func appsDone(apps []kube.App, stack string, on bool) (bool, string) {
