@@ -52,6 +52,9 @@ kube-state-metrics:
 nodeExporter:
   enabled: true
 prometheus-node-exporter:
+  # One pod per node: it must win a full node's last pod slot, or the app
+  # never turns Healthy.
+  priorityClassName: system-node-critical
   resources:
     requests: {cpu: 10m, memory: 16Mi}
     limits: {memory: 64Mi}

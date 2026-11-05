@@ -65,6 +65,13 @@ var (
 	EC2NodeClassGVR = schema.GroupVersionResource{Group: "karpenter.k8s.aws", Version: "v1", Resource: "ec2nodeclasses"}
 )
 
+// Kubelet pod limits on Karpenter's nodes (VPC CNI prefix delegation):
+// 16 per vCPU, at most 110 as EKS recommends.
+const (
+	PodsPerCore = 16
+	MaxPods     = 110
+)
+
 // SpotCPULimit caps the spot NodePool: at most 8 vCPUs of spot nodes.
 const SpotCPULimit = "8"
 
@@ -367,6 +374,11 @@ func EC2NodeClass(c ClusterInfo, tags map[string]string) *unstructured.Unstructu
 			"subnetSelectorTerms":        discovery,
 			"securityGroupSelectorTerms": discovery,
 			"associatePublicIPAddress":   true, // public subnets, no NAT gateway
+			// The VPC CNI runs with prefix delegation, which Karpenter does
+			// not detect: without this, max pods follows the ENI limit (11
+			// on a t4g.small). 16 per vCPU keeps kube-reserved memory, which
+			// grows with max pods, small on 2 GiB nodes.
+			"kubelet": map[string]any{"podsPerCore": int64(PodsPerCore), "maxPods": int64(MaxPods)},
 			"metadataOptions": map[string]any{
 				"httpEndpoint": "enabled", "httpTokens": "required", "httpPutResponseHopLimit": int64(1),
 			},

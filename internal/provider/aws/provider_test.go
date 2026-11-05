@@ -134,6 +134,10 @@ func TestEC2NodeClassCarriesLabTags(t *testing.T) {
 	if field(t, nc, "spec", "metadataOptions", "httpTokens") != "required" {
 		t.Error("IMDSv2 not required")
 	}
+	// Prefix delegation: max pods must not follow the ENI limit.
+	if field(t, nc, "spec", "kubelet", "podsPerCore") != int64(16) || field(t, nc, "spec", "kubelet", "maxPods") != int64(110) {
+		t.Errorf("kubelet = %v", field(t, nc, "spec", "kubelet"))
+	}
 }
 
 func TestLBCValuesDefaultTags(t *testing.T) {
