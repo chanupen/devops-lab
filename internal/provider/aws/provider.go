@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/config"
@@ -288,6 +290,7 @@ func LabTags(owner string, exp time.Time) map[string]string {
 func (p *Provider) module(name, dir, key string, vars map[string]any, log io.Writer) *Module {
 	stack := strings.TrimPrefix(name, "cloud-")
 	return &Module{
+		CheckPlan:   func(ctx context.Context, plan *tfjson.Plan) error { return checkPlanPolicies(ctx, p.cfg, plan, log) },
 		BeforeApply: func(ctx context.Context, workDir string) error { return p.uploadBundle(ctx, stack, workDir, log) },
 		ModuleDir:   dir,
 		WorkDir:     filepath.Join(p.opts.TofuHome, name),
@@ -512,4 +515,17 @@ func maxExtend(current, now time.Time) time.Duration {
 		return 0
 	}
 	return d
+}
+
+// checkPlanPolicies checks the AWS managed policies a saved plan attaches.
+func checkPlanPolicies(ctx context.Context, cfg aws.Config, plan *tfjson.Plan, log io.Writer) error {
+	arns := PlanManagedPolicies(plan)
+	if len(arns) == 0 {
+		return nil
+	}
+	if err := CheckManagedPolicies(ctx, iam.NewFromConfig(cfg), arns); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(log, "AWS managed policies: %d checked, all exist\n", len(arns))
+	return nil
 }
