@@ -16,3 +16,9 @@ singleBinary:
   extraVolumeMounts:
     - name: data
       mountPath: /var/loki
+# The rules sidecar asks for memory near what it uses on the local lab
+# (kubectl top), so Karpenter sizes nodes for it.
+sidecar:
+  resources:
+    requests: {cpu: 10m, memory: 96Mi}   # uses 68Mi
+    limits: {memory: 192Mi}

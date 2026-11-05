@@ -358,7 +358,11 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
 	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) { // Flux is the second option and not built yet
-		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, l.helmHome, l.chartsCache)
+		gopts := gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}
+		if cfg.Mode == "cloud" {
+			gopts.ArgoValues = labaws.ArgoCDValues()
+		}
+		g := gitops.New(gopts, kubeconfig, l.helmHome, l.chartsCache)
 		l.charts[engine.RevisionStack] = []gitops.HelmRelease{gitops.ArgoCDChart}
 		for _, s := range gitops.Stacks() {
 			l.Router[s] = g

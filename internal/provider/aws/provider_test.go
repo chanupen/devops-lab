@@ -300,3 +300,17 @@ func TestModulesMatchTheProvider(t *testing.T) {
 		}
 	}
 }
+
+// Cloud Argo CD asks for memory, so Karpenter sizes its node.
+func TestArgoCDValuesRequestMemory(t *testing.T) {
+	v := ArgoCDValues()
+	for _, c := range []string{"controller", "repoServer", "server", "applicationSet", "redis"} {
+		m, _ := v[c].(map[string]any)
+		r, _ := m["resources"].(map[string]any)
+		req, _ := r["requests"].(map[string]any)
+		lim, _ := r["limits"].(map[string]any)
+		if req["memory"] == nil || lim["memory"] == nil {
+			t.Errorf("%s: resources = %v", c, r)
+		}
+	}
+}

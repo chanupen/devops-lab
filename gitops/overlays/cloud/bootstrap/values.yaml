@@ -3,3 +3,21 @@
 # (the lab's own).
 charts:
   ociMirror: ""
+
+# Memory requests near what the core charts use on the local lab (kubectl
+# top), so Karpenter sizes nodes for them; without requests it packed them
+# onto a t4g.micro (session 4).
+resources:
+  metricsServer:
+    requests: {cpu: 20m, memory: 48Mi}   # uses 27Mi
+    limits: {memory: 128Mi}
+  certManager:
+    controller:
+      requests: {cpu: 10m, memory: 64Mi}  # uses 29Mi
+      limits: {memory: 192Mi}
+    cainjector:
+      requests: {cpu: 10m, memory: 96Mi}  # uses 69Mi
+      limits: {memory: 256Mi}
+    webhook:
+      requests: {cpu: 10m, memory: 32Mi}  # uses 17Mi
+      limits: {memory: 128Mi}

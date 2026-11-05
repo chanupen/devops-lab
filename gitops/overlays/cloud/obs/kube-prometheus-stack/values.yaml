@@ -17,7 +17,7 @@ prometheus:
     retention: 6h
     retentionSize: 1500MB
     resources:
-      requests: {cpu: 100m, memory: 384Mi}
+      requests: {cpu: 100m, memory: 512Mi}   # uses 463Mi
       limits: {memory: 1Gi}
     storageSpec:
       volumeClaimTemplate:
@@ -26,3 +26,28 @@ prometheus:
           accessModes: [ReadWriteOnce]
           resources:
             requests: {storage: 2Gi}
+
+# Requests near what each uses on the local lab (kubectl top), so Karpenter
+# sizes nodes for them. The base values set the rest.
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 10m, memory: 48Mi}   # uses 28Mi
+      limits: {memory: 128Mi}
+prometheusOperator:
+  prometheusConfigReloader:
+    resources:
+      requests: {cpu: 10m, memory: 24Mi}   # uses 16Mi
+      limits: {memory: 64Mi}
+grafana:
+  resources:
+    requests: {cpu: 20m, memory: 256Mi}   # uses 247Mi
+    limits: {memory: 512Mi}
+  sidecar:
+    resources:
+      requests: {cpu: 10m, memory: 96Mi}   # each of two uses 75Mi
+      limits: {memory: 192Mi}
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}   # uses 16Mi
+    limits: {memory: 64Mi}

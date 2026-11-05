@@ -498,6 +498,27 @@ func LBCValues(c ClusterInfo, tags map[string]string) map[string]any {
 	}
 }
 
+// ArgoCDValues are merged over lab's Argo CD chart values in cloud mode:
+// memory requests near what each component uses on the local lab
+// (kubectl top), so Karpenter sizes nodes for them. Without requests it
+// packed Argo CD onto a t4g.micro (session 4). repo-server renders Helm
+// charts, so its limit leaves room above its idle use.
+func ArgoCDValues() map[string]any {
+	res := func(cpu, req, limit string) map[string]any {
+		return map[string]any{"resources": map[string]any{
+			"requests": map[string]any{"cpu": cpu, "memory": req},
+			"limits":   map[string]any{"memory": limit},
+		}}
+	}
+	return map[string]any{
+		"controller":     res("50m", "640Mi", "1280Mi"), // uses 588Mi
+		"repoServer":     res("20m", "128Mi", "512Mi"),  // uses 65Mi
+		"server":         res("10m", "64Mi", "256Mi"),   // uses 29Mi
+		"applicationSet": res("10m", "64Mi", "192Mi"),   // uses 38Mi
+		"redis":          res("10m", "32Mi", "128Mi"),   // uses 15Mi
+	}
+}
+
 // EC2NodeClass is how Karpenter launches nodes: AL2023, the lab's subnets
 // and the cluster security group (both found by the discovery tag), IMDSv2,
 // and lab's tags, which Karpenter puts on instances, volumes and launch

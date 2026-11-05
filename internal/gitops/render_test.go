@@ -550,3 +550,33 @@ func TestOverlaySharedFilesIdentical(t *testing.T) {
 		t.Error("cloud is not an overlay mode")
 	}
 }
+
+// In cloud mode every long-running container of the platform charts asks
+// for memory, so Karpenter sizes nodes for it: without requests it packed
+// Argo CD and the core charts onto a t4g.micro (session 4). Prometheus and
+// Alertmanager pods come from the operator's CRs, checked through their
+// spec.resources. Jobs (hooks, one-off migrations) are left out.
+func TestRenderCloudMemoryRequests(t *testing.T) {
+	checked := 0
+	for _, o := range renderMode(t, "cloud") {
+		var containers []any
+		switch o.Obj["kind"] {
+		case "Deployment", "StatefulSet", "DaemonSet":
+			containers, _ = field(o.Obj, "spec", "template", "spec", "containers").([]any)
+		case "Prometheus", "Alertmanager":
+			containers = []any{map[string]any{"name": "main", "resources": field(o.Obj, "spec", "resources")}}
+		default:
+			continue
+		}
+		for _, c := range containers {
+			m := c.(map[string]any)
+			checked++
+			if field(m, "resources", "requests", "memory") == nil {
+				t.Errorf("%s (%s) container %v has no memory request", kindName(o.Obj), o.App, m["name"])
+			}
+		}
+	}
+	if checked < 20 {
+		t.Errorf("checked %d containers, want the platform charts' (20+)", checked)
+	}
+}

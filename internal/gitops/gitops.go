@@ -105,6 +105,9 @@ type Options struct {
 	// Timeout bounds each wait (Argo CD install, apps Synced and Healthy).
 	// Image pulls dominate on a slow network.
 	Timeout time.Duration
+	// ArgoValues are merged over the Argo CD chart values: what the mode's
+	// provider needs (cloud mode: memory requests, so Karpenter sizes nodes).
+	ArgoValues map[string]any
 }
 
 // Runner applies and destroys the gitops and app stacks. It implements
@@ -195,7 +198,7 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 	}
 	logf(log, "installing Argo CD (chart %s %s)", ArgoChart, ArgoChartVersion)
 	argo := ArgoCDChart
-	argo.Values, argo.Timeout = argoValues(), r.opts.Timeout
+	argo.Values, argo.Timeout = mergeValues(argoValues(), r.opts.ArgoValues), r.opts.Timeout
 	if err := r.helm.Ensure(ctx, argo, log); err != nil {
 		return fmt.Errorf("install Argo CD: %w", err)
 	}

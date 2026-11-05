@@ -15,6 +15,10 @@ spec:
       valuesObject:
         args:
           - --kubelet-insecure-tls # kind kubelets serve self-signed certificates
+        {{- with (.Values.resources).metricsServer }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
@@ -35,6 +39,22 @@ spec:
       valuesObject:
         crds:
           enabled: true
+        {{- with (.Values.resources).certManager }}
+        {{- with .controller }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .cainjector }}
+        cainjector:
+          resources:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .webhook }}
+        webhook:
+          resources:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- end }}
   destination:
     server: https://kubernetes.default.svc
     namespace: cert-manager

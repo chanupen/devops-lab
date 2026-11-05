@@ -1,18 +1,19 @@
-# Cloud mode: small requests, so the stack fits two small spot nodes.
+# Cloud mode: requests near what each controller uses on the local lab
+# (kubectl top), so Karpenter sizes nodes for them.
 admissionController:
   container:
     resources:
-      requests: {cpu: 50m, memory: 96Mi}
+      requests: {cpu: 50m, memory: 96Mi}   # uses 77Mi
       limits: {memory: 384Mi}
 backgroundController:
   resources:
-    requests: {cpu: 20m, memory: 48Mi}
+    requests: {cpu: 20m, memory: 64Mi}   # uses 45Mi
     limits: {memory: 192Mi}
 cleanupController:
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
+    requests: {cpu: 10m, memory: 48Mi}   # uses 39Mi
     limits: {memory: 128Mi}
 reportsController:
   resources:
-    requests: {cpu: 20m, memory: 48Mi}
-    limits: {memory: 192Mi}
+    requests: {cpu: 20m, memory: 96Mi}   # uses 81Mi
+    limits: {memory: 256Mi}

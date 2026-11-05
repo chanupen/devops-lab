@@ -54,6 +54,25 @@ func argoValues() map[string]any {
 	}
 }
 
+// mergeValues returns base with over merged in: maps merge key by key,
+// anything else in over replaces base's value. Neither is changed.
+func mergeValues(base, over map[string]any) map[string]any {
+	out := make(map[string]any, len(base))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range over {
+		if om, ok := v.(map[string]any); ok {
+			if bm, ok := out[k].(map[string]any); ok {
+				out[k] = mergeValues(bm, om)
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // grafanaSecret holds the Grafana admin login the obs stack's Grafana reads.
 func grafanaSecret(password string) *corev1.Secret {
 	return &corev1.Secret{

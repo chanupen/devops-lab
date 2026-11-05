@@ -760,3 +760,36 @@ func TestWaitAppsFailsFastOnUnschedulablePod(t *testing.T) {
 		})
 	}
 }
+
+// The provider's Argo CD values (cloud: memory requests) merge over lab's
+// own, key by key, and reach the release.
+func TestApplyGitOpsMergesArgoValues(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.opts.ArgoValues = map[string]any{
+		"controller": map[string]any{"resources": map[string]any{"requests": map[string]any{"memory": "640Mi"}}},
+		"redis":      map[string]any{"resources": map[string]any{"requests": map[string]any{"memory": "32Mi"}}},
+	}
+	var log bytes.Buffer
+	if err := e.runner.Apply(context.Background(), "gitops", &log); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	v := e.helm.ensured[0].Values
+	get := func(path ...string) any {
+		var cur any = v
+		for _, p := range path {
+			m, _ := cur.(map[string]any)
+			cur = m[p]
+		}
+		return cur
+	}
+	if get("controller", "resources", "requests", "memory") != "640Mi" || get("redis", "resources", "requests", "memory") != "32Mi" {
+		t.Errorf("provider values missing: %v", v)
+	}
+	// lab's own values under the same key survive.
+	if get("redis", "image", "repository") != "docker.io/library/redis" || get("dex", "enabled") != false {
+		t.Errorf("lab's values lost: %v", v)
+	}
+	if _, ok := argoValues()["controller"]; ok {
+		t.Error("merge changed argoValues")
+	}
+}
