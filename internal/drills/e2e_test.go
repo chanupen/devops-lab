@@ -23,7 +23,7 @@
 // argocd. Its runs go to a throwaway state file, not the learner's
 // history. One drill: -run E2EDrills/dns.
 //
-//	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -v -timeout 150m ./internal/drills/
+//	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -v -timeout 60m ./internal/drills/
 package drills_test
 
 import (

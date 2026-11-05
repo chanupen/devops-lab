@@ -118,7 +118,7 @@ If a phase slips, cut TUI screens before labs.
 - Before inject, lab saves the `snapshot` objects into `~/.lab/state.json`; restore puts them back and checks them. `lab drills abort`, `lab up` and the time-limit timer (systemd user timer) restore; `lab doctor` reports an active drill. Never leave a fault behind.
 - Faults that change an app go through Argo CD (Helm parameters on the Application, lab-bootstrap told to ignore them for that app), never through Git. Drills touch only the sample app's namespaces, except `dns` (CoreDNS), `node-loss` (stops a kind node; restore starts every stopped node) and `slow-db` (`tc netem` in Postgres's network namespace from the kind node; restore deletes every netem rule). Non-Kubernetes state restore needs goes in `DRILL_STATE`.
 - Each drill names its alert; ones kube-prometheus-stack lacks live in the obs stack's `lab-drills` rules.
-- e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -timeout 150m ./internal/drills/` (needs the obs, sample-app, secrets and sample-db stacks).
+- e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -timeout 60m ./internal/drills/` (needs the obs, sample-app, secrets and sample-db stacks).
 
 ## `lab doctor` checks (phase 0)
 

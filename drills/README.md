@@ -122,8 +122,10 @@ The obs stack carries the alerts the drills name. kube-prometheus-stack has `Kub
 
 `go test ./internal/drills/` covers the timers, the state, acks, test runs and restore after a simulated crash. The end-to-end test runs every drill on the main lab twice, into a throwaway state file, as test runs: inject, verify fails without a spoiler, wait for the alert, `solution.sh`, verify passes, then inject and abort. After each, every Application and the drill's namespaces must be back exactly as before (content, labels and annotations), no kind node may be stopped or NotReady, and no netem rule may be left on Postgres. If anything fails it aborts first.
 
+A full run takes about 27 minutes on the lab host (26.2 measured with seven drills). Most of it is waiting for alerts: the test runs `solution.sh` only after the drill's alert fires, and `bad-deploy` (KubePodCrashLooping, `for: 5m`) and `cert-expiry` (renewal due two minutes after issue, two more minutes past it, then `for: 1m`) take about 5 minutes each. A test run interrupted mid-drill (Ctrl-C, a `go test` timeout) leaves its fault behind, because its state is throwaway: find the run under `$TMPDIR/TestE2EDrills*/001/state.json`, link `~/.lab/kubeconfig` next to it and run `lab drills abort --state <that file>`.
+
 ```bash
-LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -v -timeout 150m ./internal/drills/
+LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -v -timeout 60m ./internal/drills/
 ```
 
 The obs rules come from Git, so test a branch that changes them with `lab up --revision <branch>` first.
