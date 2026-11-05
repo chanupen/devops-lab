@@ -721,3 +721,42 @@ func TestRootUpdateRetriesOnConflict(t *testing.T) {
 		})
 	}
 }
+
+// A cloud apply stops at once on a pod the scheduler has given up on,
+// with its reason, instead of waiting out the timeout. Local mode waits.
+func TestWaitAppsFailsFastOnUnschedulablePod(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "node-exporter-x"},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+			Message:            "0/4 nodes are available: 1 Too many pods",
+		}}},
+	}
+	for _, mode := range []string{"cloud", "local"} {
+		t.Run(mode, func(t *testing.T) {
+			e := newEnv(t, false)
+			if _, err := e.core.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			e.runner.opts.Mode, e.runner.opts.Timeout = mode, 2*time.Second
+			if mode == "cloud" {
+				e.runner.opts.Timeout = 30 * time.Second
+			}
+			c, _ := e.runner.clients(io.Discard)
+			start := time.Now()
+			err := e.runner.waitApps(context.Background(), c, "obs", true, io.Discard)
+			if err == nil {
+				t.Fatal("wait succeeded")
+			}
+			unsched := strings.Contains(err.Error(), "pod monitoring/node-exporter-x unschedulable for") &&
+				strings.Contains(err.Error(), "Too many pods")
+			if mode == "cloud" && (!unsched || time.Since(start) > 10*time.Second) {
+				t.Errorf("err = %v after %s", err, time.Since(start))
+			}
+			if mode == "local" && unsched {
+				t.Errorf("local mode failed on the pod: %v", err)
+			}
+		})
+	}
+}
