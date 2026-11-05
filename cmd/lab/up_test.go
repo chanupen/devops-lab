@@ -608,3 +608,42 @@ func TestNewStacks(t *testing.T) {
 		t.Errorf("newStacks = %v, want [obs policy]", got)
 	}
 }
+
+// TestUpCloudFailureSaysLabDown: a failed cloud lab up exits non-zero and
+// says, in its last lines, that the lab is still billed and which lab down
+// to run, with the same --config and --state.
+func TestUpCloudFailureSaysLabDown(t *testing.T) {
+	tests := []struct {
+		name     string
+		fail     map[string]bool
+		wantWarn bool
+	}{
+		{"cluster apply fails after the registry", map[string]bool{"apply cluster": true}, true},
+		{"first stack fails, still recorded as failed", map[string]bool{"apply registry": true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\ncloud:\n  owner: tester\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fp := &fakeProvider{fail: tt.fail}
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { return fp, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"up", "--mode", "cloud", "--stacks", "cluster", "--yes", "--config", cfgPath, "--state", statePath})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("lab up succeeded; want an error\n%s", out.String())
+			}
+			got := out.String()
+			for _, w := range []string{"half built and still billed", "run now: lab down --mode cloud --config " + cfgPath + " --state " + statePath} {
+				if strings.Contains(got, w) != tt.wantWarn {
+					t.Errorf("output contains %q = %v, want %v:\n%s", w, !tt.wantWarn, tt.wantWarn, got)
+				}
+			}
+		})
+	}
+}

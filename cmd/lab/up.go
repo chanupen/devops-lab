@@ -12,6 +12,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -118,6 +119,7 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 					}
 				}
 				if err := run(cmd, prov, g, store, p, command); err != nil {
+					warnHalfBuilt(cmd, flags, store)
 					return err
 				}
 			}
@@ -309,4 +311,38 @@ func writeEvent(w io.Writer, r *lipgloss.Renderer, e engine.Event, starts map[st
 		d := time.Since(starts[e.Step.Stack]).Round(100 * time.Millisecond)
 		_, _ = fmt.Fprintf(w, "%s %s: %s failed after %s\n", r.NewStyle().Foreground(lipgloss.Color("1")).Render("✕"), e.Step.Stack, verb, d)
 	}
+}
+
+// warnHalfBuilt tells the learner, in red, that a cloud lab up stopped
+// with AWS resources still running, and the command that removes them. A
+// failed apply is never left to the TTL silently: the reaper is the dead
+// man's switch, not the plan.
+func warnHalfBuilt(cmd *cobra.Command, flags labFlags, store *state.Store) {
+	st, err := store.Load()
+	if err != nil || len(st.HalfBuilt()) == 0 {
+		return
+	}
+	out := cmd.ErrOrStderr()
+	red := lipgloss.NewRenderer(out).NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	until := "the reaper removes it after expires-at"
+	if exp, err := labaws.ReadExpiry(labaws.ExpiryFile(homeOf(store))); err == nil {
+		until = "the reaper removes it after expires-at " + exp.Local().Format("2006-01-02 15:04 MST")
+	}
+	_, _ = fmt.Fprintf(out, "\n%s\n%s\n",
+		red.Render(fmt.Sprintf("lab up failed (%s): the cloud lab is half built and still billed; %s.",
+			strings.Join(st.HalfBuilt(), ", "), until)),
+		red.Render("run now: "+cloudDownCommand(flags)))
+}
+
+// cloudDownCommand is the cloud lab down command for the same config and state as
+// this one.
+func cloudDownCommand(flags labFlags) string {
+	c := "lab down --mode cloud"
+	if flags.cfgPath != "" {
+		c += " --config " + flags.cfgPath
+	}
+	if flags.statePath != "" {
+		c += " --state " + flags.statePath
+	}
+	return c
 }

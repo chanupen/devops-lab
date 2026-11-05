@@ -95,6 +95,10 @@ func writeStatus(w io.Writer, r *lipgloss.Renderer, cfg config.Config, st state.
 	}
 	fmt.Fprintf(&b, "%s mode, %s profile, Kubernetes %s\n", mode, engine.ProfileName(cfg), k8s)
 	warn := r.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	if failed := st.HalfBuilt(); len(failed) > 0 {
+		fmt.Fprintf(&b, "%s (%s): lab down --mode cloud\n",
+			r.NewStyle().Foreground(lipgloss.Color("1")).Bold(true).Render("✕ "+state.BilledWarning), strings.Join(failed, ", "))
+	}
 	switch {
 	case !st.IsApplied(engine.RevisionStack):
 		b.WriteString("gitops revision: - (gitops not deployed)\n")
