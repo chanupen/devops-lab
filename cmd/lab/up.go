@@ -95,6 +95,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g, ok := prov.(stackVersionGate); ok {
+				if err := g.CheckNewStacks(cmd.Context(), newStacks(p, store)); err != nil {
+					return err
+				}
+			}
 			out := cmd.OutOrStdout()
 			if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
 				return err
@@ -180,6 +185,29 @@ func restoreOneDrill(cmd *cobra.Command, flags labFlags, store *state.Store, wha
 		_, _ = fmt.Fprintln(out, "● the drill is restored")
 		return nil
 	})
+}
+
+// stackVersionGate is implemented by providers whose running cluster keeps
+// its Kubernetes version (cloud): a stack added to it must support that
+// version.
+type stackVersionGate interface {
+	CheckNewStacks(ctx context.Context, stacks []string) error
+}
+
+// newStacks are the stacks plan p applies that the state does not record
+// as applied: the ones being added, not re-applied.
+func newStacks(p engine.Plan, store *state.Store) []string {
+	st, err := store.Load()
+	if err != nil {
+		st = state.State{}
+	}
+	var out []string
+	for _, s := range p.Steps {
+		if s.Action == engine.Apply && !st.IsApplied(s.Stack) {
+			out = append(out, s.Stack)
+		}
+	}
+	return out
 }
 
 // upCommand is the CLI command recorded in the ops log.

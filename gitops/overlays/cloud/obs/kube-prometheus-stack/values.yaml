@@ -1,0 +1,28 @@
+# Cloud mode (EKS): AWS runs the control plane, so etcd, the controller
+# manager and the scheduler cannot be scraped; kube-proxy binds its metrics
+# to localhost on the node. Skip those jobs.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# Six hours of data on a small gp3 volume (lab-gp3, deleted with its claim).
+# retentionSize keeps Prometheus inside the volume.
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    retentionSize: 1500MB
+    resources:
+      requests: {cpu: 100m, memory: 384Mi}
+      limits: {memory: 1Gi}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: lab-gp3
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests: {storage: 2Gi}

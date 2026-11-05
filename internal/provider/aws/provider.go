@@ -71,6 +71,8 @@ type Provider struct {
 	// inCluster is the in-cluster part of the cluster stack (Karpenter, the
 	// NodePool, the Load Balancer Controller).
 	inCluster inCluster
+	// secrets is AWS Secrets Manager (the sample-db stack's credentials).
+	secrets Secrets
 }
 
 // inCluster installs and removes what lab puts in the cluster itself.
@@ -106,6 +108,7 @@ func New(ctx context.Context, s Session, opts Options) (*Provider, error) {
 	p := &Provider{opts: opts, cfg: cfg, env: env, account: account, myIP: PublicIP, now: time.Now,
 		teardown: func(ctx context.Context) (string, error) { return RunningTeardown(ctx, cfg) }}
 	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"))
+	p.secrets = NewSecrets(cfg)
 	p.inCluster = &clusterAddons{helm: p.helm, kubeconfig: opts.Kubeconfig, cfg: cfg, timeout: opts.Timeout}
 	return p, nil
 }
@@ -131,7 +134,7 @@ func (p *Provider) Apply(ctx context.Context, stack string, log io.Writer) error
 		}
 		outs, err := m.Outputs(ctx)
 		if err == nil {
-			_, _ = fmt.Fprintf(log, "registry: %s\n", outs["repository_url"])
+			_, _ = fmt.Fprintf(log, "lab registry: %s\n", outs["lab_registry"])
 		}
 		return nil
 	case "cluster":
@@ -263,6 +266,9 @@ func (p *Provider) destroyCluster(ctx context.Context, exp time.Time, log io.Wri
 	// tofu needs a valid CIDR list to plan the destroy; the value is unused.
 	if err := p.clusterModule(exp, []string{"127.0.0.1/32"}, log).Destroy(ctx); err != nil {
 		return err
+	}
+	if err := sweepClusterVolumes(ctx, p.cfg, log); err != nil {
+		_, _ = fmt.Fprintf(log, "warning: delete EBS volumes: %v\n", err)
 	}
 	if err := os.Remove(p.opts.Kubeconfig); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

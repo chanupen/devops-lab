@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -589,5 +590,21 @@ func TestLabHolder(t *testing.T) {
 	}
 	if got := labHolder(root); !strings.HasPrefix(got, "the TUI (pid ") {
 		t.Errorf("root holder = %q", got)
+	}
+}
+
+func TestNewStacks(t *testing.T) {
+	store := state.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Update(func(s *state.State) error {
+		s.Stacks["cluster"] = state.StackState{Status: state.Applied}
+		s.Stacks["obs"] = state.StackState{Status: state.Failed}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := engine.Plan{Steps: []engine.Step{{Stack: "cluster", Action: engine.Apply}, {Stack: "obs", Action: engine.Apply},
+		{Stack: "policy", Action: engine.Apply}, {Stack: "core", Action: engine.Keep}, {Stack: "ci", Action: engine.Skip}}}
+	if got := newStacks(p, store); !slices.Equal(got, []string{"obs", "policy"}) {
+		t.Errorf("newStacks = %v, want [obs policy]", got)
 	}
 }

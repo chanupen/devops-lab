@@ -265,7 +265,16 @@ func TestModulesMatchTheProvider(t *testing.T) {
 	}
 	check("cluster", cluster, p.clusterModule(t0, []string{"203.0.113.7/32"}, io.Discard).Vars,
 		"cluster_name", "cluster_endpoint", "cluster_ca", "vpc_id", "karpenter_queue", "karpenter_node_role")
-	check("registry", registry, p.registryModule(t0, io.Discard).Vars, "repository_url")
+	check("registry", registry, p.registryModule(t0, io.Discard).Vars, "lab_registry")
+	// ECR makes no repository on push: every image the lab pushes has one.
+	for _, repo := range []string{SampleDBRepo, "lab02-hello"} {
+		if !regexp.MustCompile(`default *= \[[^\]]*"` + repo + `"`).MatchString(registry) {
+			t.Errorf("registry module's repositories do not include %s", repo)
+		}
+	}
+	if !strings.Contains(registry, `default     = "lab"`) || LabRegistryFor("123456789012") != "123456789012.dkr.ecr.ap-south-1.amazonaws.com/lab" {
+		t.Error("the lab registry is not <registry>/lab")
+	}
 	if !strings.Contains(cluster, `default     = "`+ClusterName+`"`) {
 		t.Errorf("cluster module's default cluster_name is not %q", ClusterName)
 	}

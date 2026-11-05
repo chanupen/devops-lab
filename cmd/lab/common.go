@@ -330,6 +330,12 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			l.Router["sample-db"] = sampleDBRunner{lp, g}
 			l.stale = staleWithSampleDB(l.stale, lp, g)
 		}
+		if cloud != nil {
+			// Cloud mode: sample-db's image is built for arm64 and pushed
+			// to ECR, and its first credentials go into AWS Secrets
+			// Manager, before its app syncs.
+			l.Router["sample-db"] = cloudSampleDBRunner{cloud: cloud, gitops: g, repo: opts.RepoRoot}
+		}
 		l.hosts = g.AppHosts
 	}
 	if cloud != nil {
@@ -407,6 +413,49 @@ func (r sampleDBRunner) Apply(ctx context.Context, stack string, log io.Writer) 
 
 func (r sampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
 	return r.gitops.Destroy(ctx, stack, log)
+}
+
+// cloudSampleDBRunner is sampleDBRunner for cloud mode: the image goes to
+// ECR (built by the host's Podman for the arm64 nodes) and the credentials
+// to AWS Secrets Manager, with the lab tags. Destroy deletes the secrets
+// without a recovery window after the app is gone.
+type cloudSampleDBRunner struct {
+	cloud  *labaws.Provider
+	gitops *gitops.Runner
+	repo   string
+}
+
+func (r cloudSampleDBRunner) Apply(ctx context.Context, stack string, log io.Writer) error {
+	if r.repo == "" {
+		return errors.New("the sample-db image is built from the repo: run lab from it, or keep ~/.lab/lab.yaml a symlink into it")
+	}
+	sock, err := local.PodmanSocket()
+	if err != nil {
+		return fmt.Errorf("the sample-db image is built with rootless Podman: %w", err)
+	}
+	dir := filepath.Join(r.repo, "apps", "sample-db")
+	tag, err := local.SourceTag(dir)
+	if err != nil {
+		return fmt.Errorf("sample-db sources: %w", err)
+	}
+	ref, err := r.cloud.BuildSampleDB(ctx, local.NewPodman(sock), dir, tag, log)
+	if err != nil {
+		return err
+	}
+	if err := r.cloud.SeedSampleDB(ctx, log); err != nil {
+		return err
+	}
+	if err := r.gitops.SetValue(ctx, "sampleDB", map[string]any{"image": ref}, log); err != nil {
+		return err
+	}
+	return r.gitops.Apply(ctx, stack, log)
+}
+
+func (r cloudSampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
+	if err := r.gitops.Destroy(ctx, stack, log); err != nil {
+		return err
+	}
+	return r.cloud.RemoveSampleDB(ctx, log)
 }
 
 // stackSupport reports which stacks cfg's mode can run, without building a

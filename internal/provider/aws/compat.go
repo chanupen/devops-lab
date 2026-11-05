@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -94,4 +95,38 @@ func describeComponents(comps []Component) string {
 		parts[i] = fmt.Sprintf("%s %s %s", c.Name, c.AppVersion, c.Range())
 	}
 	return strings.Join(parts, "; ")
+}
+
+// CheckNewStacks refuses to add stacks to a running cluster whose
+// Kubernetes version their components do not support. A running cluster
+// keeps its version (ChooseVersion), so a stack added later must fit it;
+// a new cluster gets a version every active stack supports, so with no
+// cluster there is nothing to check. stacks are the ones the plan applies
+// that are not deployed yet.
+func (p *Provider) CheckNewStacks(ctx context.Context, stacks []string) error {
+	if len(stacks) == 0 {
+		return nil
+	}
+	current, err := ClusterVersion(ctx, p.cfg, ClusterName)
+	if err != nil || current == "" {
+		return err
+	}
+	return CheckStacksOn(current, stacks)
+}
+
+// CheckStacksOn is CheckNewStacks for a cluster on Kubernetes v: an error
+// naming every component of stacks whose stated range leaves v out.
+func CheckStacksOn(v string, stacks []string) error {
+	var bad []string
+	for _, c := range compat.For("cloud") {
+		if c.Stack != "" && slices.Contains(stacks, c.Stack) && !c.Supports(v) {
+			bad = append(bad, fmt.Sprintf("%s (stack %s) %s supports Kubernetes %s", c.Name, c.Stack, c.AppVersion, c.Range()))
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the running cluster is on Kubernetes %s, which %s; a running cluster keeps its version, "+
+		"so lab down --mode cloud, then lab up --mode cloud with the stack (a new cluster gets a version every active stack supports)",
+		v, strings.Join(bad, "; "))
 }

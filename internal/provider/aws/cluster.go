@@ -37,7 +37,20 @@ var (
 		Name: "aws-load-balancer-controller", Namespace: "kube-system",
 		RepoURL: "https://aws.github.io/eks-charts", Chart: "aws-load-balancer-controller", Version: "3.6.2",
 	}
+	// EBSCSIChart is the EBS CSI driver: gp3 volumes for Postgres and
+	// Prometheus. lab installs it, not Git, because extraVolumeTags carries
+	// expires-at.
+	EBSCSIChart = gitops.HelmRelease{
+		Name: "aws-ebs-csi-driver", Namespace: "kube-system",
+		RepoURL: "https://kubernetes-sigs.github.io/aws-ebs-csi-driver", Chart: "aws-ebs-csi-driver", Version: "2.67.1",
+	}
 )
+
+// GP3StorageClass is the cloud lab's default StorageClass.
+const GP3StorageClass = "lab-gp3"
+
+// EBSCSIDriver is the provisioner name of the EBS CSI driver.
+const EBSCSIDriver = "ebs.csi.aws.com"
 
 // Karpenter resources.
 var (
@@ -97,6 +110,12 @@ func (a *clusterAddons) Install(ctx context.Context, c ClusterInfo, tags map[str
 	if err := a.helm.Ensure(ctx, l, log); err != nil {
 		return fmt.Errorf("aws-load-balancer-controller: %w", err)
 	}
+	e := EBSCSIChart
+	e.Timeout = a.timeout
+	e.Values = EBSCSIValues(tags)
+	if err := a.helm.Ensure(ctx, e, log); err != nil {
+		return fmt.Errorf("aws-ebs-csi-driver: %w", err)
+	}
 	return nil
 }
 
@@ -109,6 +128,11 @@ func (a *clusterAddons) Remove(ctx context.Context, log io.Writer) error {
 	}
 	if err := deleteLoadBalancers(ctx, clients, a.cfg, log); err != nil {
 		return err
+	}
+	// The EBS CSI driver must still run to delete the volumes behind the
+	// claims; the sweep after tofu destroy catches any it leaves.
+	if err := deleteVolumes(ctx, clients, log); err != nil {
+		_, _ = fmt.Fprintf(log, "volumes: %v\n", err)
 	}
 	if err := clients.Dynamic.Resource(NodePoolGVR).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
 		_, _ = fmt.Fprintf(log, "delete NodePools: %v\n", err)
@@ -133,6 +157,7 @@ func (a *clusterAddons) Remove(ctx context.Context, log io.Writer) error {
 		}
 	}
 	return errors.Join(
+		a.helm.Uninstall(ctx, EBSCSIChart.Name, EBSCSIChart.Namespace, log),
 		a.helm.Uninstall(ctx, LBCChart.Name, LBCChart.Namespace, log),
 		a.helm.Uninstall(ctx, KarpenterChart.Name, KarpenterChart.Namespace, log),
 	)
@@ -193,6 +218,76 @@ func deleteLoadBalancers(ctx context.Context, c *kube.Clients, cfg aws.Config, l
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
 		}
+	}
+}
+
+// deleteVolumes deletes every PersistentVolumeClaim and waits up to five
+// minutes until no PersistentVolume of the EBS CSI driver is left, so its
+// controller deletes the EBS volumes (reclaimPolicy Delete) while it still
+// runs.
+func deleteVolumes(ctx context.Context, c *kube.Clients, log io.Writer) error {
+	pvcs, err := c.Core.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, pvc := range pvcs.Items {
+		_, _ = fmt.Fprintf(log, "delete PersistentVolumeClaim %s/%s\n", pvc.Namespace, pvc.Name)
+		if err := c.Core.CoreV1().PersistentVolumeClaims(pvc.Namespace).Delete(ctx, pvc.Name, metav1.DeleteOptions{}); err != nil {
+			return err
+		}
+	}
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		pvs, err := c.Core.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+		var left []string
+		for _, pv := range pvs.Items {
+			if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == EBSCSIDriver {
+				left = append(left, pv.Name)
+			}
+		}
+		if len(left) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d EBS volumes still exist: %s", len(left), strings.Join(left, ", "))
+		}
+		_, _ = fmt.Fprintf(log, "%d EBS volumes still deleting\n", len(left))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// EBSCSIValues are the EBS CSI driver chart's values: one controller on the
+// system node, lab's tags on every volume it creates (so the reaper and the
+// leftovers check see any left behind), and lab-gp3 as the default
+// StorageClass: gp3, encrypted, deleted with its claim.
+func EBSCSIValues(tags map[string]string) map[string]any {
+	vt := map[string]any{}
+	for k, v := range tags {
+		vt[k] = v
+	}
+	return map[string]any{
+		"controller": map[string]any{
+			"replicaCount":    1,
+			"extraVolumeTags": vt,
+			"nodeSelector":    systemSelector,
+			"tolerations":     systemTolerations,
+			"serviceAccount":  map[string]any{"create": true, "name": "ebs-csi-controller-sa"},
+		},
+		"storageClasses": []any{map[string]any{
+			"name":                 GP3StorageClass,
+			"annotations":          map[string]any{"storageclass.kubernetes.io/is-default-class": "true"},
+			"volumeBindingMode":    "WaitForFirstConsumer",
+			"reclaimPolicy":        "Delete",
+			"allowVolumeExpansion": true,
+			"parameters":           map[string]any{"type": "gp3", "encrypted": "true"},
+		}},
 	}
 }
 
@@ -370,6 +465,30 @@ func sweepClusterInstances(ctx context.Context, cfg aws.Config, cluster string, 
 		return err
 	}
 	return ec2.NewInstanceTerminatedWaiter(c).Wait(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids}, 10*time.Minute)
+}
+
+// sweepClusterVolumes deletes EBS volumes the CSI driver made for the lab
+// that are still there and unattached once the cluster is gone (a claim
+// whose volume the driver did not delete in time).
+func sweepClusterVolumes(ctx context.Context, cfg aws.Config, log io.Writer) error {
+	c := ec2.NewFromConfig(cfg)
+	out, err := c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{Filters: []ec2types.Filter{
+		{Name: aws.String("tag:lab"), Values: []string{"true"}},
+		{Name: aws.String("tag-key"), Values: []string{"ebs.csi.aws.com/cluster"}},
+		{Name: aws.String("status"), Values: []string{"available"}},
+	}})
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, v := range out.Volumes {
+		id := aws.ToString(v.VolumeId)
+		_, _ = fmt.Fprintf(log, "delete EBS volume %s (left by the CSI driver)\n", id)
+		if _, err := c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: v.VolumeId}); err != nil {
+			errs = append(errs, fmt.Errorf("delete volume %s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // PublicIP is this host's public IPv4 address as AWS sees it.

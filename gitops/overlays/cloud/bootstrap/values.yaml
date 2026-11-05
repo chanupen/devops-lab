@@ -1,0 +1,5 @@
+# Cloud mode: no Zot cache. Argo CD pulls OCI charts from their registries
+# directly, and the nodes pull images directly (public images) or from ECR
+# (the lab's own).
+charts:
+  ociMirror: ""

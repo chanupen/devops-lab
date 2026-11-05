@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -357,9 +358,19 @@ func demux(r io.Reader) (stdout, stderr string, err error) {
 // BuildImage implements Runtime with libpod's build API: the context goes
 // up as a tar, the build log streams back as JSON lines.
 func (p *Podman) BuildImage(ctx context.Context, dir, containerfile, tag string, log io.Writer) error {
+	return p.BuildImageFor(ctx, dir, containerfile, tag, "", log)
+}
+
+// BuildImageFor builds like BuildImage, for platform (e.g. linux/arm64; ""
+// is the host's). A Containerfile whose build stage runs on $BUILDPLATFORM
+// cross-compiles, so another arch needs no emulation.
+func (p *Podman) BuildImageFor(ctx context.Context, dir, containerfile, tag, platform string, log io.Writer) error {
 	pr, pw := io.Pipe()
 	go func() { pw.CloseWithError(tarDir(dir, pw)) }()
 	q := url.Values{"dockerfile": {containerfile}, "t": {tag}, "timestamp": {"0"}, "layers": {"true"}}
+	if platform != "" {
+		q.Set("platform", platform)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.base+apiPrefix+"/build?"+q.Encode(), pr)
 	if err != nil {
 		return err
@@ -385,6 +396,32 @@ func (p *Podman) PushImage(ctx context.Context, name string, tls bool, log io.Wr
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	return streamLog(resp.Body, "push "+name, log)
+}
+
+// PushImageAuth pushes name over TLS with a registry login (ECR's token in
+// cloud mode). The login goes in the request header only; nothing is
+// stored in Podman's auth file.
+func (p *Podman) PushImageAuth(ctx context.Context, name, username, password string, log io.Writer) error {
+	auth, err := json.Marshal(map[string]string{"username": username, "password": password})
+	if err != nil {
+		return err
+	}
+	q := url.Values{"tlsVerify": {"true"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.base+apiPrefix+"/images/"+url.PathEscape(name)+"/push?"+q.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Registry-Auth", base64.URLEncoding.EncodeToString(auth))
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("podman API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("push %s: HTTP %d: %s", name, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
 	return streamLog(resp.Body, "push "+name, log)
 }
 

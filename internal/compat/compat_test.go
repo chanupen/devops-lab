@@ -18,7 +18,7 @@ func TestFor(t *testing.T) {
 		want []string
 	}{
 		{"local", []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "kind node images"}},
-		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "Argo CD", "Kyverno", "External Secrets Operator"}},
+		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "AWS EBS CSI driver", "Argo CD", "Kyverno", "External Secrets Operator"}},
 		{"other", nil},
 	}
 	for _, tt := range tests {
@@ -133,7 +133,7 @@ func TestForStacks(t *testing.T) {
 		{"local", []string{"cluster", "gitops"}, []string{"Argo CD", "kind node images"}},
 		{"local", []string{"cluster", "gitops", "policy"}, []string{"Argo CD", "Kyverno", "kind node images"}},
 		{"local", []string{"cluster", "gitops", "secrets"}, []string{"Argo CD", "External Secrets Operator", "Moto", "kind node images"}},
-		{"cloud", []string{"cluster"}, []string{"Karpenter", "AWS Load Balancer Controller"}},
+		{"cloud", []string{"cluster"}, []string{"Karpenter", "AWS Load Balancer Controller", "AWS EBS CSI driver"}},
 	}
 	for _, tt := range tests {
 		if got := names(ForStacks(tt.mode, tt.active)); !slices.Equal(got, tt.want) {

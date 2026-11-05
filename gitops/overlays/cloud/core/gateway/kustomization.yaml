@@ -1,0 +1,24 @@
+# Cloud mode: no load balancer. Envoy's Service is a ClusterIP and lab tunnel
+# forwards 127.0.0.1:8080/8443 on the host to it, so apps keep the local URLs,
+# https://<app>.localtest.me:8443 (the Mac adds ssh -N fedora-lab as usual).
+# certificate.yaml and argocd-route.yaml are the local overlay's files; a
+# test keeps them identical.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../stacks/core/gateway
+  - envoyproxy.yaml
+  - certificate.yaml
+  - argocd-route.yaml
+patches:
+  - target:
+      kind: GatewayClass
+      name: lab
+    patch: |-
+      - op: add
+        path: /spec/parametersRef
+        value:
+          group: gateway.envoyproxy.io
+          kind: EnvoyProxy
+          name: lab-clusterip
+          namespace: envoy-gateway-system

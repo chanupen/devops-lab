@@ -144,10 +144,8 @@ func (r *Runner) Supports(stack string) bool {
 // stacks whose apps it switches on in the app-of-apps.
 func Stacks() []string { return append([]string{"gitops"}, appStacks...) }
 
-// overlayModes are the modes with overlays under gitops/overlays. Cloud
-// gets its overlay in the next phase-3 change; until then its GitOps
-// stacks are skipped at plan time.
-var overlayModes = []string{"local"}
+// overlayModes are the modes with overlays under gitops/overlays.
+var overlayModes = []string{"local", "cloud"}
 
 // HasOverlay reports whether the GitOps stacks can run in mode.
 func HasOverlay(mode string) bool { return slices.Contains(overlayModes, mode) }
