@@ -26,6 +26,7 @@ import (
 	taggingtypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/smithy-go"
 )
@@ -38,12 +39,14 @@ type AWS struct {
 	ELB       *elbv2.Client
 	ClassicLB *elb.Client
 	ECR       *ecr.Client
+	Secrets   *secretsmanager.Client
 }
 
 // NewAWS builds the clients from one config.
 func NewAWS(cfg aws.Config) *AWS {
 	return &AWS{Tagging: tagging.NewFromConfig(cfg), EC2: ec2.NewFromConfig(cfg), EKS: eks.NewFromConfig(cfg),
-		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg), ECR: ecr.NewFromConfig(cfg)}
+		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg), ECR: ecr.NewFromConfig(cfg),
+		Secrets: secretsmanager.NewFromConfig(cfg)}
 }
 
 // Check implements Checker with one Describe call per resource. EC2 and
@@ -132,6 +135,11 @@ func (a *AWS) Check(ctx context.Context, arn string) (Live, error) {
 		_, err = a.ELB.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{arn}})
 	case service == "ecr" && typ == "repository":
 		_, err = a.ECR.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{RepositoryNames: ids})
+	case service == "secretsmanager" && strings.HasPrefix(resource, "secret:"):
+		var out *secretsmanager.DescribeSecretOutput
+		if out, err = a.Secrets.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(arn)}); err == nil {
+			live = secretLive(out)
+		}
 	default:
 		return Live{}, nil
 	}
@@ -152,6 +160,19 @@ func notFound(err error) bool {
 	}
 	c := api.ErrorCode()
 	return strings.HasSuffix(c, "NotFound") || strings.HasSuffix(c, "NotFoundException")
+}
+
+// secretLive: a secret scheduled for deletion is gone (it is not billed
+// and cannot be read); the API shows it until the window ends.
+func secretLive(out *secretsmanager.DescribeSecretOutput) Live {
+	if out.DeletedDate != nil {
+		return Live{Known: true, Gone: true}
+	}
+	tags := map[string]string{}
+	for _, t := range out.Tags {
+		tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+	}
+	return Live{Known: true, Tags: tags}
 }
 
 // instanceLive: a terminated instance is gone; the API lists it for about
@@ -303,6 +324,9 @@ func (a *AWS) Delete(ctx context.Context, t Target) error {
 		_, err = a.EC2.DeleteNetworkInterface(ctx, &ec2.DeleteNetworkInterfaceInput{NetworkInterfaceId: aws.String(t.ID)})
 	case TargetGroup:
 		_, err = a.ELB.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{TargetGroupArn: aws.String(t.ID)})
+	case Secret:
+		_, err = a.Secrets.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{SecretId: aws.String(t.ID),
+			ForceDeleteWithoutRecovery: aws.Bool(true)})
 	default:
 		err = fmt.Errorf("no delete for kind %q", t.Kind)
 	}

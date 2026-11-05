@@ -73,10 +73,13 @@ const (
 	Volume           Kind = "ebs-volume"
 	Address          Kind = "elastic-ip"
 	VPC              Kind = "vpc"
+	// Secret is a Secrets Manager secret (the sample-db stack's
+	// credentials). The reaper deletes it without a recovery window.
+	Secret Kind = "secret"
 )
 
 var order = map[Kind]int{NodeGroup: 0, Instance: 1, LoadBalancer: 2, ClassicLB: 3, TargetGroup: 4, NetworkInterface: 5,
-	SecurityGroup: 6, Cluster: 7, Volume: 8, Address: 9}
+	SecurityGroup: 6, Cluster: 7, Volume: 8, Address: 9, Secret: 10}
 
 // MaxAttempts is how many teardown builds the reaper starts for one
 // expired lab before it stops and emails "manual action needed".
@@ -639,6 +642,8 @@ func parseARN(arn string) (Kind, string, error) {
 		return LoadBalancer, arn, nil
 	case service == "elasticloadbalancing" && typ == "targetgroup":
 		return TargetGroup, arn, nil
+	case service == "secretsmanager" && strings.HasPrefix(resource, "secret:") && len(resource) > len("secret:"):
+		return Secret, arn, nil // secret:<name>-<6 chars>; the delete takes the ARN
 	}
 	return "", "", fmt.Errorf("type %s:%s is not handled yet", service, typ)
 }

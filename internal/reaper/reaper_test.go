@@ -316,6 +316,8 @@ func TestParseARN(t *testing.T) {
 		{arn("ec2", "security-group/sg-1"), SecurityGroup, "sg-1", false},
 		{arn("elasticloadbalancing", "targetgroup/k8s-a/1"), TargetGroup, arn("elasticloadbalancing", "targetgroup/k8s-a/1"), false},
 		{arn("ec2", "vpc/vpc-1"), VPC, "vpc-1", false},
+		{arn("secretsmanager", "secret:lab/sample-db/app-AbC123"), Secret, arn("secretsmanager", "secret:lab/sample-db/app-AbC123"), false},
+		{arn("secretsmanager", "secret:"), "", "", true},
 		{"not-an-arn", "", "", true},
 	}
 	for _, tt := range tests {
