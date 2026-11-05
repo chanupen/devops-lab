@@ -94,12 +94,17 @@ func TestCheckDrill(t *testing.T) {
 		{"past its limit", &DrillState{Label: "a random drill", Phase: "running", Deadline: now.Add(-time.Minute), Now: now}, Fail, "past its time limit"},
 		{"interrupted inject", &DrillState{Label: "drill oom", Phase: "injecting", Deadline: now.Add(time.Hour), Now: now}, Fail, "only partly"},
 		{"failed restore", &DrillState{Label: "drill oom", Phase: "restoring", Error: "spec differ", Deadline: now.Add(time.Hour), Now: now}, Fail, "spec differ"},
+		{"e2e interrupted inject", &DrillState{Label: "e2e test drill dns", Phase: "injecting", Deadline: now.Add(time.Hour), Now: now,
+			Fix: "lab drills abort --state /e2e/state.json"}, Fail, "e2e test drill dns: its fault went in only partly"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := checkDrill(context.Background(), System{}, Options{Drill: tt.d})
 			if r.Status != tt.want || !strings.Contains(r.Detail, tt.match) {
 				t.Errorf("got %v %q, want %v with %q", r.Status, r.Detail, tt.want, tt.match)
+			}
+			if tt.d != nil && tt.d.Fix != "" && r.Fix != tt.d.Fix {
+				t.Errorf("fix = %q, want %q", r.Fix, tt.d.Fix)
 			}
 			if r.Status == Fail && !strings.Contains(r.Fix, "lab drills abort") {
 				t.Errorf("fix = %q", r.Fix)

@@ -134,22 +134,31 @@ func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
 	return doctor.RegistryState{Err: err}
 }
 
-// activeDrill is the drill still in the local lab, for lab doctor.
+// activeDrill is the drill still in the local lab, for lab doctor: the
+// lab's own, else one an e2e test run left in ~/.lab/e2e.
 func activeDrill() *doctor.DrillState {
 	path, err := state.DefaultPath()
 	if err != nil {
 		return nil
 	}
-	st, err := state.NewStore(path).Load()
-	if err != nil || st.ActiveDrill == nil {
-		return nil
+	return drillState(path, state.E2EPath(path))
+}
+
+func drillState(path, e2e string) *doctor.DrillState {
+	if st, err := state.NewStore(path).Load(); err == nil && st.ActiveDrill != nil {
+		r := st.ActiveDrill
+		label := "drill " + r.Drill
+		if r.Random {
+			label = "a random drill"
+		}
+		return &doctor.DrillState{Label: label, Phase: r.Phase, Deadline: r.Deadline, Error: r.Error, Now: time.Now()}
 	}
-	r := st.ActiveDrill
-	label := "drill " + r.Drill
-	if r.Random {
-		label = "a random drill"
+	if st, err := state.NewStore(e2e).Load(); err == nil && st.ActiveDrill != nil {
+		r := st.ActiveDrill
+		return &doctor.DrillState{Label: "e2e test drill " + r.Drill, Phase: r.Phase, Deadline: r.Deadline, Error: r.Error, Now: time.Now(),
+			Fix: "if the e2e test is not running, lab up (or lab drills abort --state " + e2e + ") puts back what the drill changed"}
 	}
-	return &doctor.DrillState{Label: label, Phase: r.Phase, Deadline: r.Deadline, Error: r.Error, Now: time.Now()}
+	return nil
 }
 
 // deployedStacks are the stacks the local state file records as applied;

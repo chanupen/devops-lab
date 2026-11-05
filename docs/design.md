@@ -277,7 +277,7 @@ Each drill injects one fault into the sample app on the main lab, starts a timer
 
 **Fault mechanics.** slow-db adds latency with `tc netem` from the kind node (`podman exec`, `nsenter -n` into the Postgres container's process): on rootless Podman the node is root in its user namespace and owns the pod's network namespace, so it needs no privileged pod, no sudo and no extra memory. Chaos Mesh would cost about 300 MiB (controller, dashboard, chaos-daemon) and is worth adding with the chaos stack when several drills need it. node-loss relies on a kind worker coming back after `podman start`: it gets a new IP on the kind network and rejoins Ready within seconds (tested with rootless Podman 6.1 and kind 0.33).
 
-`go test -tags e2e -run E2EDrills ./internal/drills/` runs each drill on the main lab twice: inject, verify fails (without a spoiler), the alert fires, the solution, verify passes; then inject and abort. Every Application and the drill's namespaces must be back exactly as before, and no kind node may be stopped or NotReady and no netem rule left on Postgres.
+`go test -tags e2e -run E2EDrills ./internal/drills/` runs each drill on the main lab twice: inject, verify fails (without a spoiler), the alert fires, the solution, verify passes; then inject and abort. Every Application and the drill's namespaces must be back exactly as before, and no kind node may be stopped or NotReady and no netem rule left on Postgres. It holds the lab lock and keeps its runs in `~/.lab/e2e/state.json`, so a run it leaves behind (a kill, a timeout) is reported by `lab doctor` and restored by `lab up`, like any drill after a crash; `TestE2EKilledDrill` kills one mid-inject to check it.
 
 ## Configuration and repository layout
 

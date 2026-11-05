@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/chanupen/devops-lab/internal/provider/local"
+	"github.com/chanupen/devops-lab/internal/state"
 	"github.com/chanupen/devops-lab/internal/tui"
 )
 
@@ -73,5 +75,32 @@ func TestUnitAdapters(t *testing.T) {
 	// Without Podman, lab doctor skips the container checks.
 	if _, err := doctorUnits(context.Background()); err == nil {
 		t.Error("doctorUnits reached a Podman socket in a test")
+	}
+}
+
+func TestDrillState(t *testing.T) {
+	dir := t.TempDir()
+	main, e2e := filepath.Join(dir, "state.json"), state.E2EPath(filepath.Join(dir, "state.json"))
+	if e2e != filepath.Join(dir, "e2e", "state.json") {
+		t.Fatalf("E2EPath = %s", e2e)
+	}
+	if d := drillState(main, e2e); d != nil {
+		t.Fatalf("no state files: %+v", d)
+	}
+	set := func(path string, r *state.DrillRun) {
+		t.Helper()
+		if err := state.NewStore(path).Update(func(s *state.State) error { s.ActiveDrill = r; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(e2e, &state.DrillRun{Drill: "dns", Phase: state.DrillInjecting, Test: true})
+	d := drillState(main, e2e)
+	if d == nil || d.Label != "e2e test drill dns" || d.Phase != state.DrillInjecting ||
+		!strings.Contains(d.Fix, "lab up") || !strings.Contains(d.Fix, "--state "+e2e) {
+		t.Fatalf("e2e drill: %+v", d)
+	}
+	set(main, &state.DrillRun{Drill: "oom", Phase: state.DrillRunning})
+	if d := drillState(main, e2e); d == nil || d.Label != "drill oom" || d.Fix != "" {
+		t.Fatalf("the lab's own drill comes first: %+v", d)
 	}
 }

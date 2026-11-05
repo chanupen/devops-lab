@@ -18,12 +18,19 @@
 // stopped or NotReady and no netem rule may be left on Postgres.
 //
 // It needs a running lab with the obs, sample-app, secrets and sample-db
-// stacks, its
-// kubeconfig in LAB_E2E_MAIN_KUBECONFIG, and podman, kubectl, jq and
-// argocd. Its runs go to a throwaway state file, not the learner's
-// history. One drill: -run E2EDrills/dns.
+// stacks, its kubeconfig in LAB_E2E_MAIN_KUBECONFIG, and podman, kubectl,
+// jq and argocd. It holds the lab lock while it runs, like lab drills
+// start. Its runs are test runs in ~/.lab/e2e/state.json (kubeconfig
+// linked beside it), not the learner's history: a run interrupted
+// mid-drill stays there, lab doctor reports it and lab up restores it,
+// and the next e2e run aborts it first. One drill: -run E2EDrills/dns.
 //
 //	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EDrills -v -timeout 60m ./internal/drills/
+//
+// TestE2EKilledDrill kills a dns run mid-inject, then checks lab doctor
+// fails on it and lab up puts the lab back (under a minute):
+//
+//	LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EKilledDrill -v -timeout 20m ./internal/drills/
 package drills_test
 
 import (
@@ -37,10 +44,12 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -139,10 +148,26 @@ func backAsBefore(ctx context.Context, t *testing.T, dyn dynamic.Interface, d dr
 	}
 }
 
-func TestE2EDrills(t *testing.T) {
+// e2eLab is what both tests need: the drills, the main lab's clients and
+// a manager on the e2e state file.
+type e2eLab struct {
+	all        []drills.Drill
+	kubeconfig string
+	dyn        dynamic.Interface
+	core       kubernetes.Interface
+	m          *drills.Manager
+	main       string // the lab's own state file, ~/.lab/state.json
+}
+
+func setupE2E(t *testing.T) e2eLab {
+	t.Helper()
 	kubeconfig := os.Getenv("LAB_E2E_MAIN_KUBECONFIG")
 	if kubeconfig == "" {
 		t.Skip("set LAB_E2E_MAIN_KUBECONFIG to a running lab's kubeconfig")
+	}
+	kubeconfig, err := filepath.Abs(kubeconfig)
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, tool := range []string{"kubectl", "jq", "argocd", "podman"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -165,8 +190,24 @@ func TestE2EDrills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A throwaway state with the stacks the drills need marked applied.
-	store := state.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	main, err := state.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The e2e state, with the stacks the drills need marked applied, and
+	// the kubeconfig beside it, where lab finds it to restore a run.
+	path := state.E2EPath(main)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(path), "kubeconfig")
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(kubeconfig, link); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(path)
 	if err := store.Update(func(s *state.State) error {
 		for _, st := range []string{"obs", "sample-app", "secrets", "sample-db"} {
 			s.Stacks[st] = state.StackState{Status: state.Applied}
@@ -176,12 +217,50 @@ func TestE2EDrills(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmp := t.TempDir() // the scripts' HOME: argocd and podman caches stay out of the user's
-	m := &drills.Manager{Drills: all, Store: store, Kubeconfig: kubeconfig, Runner: labs.ExecRunner{},
+	m := &drills.Manager{Drills: all, Store: store, Kubeconfig: link, Runner: labs.ExecRunner{},
 		Kube:   func() (dynamic.Interface, error) { return dyn, nil },
 		Alerts: drills.ProxyAlerts{REST: core.CoreV1().RESTClient()},
 		Test:   true,
 		Env: append(append(local.LabRegistryEnv(), local.MotoEnv()...),
 			"XDG_CONFIG_HOME="+filepath.Join(tmp, ".config"), "TMPDIR="+tmp)}
+	return e2eLab{all: all, kubeconfig: kubeconfig, dyn: dyn, core: core, m: m, main: main}
+}
+
+// claim takes the lab lock for the test, so lab up and lab drills wait
+// for it, and refuses to run beside a drill or a lab of the user's. A
+// drill an interrupted e2e run left behind is aborted first.
+func (e e2eLab) claim(ctx context.Context, t *testing.T) {
+	t.Helper()
+	main := state.NewStore(e.main)
+	unlock, err := main.LockLab(fmt.Sprintf("go test %s (pid %d, since %s)", t.Name(), os.Getpid(), time.Now().Format("15:04")))
+	if err != nil {
+		t.Fatalf("lab lock: %v", err)
+	}
+	t.Cleanup(unlock)
+	st, err := main.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch {
+	case st.ActiveDrill != nil:
+		t.Fatalf("drill %s is running in %s: lab drills abort first", st.ActiveDrill.Drill, e.main)
+	case st.ActiveLab != "":
+		t.Fatalf("lab %s is started: lab labs stop first", st.ActiveLab)
+	}
+	if r, _, ok, err := e.m.Active(); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Logf("an earlier e2e run left drill %s (%s) in %s: aborting it", r.Drill, r.Phase, e.m.Store.Path())
+		if _, err := e.m.Abort(ctx, logWriter{t}); err != nil {
+			t.Fatalf("abort the earlier run: %v", err)
+		}
+	}
+}
+
+func TestE2EDrills(t *testing.T) {
+	e := setupE2E(t)
+	all, kubeconfig, dyn, m := e.all, e.kubeconfig, e.dyn, e.m
+	e.claim(context.Background(), t)
 	ctx := context.Background()
 	log := logWriter{t}
 
@@ -316,4 +395,138 @@ func runScript(ctx context.Context, d drills.Drill, kubeconfig string, env []str
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	return labs.ExecRunner{}.Run(ctx, d.Script(name), d.Dir, append([]string{"KUBECONFIG=" + kubeconfig, "DRILL_ID=" + d.ID, "DRILL_DIR=" + d.Dir}, env...))
+}
+
+// killedEnv marks the child process TestE2EKilledDrill starts.
+const killedEnv = "LAB_E2E_KILLED_CHILD"
+
+// TestE2EKilledDrill runs the dns drill's e2e in a child process and
+// kills it (SIGKILL, with its scripts) while inject waits for CoreDNS to
+// stop: the fault is in and the run's state says injecting. Then lab
+// doctor must fail on the e2e drill, and lab up must put the lab back as
+// it was before, with nothing left in ~/.lab/e2e/state.json.
+func TestE2EKilledDrill(t *testing.T) {
+	if os.Getenv(killedEnv) != "" {
+		t.Skip("the child runs TestE2EDrills only")
+	}
+	e := setupE2E(t)
+	ctx := context.Background()
+	d, err := e.m.Find("dns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := e.m.Active(); err != nil || ok {
+		t.Fatalf("an e2e drill is already in the lab (%v): lab up first", err)
+	}
+	// Never leave a fault behind: if lab up did not restore it, abort.
+	t.Cleanup(func() {
+		if _, _, ok, _ := e.m.Active(); ok {
+			t.Log("cleanup: aborting the drill")
+			if _, err := e.m.Abort(ctx, logWriter{t}); err != nil {
+				t.Errorf("cleanup abort: %v", err)
+			}
+		}
+	})
+	before := fingerprint(ctx, t, e.dyn, d)
+
+	bin := filepath.Join(t.TempDir(), "lab")
+	if out, err := exec.CommandContext(ctx, "go", "build", "-o", bin, "../../cmd/lab").CombinedOutput(); err != nil {
+		t.Fatalf("build lab: %v\n%s", err, out)
+	}
+	cfg, err := filepath.Abs(filepath.Join("..", "..", "lab.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run", "^TestE2EDrills$/^dns$", "-test.v", "-test.timeout", "15m")
+	child.Env = append(os.Environ(), killedEnv+"=1")
+	child.Stdout, child.Stderr = logWriter{t}, logWriter{t}
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
+	coredns := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	midInject := func() bool {
+		st, err := e.m.Store.Load()
+		if err != nil || st.ActiveDrill == nil {
+			return false
+		}
+		if st.ActiveDrill.Phase != state.DrillInjecting {
+			t.Fatalf("the run reached %s before lab could kill it mid-inject", st.ActiveDrill.Phase)
+		}
+		u, err := e.dyn.Resource(coredns).Namespace("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
+		if err != nil {
+			return false
+		}
+		n, found, _ := unstructured.NestedInt64(u.Object, "spec", "replicas")
+		return found && n == 0
+	}
+	deadline := time.Now().Add(3 * time.Minute)
+	for !midInject() {
+		select {
+		case err := <-exited:
+			t.Fatalf("the e2e child ended before the kill: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(-child.Process.Pid, syscall.SIGKILL)
+			t.Fatal("the dns inject did not start within 3 minutes")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := syscall.Kill(-child.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill the e2e child: %v", err)
+	}
+	if err := <-exited; err == nil {
+		t.Fatal("the e2e child exited cleanly; want it killed")
+	}
+	t.Log("killed the e2e child mid-inject: CoreDNS is at zero")
+	if r, _, ok, err := e.m.Active(); err != nil || !ok || r.Phase != state.DrillInjecting {
+		t.Fatalf("after the kill the e2e state has %+v (active %v, %v); want the run, injecting", r, ok, err)
+	}
+
+	// lab doctor fails on it.
+	out, _ := exec.CommandContext(ctx, bin, "doctor", "--json").Output()
+	var report struct {
+		Results []struct{ Name, Status, Detail, Fix string }
+	}
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("lab doctor --json: %v\n%s", err, out)
+	}
+	i := slices.IndexFunc(report.Results, func(r struct{ Name, Status, Detail, Fix string }) bool { return r.Name == "drill" })
+	if i < 0 {
+		t.Fatalf("lab doctor has no drill check:\n%s", out)
+	}
+	if r := report.Results[i]; r.Status != "fail" || !strings.Contains(r.Detail, "e2e test drill dns") || !strings.Contains(r.Fix, "lab up") {
+		t.Fatalf("lab doctor drill check: %+v; want fail on the e2e test drill dns, fix lab up", r)
+	} else {
+		t.Logf("lab doctor: %s %s (fix: %s)", r.Status, r.Detail, r.Fix)
+	}
+
+	// lab up restores it before anything else. It keeps the revision the
+	// lab runs (a branch under test), so it changes nothing else.
+	args := []string{"up", "--config", cfg}
+	if st, err := state.NewStore(e.main).Load(); err != nil {
+		t.Fatal(err)
+	} else if st.Revision != "" && st.Revision != "main" {
+		args = append(args, "--revision", st.Revision)
+	}
+	up := exec.CommandContext(ctx, bin, args...)
+	upOut, err := up.CombinedOutput()
+	t.Logf("lab up:\n%s", upOut)
+	if err != nil {
+		t.Fatalf("lab up: %v", err)
+	}
+	for _, want := range []string{"an e2e test run's drill is still in the lab (injecting)", "● the drill is restored"} {
+		if !strings.Contains(string(upOut), want) {
+			t.Errorf("lab up does not say %q", want)
+		}
+	}
+	if r, _, ok, err := e.m.Active(); err != nil || ok {
+		t.Fatalf("after lab up the e2e state still has %+v (%v)", r, err)
+	}
+	backAsBefore(ctx, t, e.dyn, d, before)
+	nothingLeft(ctx, t, d, e.kubeconfig)
 }

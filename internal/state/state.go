@@ -260,6 +260,14 @@ func PathFor(mode string) (string, error) {
 	return filepath.Join(filepath.Dir(p), "cloud", "state.json"), nil
 }
 
+// E2EPath is the drills e2e test's state file for the local lab whose
+// state is at local: e2e/state.json beside it (~/.lab/e2e/state.json). Its
+// runs are test runs on the main lab, so lab doctor reports an active one
+// and lab up restores it, as for the lab's own drills.
+func E2EPath(local string) string {
+	return filepath.Join(filepath.Dir(local), "e2e", "state.json")
+}
+
 // Store reads and writes one state file.
 type Store struct {
 	path string
