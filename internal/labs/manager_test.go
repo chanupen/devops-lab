@@ -579,3 +579,57 @@ func TestStartRefusedDuringDrill(t *testing.T) {
 		t.Errorf("created %v", c.created)
 	}
 }
+
+func TestEnvFunc(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name     string
+		envFunc  func() ([]string, error)
+		startErr string
+		want     []string
+	}{
+		{"none", nil, "", []string{"A=1"}},
+		{"fresh each run", func() ([]string, error) { return []string{"AWS_SESSION_TOKEN=t"}, nil }, "", []string{"A=1", "AWS_SESSION_TOKEN=t"}},
+		{"fails at start", func() ([]string, error) { return nil, errors.New("no cloud lab is running") }, "no cloud lab is running", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, r, _, _ := testManager(t)
+			if err := m.Store.Update(func(s *state.State) error {
+				s.Stacks["core"] = state.StackState{Status: state.Applied}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			m.Env, m.EnvFunc = []string{"A=1"}, tt.envFunc
+			r.pass["reset.sh"] = true
+			_, err := m.Start(ctx, "02", io.Discard)
+			if tt.startErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.startErr) {
+					t.Fatalf("start: %v, want %q", err, tt.startErr)
+				}
+				if p := progress(t, m, "02-on-lab"); p.Step != 0 {
+					t.Errorf("a failed start left progress %+v", p)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := m.Verify(ctx, 1); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Reset(ctx, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if len(r.envs) != 2 {
+				t.Fatalf("runs: %v", r.runs)
+			}
+			for i, env := range r.envs {
+				if got := env[len(env)-len(tt.want):]; !slices.Equal(got, tt.want) {
+					t.Errorf("run %d (%s) env tail = %v, want %v", i, r.runs[i], got, tt.want)
+				}
+			}
+		})
+	}
+}

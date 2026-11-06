@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/labs"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -26,10 +28,13 @@ type labsFlags struct {
 	yes bool
 }
 
-// manager builds the labs manager. Labs run in local mode; progress is in
-// the local state file (~/.lab/state.json). Commands that make or delete
+// manager builds the labs manager for the mode (--mode, else lab.yaml's).
+// Progress is in that mode's state file: ~/.lab/state.json, or
+// ~/.lab/cloud/state.json. In local mode, commands that make or delete
 // scratch clusters pass scratch and need Podman; the others wire it when it
-// is there, only to read how long a lab's cluster has run.
+// is there, only to read how long a lab's cluster has run. In cloud mode
+// there are no scratch clusters: labs run on the EKS cluster, and the
+// scripts get ECR, the session's temporary keys and the lab tags.
 func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	cfgPath, err := f.configPath()
 	if err != nil {
@@ -46,25 +51,47 @@ func (f *labsFlags) manager(scratch bool) (*labs.Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("labs: %w", err)
 	}
-	path := f.statePath
-	if path == "" {
-		if path, err = state.PathFor("local"); err != nil {
-			return nil, err
-		}
-	}
-	home := filepath.Dir(path)
-	m := &labs.Manager{Labs: all, Store: state.NewStore(path), Mode: "local", Runner: labs.ExecRunner{}, Home: home,
-		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath,
-		// The lab registry, from the host and from the cluster, and the
-		// Secrets Manager endpoint (Moto) with dummy keys. A cloud overlay
-		// sets ECR and drops the endpoint; the lab scripts read only these.
-		Env:     append(local.LabRegistryEnv(), local.MotoEnv()...),
-		Prepare: func(labs.Lab) error { return local.EnsureLabRegistry(home) }}
-	// Scratch clusters run lab.yaml's k8sVersion, like the main lab.
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, err
 	}
+	if f.mode != "" {
+		cfg.Mode = f.mode
+		if err := cfg.Validate(); err != nil {
+			return nil, fmt.Errorf("--mode %s: %w", f.mode, err)
+		}
+	}
+	path := f.statePath
+	if path == "" {
+		if path, err = state.PathFor(cfg.Mode); err != nil {
+			return nil, err
+		}
+	}
+	home := filepath.Dir(path)
+	m := &labs.Manager{Labs: all, Store: state.NewStore(path), Mode: cfg.Mode, Runner: labs.ExecRunner{}, Home: home,
+		MainKubeconfig: filepath.Join(home, "kubeconfig"), LookPath: exec.LookPath}
+	if cfg.Mode == "cloud" {
+		// Built only when a script runs, so list, status and hint need no
+		// AWS session. Each run gets fresh temporary keys.
+		var prov *labaws.Provider
+		m.EnvFunc = func() ([]string, error) {
+			if prov == nil {
+				p, err := newCloudProvider(cfg, home, runOptions{RepoRoot: repo})
+				if err != nil {
+					return nil, err
+				}
+				prov = p
+			}
+			return prov.LabsEnv()
+		}
+		return m, nil
+	}
+	// The lab registry, from the host and from the cluster, and the
+	// Secrets Manager endpoint (Moto) with dummy keys. The lab scripts
+	// read only these; cloud mode sets ECR and real AWS instead.
+	m.Env = append(local.LabRegistryEnv(), local.MotoEnv()...)
+	m.Prepare = func(labs.Lab) error { return local.EnsureLabRegistry(home) }
+	// Scratch clusters run lab.yaml's k8sVersion, like the main lab.
 	s, err := local.NewScratch(home, cfg.K8sVersion)
 	switch {
 	case err == nil:
@@ -134,14 +161,15 @@ func newLabsCmd() *cobra.Command {
 		Short: "Hands-on labs: list, start, verify each step, stop",
 		Long: "Labs live in labs/ next to lab.yaml. A scratch lab gets its own single-node kind cluster,\n" +
 			"lab-scratch-<id>, which lab labs stop deletes with the lab's progress; the main lab is not\n" +
-			"touched. Progress is kept in ~/.lab/state.json.",
+			"touched. Progress is kept in ~/.lab/state.json. With --mode cloud, labs run on the EKS\n" +
+			"cluster and their progress is in ~/.lab/cloud/state.json.",
 		Args: cobra.NoArgs,
 	}
 	start, stop, reset := newLabsStartCmd(), newLabsStopCmd(), newLabsResetCmd()
 	for _, c := range []*cobra.Command{start, stop, reset} {
 		withLabLock(c)
 	}
-	cmd.AddCommand(newLabsListCmd(), start, newLabsStatusCmd(), newLabsVerifyCmd(), newLabsHintCmd(), newLabsSolutionCmd(), reset, stop)
+	cmd.AddCommand(newLabsListCmd(), start, newLabsStatusCmd(), newLabsVerifyCmd(), newLabsHintCmd(), newLabsSolutionCmd(), newLabsEnvCmd(), reset, stop)
 	return cmd
 }
 
@@ -160,23 +188,30 @@ func newLabsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeLabList(cmd.OutOrStdout(), m.Labs, st, m.TimeSpent)
+			return writeLabList(cmd.OutOrStdout(), m.Labs, st, m.TimeSpent, m.Mode)
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	return cmd
 }
 
 // spentFunc is a lab's time spent; Manager.TimeSpent asks its cluster.
 type spentFunc func(labs.Lab, state.LabProgress) time.Duration
 
-func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc) error {
+// writeLabList lists the labs; a lab that does not run in mode says so
+// instead of its progress.
+func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc, mode string) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tTIME\tLEVEL\tNEEDS\tPROGRESS")
+	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tTIME\tLEVEL\tNEEDS\tMODES\tPROGRESS")
 	for _, l := range all {
 		p := st.Labs[l.ID]
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", labs.LabMark(l, p).Symbol(), l.ID, l.Title, l.Time, l.Level, l.Needs,
-			progressText(l, p, st.ActiveLab == l.ID, spent(l, p)))
+		prog := progressText(l, p, st.ActiveLab == l.ID, spent(l, p))
+		if !slices.Contains(l.Modes, mode) {
+			prog = "not in " + mode + " mode"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", labs.LabMark(l, p).Symbol(), l.ID, l.Title, l.Time, l.Level, l.Needs,
+			strings.Join(l.Modes, ","), prog)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -237,6 +272,7 @@ func newLabsStartCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	registerVerbose(cmd, &verbose)
 	return cmd
 }
@@ -256,6 +292,7 @@ func newLabsStatusCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	return cmd
 }
 
@@ -366,6 +403,7 @@ func newLabsVerifyCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	return cmd
 }
 
@@ -398,7 +436,47 @@ func newLabsHintCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	return cmd
+}
+
+func newLabsEnvCmd() *cobra.Command {
+	var f labsFlags
+	cmd := &cobra.Command{
+		Use:   "env",
+		Short: "Print the lab scripts' environment as shell exports: eval \"$(lab labs env)\"",
+		Long: "Prints what the verify and solution scripts run with: KUBECONFIG, the lab registry\n" +
+			"(LAB_REGISTRY_PUSH/PULL) and the AWS settings. Locally that is Moto with dummy keys; in\n" +
+			"cloud mode it is ECR, the cloud session's temporary keys (they end with the session) and\n" +
+			"LAB_AWS_TAGS, the tags every AWS resource a lab creates must carry.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			m, err := f.manager(false)
+			if err != nil {
+				return err
+			}
+			env, err := m.ScriptEnv()
+			if err != nil {
+				return err
+			}
+			return writeExports(cmd.OutOrStdout(), append([]string{"KUBECONFIG=" + m.MainKubeconfig}, env...))
+		},
+	}
+	f.register(cmd)
+	f.registerMode(cmd)
+	return cmd
+}
+
+// writeExports prints NAME=value pairs as POSIX shell exports, each value
+// single-quoted.
+func writeExports(w io.Writer, env []string) error {
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		if _, err := fmt.Fprintf(w, "export %s='%s'\n", k, strings.ReplaceAll(v, "'", `'\''`)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newLabsSolutionCmd() *cobra.Command {
@@ -429,6 +507,7 @@ func newLabsSolutionCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "do not ask")
 	cmd.Flags().StringVar(&id, "lab", "", "lab id (default: the started lab)")
 	return cmd
@@ -466,6 +545,7 @@ func newLabsResetCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "do not ask")
 	return cmd
 }
@@ -519,6 +599,7 @@ func newLabsStopCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	f.registerMode(cmd)
 	registerVerbose(cmd, &verbose)
 	return cmd
 }
