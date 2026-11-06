@@ -453,6 +453,8 @@ Local mode comes first and must work end to end by week 3; the TUI, cloud mode a
 
 Each gate must pass before the next phase starts. If a phase slips, cut TUI screens before labs: the labs and drills are what interviewers will ask about.
 
+**Phase 4 gate: passed on 6 Nov 2026.** Every lab passes its e2e in each mode it supports. Lab 1 is local only, labs 2–5 run in both modes and lab 6 in cloud only. Labs 1–5 pass locally. In cloud mode, labs 2–5 passed in the #32 session. Lab 6 passed in a separate run on EKS 1.36 with only the cluster stack: steps 1–6 and reset in 8m50s. That run confirmed the step 6 fix, which counts only events newer than the `lab06` NodePool. `lab down` left nothing behind.
+
 ## GPU setup for Ollama (Fedora 45, G14)
 
 Use the RPM Fusion driver with Secure Boot left on, then give rootless Podman the GPU through CDI. Ollama runs as a Podman container on the host, outside kind, and the cluster reaches it over the network. Passing a GPU into kind node containers is fragile, and the lab does not need it.
