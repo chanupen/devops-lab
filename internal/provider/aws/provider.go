@@ -38,8 +38,8 @@ const (
 func Stacks() []string { return []string{"registry", "cluster"} }
 
 // GitOpsUnsupported lists the GitOps stacks a cloud lab cannot run yet:
-// ai needs a GPU node and real S3 for Langfuse (the design is in
-// docs/design.md; its cloud overlay is a stub). Plans skip them.
+// ai is an intentional cloud stub: it needs a GPU node and real S3 for
+// Langfuse. Plans skip it until the follow-up implements those resources.
 func GitOpsUnsupported() []string { return []string{"ai"} }
 
 // Options configure a Provider.

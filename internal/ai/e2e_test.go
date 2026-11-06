@@ -133,7 +133,9 @@ func probe(ctx context.Context, t *testing.T, core kubernetes.Interface, name st
 	}
 	c := &pod.Spec.Containers[0]
 	c.Image, c.Env = curlImage, nil
-	c.Command = []string{"curl", "-sf", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}", url}
+	// kindnet reconciles policy for new pods asynchronously. Wait for its
+	// rules before probing, rather than measuring the pod-start race.
+	c.Command = []string{"sh", "-c", `sleep 10; exec curl -sf -m 5 -o /dev/null -w '%{http_code}' "$1"`, "probe", url}
 	jobs := core.BatchV1().Jobs(Namespace)
 	if _, err := jobs.Create(ctx, j, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)

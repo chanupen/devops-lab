@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+# Moto does not validate these fixed local-only credentials.
+[[allowlists]]
+description = "Moto dummy S3 keys"
+condition = "AND"
+paths = ['''^gitops/overlays/local/ai/langfuse/values\.yaml$''']
+regexTarget = "line"
+regexes = ['''^\s*(accessKeyId: \{value: lab-dummy\}|secretAccessKey: \{value: lab-dummy-not-a-secret\})\s*$''']
+

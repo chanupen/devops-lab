@@ -2,8 +2,8 @@
 # ai: the host's Ollama as ollama.ai.svc (local mode; lab writes its
 # EndpointSlice), and Langfuse for LLM traces: the ClickHouse operator,
 # Langfuse's credentials through ESO, Langfuse itself, and its route.
-# Mode differences live in gitops/overlays/<mode>/ai; cloud mode is a stub
-# that lab refuses to apply for now.
+# Mode differences live in gitops/overlays/<mode>/ai; cloud AI is an
+# intentional stub that lab refuses to apply.
 {{- $repo := .Values.repo }}
 {{- $mode := .Values.mode }}
 ---

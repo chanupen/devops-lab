@@ -158,6 +158,10 @@ func TestAIRowsMatchPins(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmpl := string(b)
+	quadlet, err := os.ReadFile("../../docs/ollama.container")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range Table {
 		switch c.Name {
 		case "Langfuse":
@@ -167,6 +171,10 @@ func TestAIRowsMatchPins(t *testing.T) {
 		case "ClickHouse operator":
 			if !strings.Contains(tmpl, "chart: clickhouse-operator-helm\n      targetRevision: "+c.ChartVersion+"\n") {
 				t.Errorf("ai.yaml does not pin clickhouse-operator-helm at %s", c.ChartVersion)
+			}
+		case "Ollama":
+			if !strings.Contains(string(quadlet), "Image=docker.io/ollama/ollama:"+c.AppVersion+"@"+OllamaImageDigest+"\n") {
+				t.Errorf("reference Quadlet does not match the Ollama compatibility pin")
 			}
 		}
 	}

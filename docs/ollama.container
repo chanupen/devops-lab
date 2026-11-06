@@ -1,0 +1,24 @@
+# Install as ~/.config/containers/systemd/ollama.container, then run:
+# systemctl --user daemon-reload && systemctl --user start ollama
+#
+# Replace the example address with an unused address on the kind network:
+# podman network inspect kind
+[Unit]
+Description=Ollama for the local devops lab
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/ollama/ollama:0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+ContainerName=ollama
+AddDevice=nvidia.com/gpu=all
+Network=kind:ip=10.89.1.250
+NetworkAlias=lab-ollama
+PublishPort=127.0.0.1:11434:11434
+Volume=ollama:/root/.ollama
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
