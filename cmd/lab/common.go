@@ -439,6 +439,13 @@ func staleWithAI(next func(context.Context) (map[string]string, error), lp *loca
 			}
 			out["ai"] = fmt.Sprintf("Ollama moved from %s to %s on the kind network", deployed, addr)
 		}
+		image, _ := v["assistantImage"].(string)
+		if why, err := lp.AssistStale(ctx, image); err == nil && why != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out["ai"] = why
+		}
 		return out, nil
 	}
 }
@@ -458,13 +465,17 @@ func (r aiRunner) Apply(ctx context.Context, stack string, log io.Writer) error 
 	if err != nil {
 		return err
 	}
+	image, err := r.local.BuildAssist(ctx, log)
+	if err != nil {
+		return err
+	}
 	if err := r.local.SeedAI(ctx, log); err != nil {
 		return err
 	}
 	if err := r.local.WriteOllamaEndpoints(ctx, addr, log); err != nil {
 		return err
 	}
-	if err := r.gitops.SetValue(ctx, "ai", map[string]any{"ollamaAddress": addr}, log); err != nil {
+	if err := r.gitops.SetValue(ctx, "ai", map[string]any{"ollamaAddress": addr, "assistantImage": image}, log); err != nil {
 		return err
 	}
 	return r.gitops.Apply(ctx, stack, log)

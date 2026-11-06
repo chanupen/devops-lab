@@ -117,4 +117,27 @@ spec:
     namespace: ai
   syncPolicy:
     {{- include "lab.syncPolicy" . | nindent 4 }}
+{{- if .Values.ai.assistantImage }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "assist-receiver" "ai" "3") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ required "repo.url is required" $repo.url }}
+    targetRevision: {{ $repo.revision }}
+    path: gitops/stacks/ai/assist
+    helm:
+      valuesObject:
+        image: {{ .Values.ai.assistantImage | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+{{- end }}
 {{- end }}

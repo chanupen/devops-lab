@@ -1,0 +1,5 @@
+apiVersion: v2
+name: assist-receiver
+description: Local read-only AI assistant webhook receiver.
+type: application
+version: 0.1.0

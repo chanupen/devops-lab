@@ -119,7 +119,10 @@ func bootstrapApps(mode string) ([]map[string]any, error) {
 		"repo":     map[string]any{"url": "git@github.com:o/r.git", "revision": "main"},
 		"stacks":   stacks,
 		"sampleDB": map[string]any{"image": sampleImage[mode]},
-		"ai":       map[string]any{"ollamaAddress": ollamaAddress[mode]},
+		"ai": map[string]any{
+			"ollamaAddress":  ollamaAddress[mode],
+			"assistantImage": map[string]string{"local": "lab-zot:5000/lab/assist-receiver@sha256:" + strings.Repeat("a", 64)}[mode],
+		},
 	})
 	manifest, err := helmTemplate(ch, RootApp, Namespace, vals)
 	if err != nil {

@@ -9,3 +9,9 @@ kubeScheduler:
   enabled: false
 kubeProxy:
   enabled: false
+
+# The AI receiver's AlertmanagerConfig must see alerts from all namespaces.
+alertmanager:
+  alertmanagerSpec:
+    alertmanagerConfigMatcherStrategy:
+      type: None

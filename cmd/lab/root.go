@@ -30,7 +30,7 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 	withLabLock(down)
 	withLabLock(extend)
 	// tunnel only reads the lab and forwards ports: it never takes the lock.
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newVersionCmd())
+	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newAssistCmd(), newVersionCmd())
 	return root
 }
 

@@ -268,10 +268,9 @@ The Langfuse Kubernetes 1.32 minimum is derived rather than vendor-stated:
 its Postgres sub-chart uses StatefulSet PVC retention, which became GA in
 Kubernetes 1.32.
 
-### AI On-Call Assistant (draft, local only)
+### AI On-Call Assistant (local only)
 
-The read-only tools and their identity are implemented; the runner, receiver,
-notes and evals below remain a draft. The assistant takes
+The assistant takes
 an Alertmanager webhook or `lab assist alert <alert>` / `lab assist drill
 <drill>` and produces a short incident note. Alertmanager sends to a
 receiver Deployment in the `ai` namespace through a ClusterIP Service, with
@@ -287,10 +286,13 @@ A drill run gets the alert and live context, not the drill's `cause`, hints,
 solution or fault-injection details. Ambiguous or missing alerts fail with a
 clear message rather than picking one.
 
-The receiver is not built yet. Budget an estimated 64 MiB request and 128 MiB
-limit for one Go receiver pod, excluding Ollama, Langfuse and the existing
-stacks. This is a sizing estimate, not a measurement; measure its idle and
-peak working set under evaluation before setting final requests and limits.
+The receiver image is built from a restricted source context with rootless
+Podman, pushed to Zot and referenced by digest. It runs one replica with an
+estimated 64 MiB request and 128 MiB limit, excluding Ollama, Langfuse and
+the existing stacks; sampled working sets are recorded below. Local
+Alertmanager uses `alertmanagerConfigMatcherStrategy: None` so
+the receiver's `AlertmanagerConfig` can receive alerts from all namespaces;
+this strategy also affects any other AlertmanagerConfigs.
 
 **Read-only tools.** A fixed allowlist behind a Go interface exposes:
 
@@ -307,7 +309,9 @@ Missing labels, empty results and errors remain visible in the bundle; the
 runner does not silently substitute guessed context. The model reasons over
 that bundle with evidence citations and may request additional allowlisted
 calls from a separate budget. Both the initial bundle and extra calls share
-the overall deadline and output-size bounds.
+the overall deadline and output-size bounds. Pod excerpts prioritize container
+termination and restart status over conditions when container status exists,
+so a long conditions list does not hide the failure reason.
 
 The model selects only allowlisted extra operations and supplies validated,
 bounded arguments; it cannot choose URLs or invoke a shell, exec, arbitrary
@@ -347,7 +351,8 @@ and other spec fields; Argo CD output contains only revision history.
 **Small-model reliability.** The default is host Ollama with `llama3.2:3b`.
 The runner presents the small tool set and validates a structured response
 schema rather than relying on free-form tool calls. Each returned observation
-gets a stable evidence ID, source, timestamp and bounded excerpt. A run has
+gets a stable evidence ID, source, timestamp and bounded excerpt. Local model
+output constrains citations to IDs in the current bundle. A run has
 a proposed budget of eight additional tool calls and a 180-second overall
 deadline, including the initial collection, model and extra calls; these
 defaults need evaluation on the host.
@@ -361,7 +366,9 @@ anything without supporting evidence is explicitly marked **unsupported**.
 The runner rejects unknown IDs and marks uncited claims unsupported; a valid
 ID alone does not prove that the cited evidence supports a claim, so the
 evaluation checks that separately. Commands are suggestions for a human to
-review and run, never actions taken by the assistant.
+review and run, never actions taken by the assistant. When the alert names a
+valid namespace and pod, the runner supplies a `kubectl describe pod` command
+from those labels instead of trusting a model-generated command.
 
 **Privacy and traces.** Each run emits a Langfuse trace over OTLP to the local
 Langfuse instance, with tool timings, evidence references, outcome and errors.
@@ -371,9 +378,16 @@ tracing, a separate narrowly scoped trace credential may get only that named
 Secret; it is not exposed to the tool interface or model. The tool identity
 still cannot read any Secret. The receiver exports to `langfuse-web.ai.svc`;
 the CLI uses the loopback Gateway's `https://langfuse.localtest.me:8443`
-route with the lab CA. Keys never enter notes or traces.
+route with the lab CA. Pass `--langfuse-ca <PEM file>` if the Gateway
+certificate is not in the host trust store. The CLI uses the operator identity
+only for short-lived TokenRequests for `ai/assist-tools` and the separate
+`ai/assist-trace` identity; neither token is stored in a Secret. The receiver
+uses a rotating projected TokenRequest token. The trace identity can get only
+`ai/langfuse-credentials`. Keys are removed from evidence and notes and are
+never trace attributes.
 Do not record credentials or raw secrets in traces; bound and redact captured
-data. Logs can contain sensitive data despite redaction, so hosted inference
+data. Inline environment and Helm values are redacted before model requests,
+notes and traces. Logs can contain sensitive data despite redaction, so hosted inference
 may still disclose it. By default neither model requests nor traces send
 cluster data outside the host. A hosted model is opt-in only through an
 explicit per-run flag; the webhook cannot enable it from its payload. The
@@ -408,7 +422,12 @@ coverage gap instead of giving credit for unsupported guesses.
 1. Tools, read-only identity and guard tests (implemented).
 2. `lab assist` and the in-cluster Alertmanager webhook, with pre-gathered
    evidence, structured notes, budgets, local model and OTLP traces; hosted
-   inference remains opt-in.
+   inference remains opt-in. On the local lab, `kubectl top pods --containers`
+sampled the receiver every 10 seconds: 3 MiB idle and an observed peak of
+7 MiB while handling drill alerts (54 samples, 6 Nov 2026). Sampling may
+miss short peaks. In live bad-deploy and OOM drills the model abstained on
+root cause; the runner supplied a pod confirmation command. A citation ID
+alone does not establish that a claim is supported.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
 4. `lab assist eval`, the seven drills and seeded known-mistake cases.
 
@@ -542,6 +561,7 @@ The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo 
 - **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
 - **A rotated deploy key:** `lab up --stacks gitops --refresh-repo` re-applies the gitops stack, which reloads Argo CD's repository Secret from `repo.sshKeyFile`; without it an applied gitops stack is unchanged.
 - **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
+- **`lab doctor`:** reports an unresolved non-main root revision as a failure and recommends plain `lab up` to return GitOps to `main`. Other comparison errors do not receive that advice.
 - **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). The header's Kubernetes version is the `lab.yaml` pin. Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, in local mode the node's Kubernetes version (✕ with the fix when it is not the pin), Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
 
 ### Repository layout
