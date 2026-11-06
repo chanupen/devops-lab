@@ -273,11 +273,23 @@ Kubernetes 1.32.
 This is a proposal for review, not implemented behaviour. The assistant takes
 an Alertmanager webhook or `lab assist alert <alert>` / `lab assist drill
 <drill>` and produces a short incident note. Alertmanager sends to an
-in-cluster receiver on a ClusterIP Service, with no Gateway route, NodePort
-or host port. The receiver uses the local model; CLI and webhook use the
-same Go runner. A drill run gets the alert and live context, not the drill's
-`cause`, hints, solution or fault-injection details. Ambiguous or missing
-alerts fail with a clear message rather than picking one.
+receiver Deployment in the `ai` namespace through a ClusterIP Service, with
+no Gateway route, NodePort or host port. Its pods carry
+`lab.devops/ollama=true`, as required by the existing Ollama egress policy.
+A receiver ingress NetworkPolicy allows the webhook port only from
+Alertmanager pods (`app.kubernetes.io/name=alertmanager`) in `monitoring`
+(`kubernetes.io/metadata.name=monitoring`); no other ingress policy may
+broaden access to those pods. It is not authentication:
+kindnet reconciles policies asynchronously and labels are not identities.
+The receiver uses the local model; CLI and webhook use the same Go runner.
+A drill run gets the alert and live context, not the drill's `cause`, hints,
+solution or fault-injection details. Ambiguous or missing alerts fail with a
+clear message rather than picking one.
+
+The receiver is not built yet. Budget an estimated 64 MiB request and 128 MiB
+limit for one Go receiver pod, excluding Ollama, Langfuse and the existing
+stacks. This is a sizing estimate, not a measurement; measure its idle and
+peak working set under evaluation before setting final requests and limits.
 
 **Read-only tools.** A fixed allowlist behind a Go interface exposes:
 
@@ -286,12 +298,28 @@ alerts fail with a clear message rather than picking one.
 - Loki log queries and Prometheus queries.
 - Argo CD Application history, read from the Kubernetes API.
 
-The model selects only these operations and supplies validated, bounded
-arguments; it cannot choose URLs or invoke a shell, exec, arbitrary Kubernetes
-resources or write verbs. Both entry points use a dedicated Kubernetes
+Before asking the model, the runner uses alert labels and a fixed, bounded
+collection recipe to gather an evidence bundle: the firing alert, related
+pod status and events, relevant Loki logs and Prometheus samples, and
+matching Argo CD app history where identifiable.
+Missing labels, empty results and errors remain visible in the bundle; the
+runner does not silently substitute guessed context. The model reasons over
+that bundle with evidence citations and may request additional allowlisted
+calls from a separate budget. Both the initial bundle and extra calls share
+the overall deadline and output-size bounds.
+
+The model selects only allowlisted extra operations and supplies validated,
+bounded arguments; it cannot choose URLs or invoke a shell, exec, arbitrary
+Kubernetes resources or write verbs. Both entry points use a dedicated tool
 identity with only the required read permissions, excluding Secrets, never
-the operator's broader credentials; the runner bounds query time, result size
-and scope. Loki and Prometheus clients expose only query endpoints.
+the operator's broader credentials. The host CLI reaches Loki and Prometheus
+through Kubernetes API server Service proxy GETs, as the drills already do
+for Prometheus: `monitoring/loki:3100` and
+`monitoring/kps-prometheus:9090`, with only the fixed query paths exposed to
+the model. The receiver can use the in-cluster Services. The proxy grant
+itself does not enforce HTTP paths; the runner's client and transport guard
+must enforce the endpoint and method allowlist. Loki and Prometheus clients
+expose only query endpoints.
 Tool output is untrusted data, not instructions. A guard test drives every
 allowlisted operation through recording fake transports and asserts that only
 the permitted API endpoints and read requests are reachable. It also tries
@@ -304,8 +332,9 @@ fix.
 The runner presents the small tool set and validates a structured response
 schema rather than relying on free-form tool calls. Each returned observation
 gets a stable evidence ID, source, timestamp and bounded excerpt. A run has
-a proposed budget of eight tool calls and a 180-second overall deadline,
-including model and tool calls; these defaults need evaluation on the host.
+a proposed budget of eight additional tool calls and a 180-second overall
+deadline, including the initial collection, model and extra calls; these
+defaults need evaluation on the host.
 Tool errors, exhausted budgets, timeouts, invalid output and model failures
 produce a clearly incomplete note with the evidence gathered and the error,
 not an invented diagnosis. The operator can investigate manually.
@@ -320,6 +349,13 @@ review and run, never actions taken by the assistant.
 
 **Privacy and traces.** Each run emits a Langfuse trace over OTLP to the local
 Langfuse instance, with tool timings, evidence references, outcome and errors.
+The receiver gets only the `public-key` and `secret-key` fields from the
+`ai/langfuse-credentials` Secret, synchronized from Moto by ESO. For CLI
+tracing, a separate narrowly scoped trace credential may get only that named
+Secret; it is not exposed to the tool interface or model. The tool identity
+still cannot read any Secret. The receiver exports to `langfuse-web.ai.svc`;
+the CLI uses the loopback Gateway's `https://langfuse.localtest.me:8443`
+route with the lab CA. Keys never enter notes or traces.
 Do not record credentials or raw secrets in traces; bound and redact captured
 data. Logs can contain sensitive data despite redaction, so hosted inference
 may still disclose it. By default neither model requests nor traces send
@@ -336,9 +372,16 @@ with known model mistakes, including the false claim that a failed liveness
 probe replaces the container: the kubelet restarts the container in the same
 pod. Score cause correctness, whether each claim's evidence actually supports
 it (including unsupported claims and fabricated IDs), and elapsed time.
-Report per-case results, failures and incomplete runs, not just averages.
-Use reproducible recorded inputs for seeded cases; live drill evaluations
-must use the existing drill safety and restoration path, and abort on failure.
+Use fixed temperature 0 and seed 42 and record both, along with the model
+version and input snapshot. Capture a bounded snapshot for each drill and
+replay it and any recorded tool responses across at least three runs per
+case; seeded cases use recorded fixtures too. Report per-case results,
+failures, incomplete runs and variance in scores and elapsed time, not just
+averages; report live evidence collection time separately from replay time.
+Fixed settings improve reproducibility but do not guarantee identical model
+output. A replay request without a recorded response fails explicitly. Live
+drill evaluations must use the existing drill safety and restoration path,
+and abort on failure.
 Some causes, including a network qdisc or a deleted Moto secret, may not be
 provable with this initial allowlist. The assistant must say so and suggest
 human confirmation rather than infer certainty; evals should expose that
@@ -347,9 +390,9 @@ coverage gap instead of giving credit for unsupported guesses.
 **Build as small PRs, after approval:**
 
 1. Tools, read-only identity and guard tests.
-2. `lab assist` and the in-cluster Alertmanager webhook, with structured
-   notes, budgets, local model and OTLP traces; hosted inference remains
-   opt-in.
+2. `lab assist` and the in-cluster Alertmanager webhook, with pre-gathered
+   evidence, structured notes, budgets, local model and OTLP traces; hosted
+   inference remains opt-in.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
 4. `lab assist eval`, the seven drills and seeded known-mistake cases.
 
