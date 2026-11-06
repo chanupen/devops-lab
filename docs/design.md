@@ -268,6 +268,91 @@ The Langfuse Kubernetes 1.32 minimum is derived rather than vendor-stated:
 its Postgres sub-chart uses StatefulSet PVC retention, which became GA in
 Kubernetes 1.32.
 
+### AI On-Call Assistant (draft, local only)
+
+This is a proposal for review, not implemented behaviour. The assistant takes
+an Alertmanager webhook or `lab assist alert <alert>` / `lab assist drill
+<drill>` and produces a short incident note. Alertmanager sends to an
+in-cluster receiver on a ClusterIP Service, with no Gateway route, NodePort
+or host port. The receiver uses the local model; CLI and webhook use the
+same Go runner. A drill run gets the alert and live context, not the drill's
+`cause`, hints, solution or fault-injection details. Ambiguous or missing
+alerts fail with a clear message rather than picking one.
+
+**Read-only tools.** A fixed allowlist behind a Go interface exposes:
+
+- Kubernetes events, pod status and a describe-style summary assembled from
+  read-only API calls.
+- Loki log queries and Prometheus queries.
+- Argo CD Application history, read from the Kubernetes API.
+
+The model selects only these operations and supplies validated, bounded
+arguments; it cannot choose URLs or invoke a shell, exec, arbitrary Kubernetes
+resources or write verbs. Both entry points use a dedicated Kubernetes
+identity with only the required read permissions, excluding Secrets, never
+the operator's broader credentials; the runner bounds query time, result size
+and scope. Loki and Prometheus clients expose only query endpoints.
+Tool output is untrusted data, not instructions. A guard test drives every
+allowlisted operation through recording fake transports and asserts that only
+the permitted API endpoints and read requests are reachable. It also tries
+unknown tools, write verbs, exec and secret access and requires rejection
+before any request; an RBAC test checks that the identity cannot write or
+read Secrets. Neither a model-produced command nor a webhook can execute a
+fix.
+
+**Small-model reliability.** The default is host Ollama with `llama3.2:3b`.
+The runner presents the small tool set and validates a structured response
+schema rather than relying on free-form tool calls. Each returned observation
+gets a stable evidence ID, source, timestamp and bounded excerpt. A run has
+a proposed budget of eight tool calls and a 180-second overall deadline,
+including model and tool calls; these defaults need evaluation on the host.
+Tool errors, exhausted budgets, timeouts, invalid output and model failures
+produce a clearly incomplete note with the evidence gathered and the error,
+not an invented diagnosis. The operator can investigate manually.
+
+The note separates what fired, evidence, likely cause, commands to confirm,
+and a proposed fix. Every factual claim and recommendation cites evidence IDs;
+anything without supporting evidence is explicitly marked **unsupported**.
+The runner rejects unknown IDs and marks uncited claims unsupported; a valid
+ID alone does not prove that the cited evidence supports a claim, so the
+evaluation checks that separately. Commands are suggestions for a human to
+review and run, never actions taken by the assistant.
+
+**Privacy and traces.** Each run emits a Langfuse trace over OTLP to the local
+Langfuse instance, with tool timings, evidence references, outcome and errors.
+Do not record credentials or raw secrets in traces; bound and redact captured
+data. Logs can contain sensitive data despite redaction, so hosted inference
+may still disclose it. By default neither model requests nor traces send
+cluster data outside the host. A hosted model is opt-in only through an
+explicit per-run flag; the webhook cannot enable it from its payload. The
+CLI must state that opting in sends the selected context to the hosted
+provider. Failure to reach Langfuse is reported, not silently presented as
+a traced run.
+
+**Evaluation.** Evaluate all seven drills: bad-deploy, oom, dns, cert-expiry,
+node-loss, slow-db and secret-drift. The grader alone reads each drill's
+`cause` as ground truth; the assistant never receives it. Add seeded cases
+with known model mistakes, including the false claim that a failed liveness
+probe replaces the container: the kubelet restarts the container in the same
+pod. Score cause correctness, whether each claim's evidence actually supports
+it (including unsupported claims and fabricated IDs), and elapsed time.
+Report per-case results, failures and incomplete runs, not just averages.
+Use reproducible recorded inputs for seeded cases; live drill evaluations
+must use the existing drill safety and restoration path, and abort on failure.
+Some causes, including a network qdisc or a deleted Moto secret, may not be
+provable with this initial allowlist. The assistant must say so and suggest
+human confirmation rather than infer certainty; evals should expose that
+coverage gap instead of giving credit for unsupported guesses.
+
+**Build as small PRs, after approval:**
+
+1. Tools, read-only identity and guard tests.
+2. `lab assist` and the in-cluster Alertmanager webhook, with structured
+   notes, budgets, local model and OTLP traces; hosted inference remains
+   opt-in.
+3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
+4. `lab assist eval`, the seven drills and seeded known-mistake cases.
+
 ### Labs
 
 Each lab is a directory, `labs/NN-name/`, in a generic format that can be copied into the devops-roadmap repo as is (`labs/README.md` describes it):
