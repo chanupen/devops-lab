@@ -1,0 +1,5 @@
+# Cloud mode: the same URL through lab tunnel.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - langfuse-route.yaml

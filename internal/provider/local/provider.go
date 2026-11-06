@@ -56,6 +56,7 @@ type Provider struct {
 	nodesReady func(ctx context.Context, kubeconfig string, want int, log io.Writer) error
 	// secrets is Secrets Manager on Moto; kube connects to the lab cluster.
 	secrets Secrets
+	buckets Buckets
 	kube    func() (*kube.Clients, error)
 	// registry is the lab registry's API from the host; client calls it.
 	registry string
@@ -80,6 +81,7 @@ func newProvider(rt Runtime, clusters func(io.Writer) Clusters, opts Options) *P
 		},
 		nodesReady: waitNodesReady,
 		secrets:    NewMotoSecrets(MotoEndpointHost),
+		buckets:    NewMotoBuckets(MotoEndpointHost),
 		registry:   fmt.Sprintf("http://127.0.0.1:%d", ZotPort),
 		client:     &http.Client{Timeout: 30 * time.Second},
 		kube: func() (*kube.Clients, error) {

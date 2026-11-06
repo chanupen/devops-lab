@@ -37,6 +37,11 @@ const (
 // Stacks lists the stacks the cloud provider runs itself.
 func Stacks() []string { return []string{"registry", "cluster"} }
 
+// GitOpsUnsupported lists the GitOps stacks a cloud lab cannot run yet:
+// ai needs a GPU node and real S3 for Langfuse (the design is in
+// docs/design.md; its cloud overlay is a stub). Plans skip them.
+func GitOpsUnsupported() []string { return []string{"ai"} }
+
 // Options configure a Provider.
 type Options struct {
 	RepoRoot   string        // the repo: modules are under infra/terraform/aws/cluster

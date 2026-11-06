@@ -78,6 +78,10 @@ var sampleImage = map[string]string{
 	"cloud": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/lab/sample-db@sha256:" + strings.Repeat("a", 64),
 }
 
+// ollamaAddress is what the ai stack sets per mode: the Ollama container's
+// address on the kind network locally; nothing in cloud mode yet.
+var ollamaAddress = map[string]string{"local": "10.89.1.250", "cloud": ""}
+
 func renderAll(mode string) ([]rendered, error) {
 	apps, err := bootstrapApps(mode)
 	if err != nil {
@@ -115,6 +119,7 @@ func bootstrapApps(mode string) ([]map[string]any, error) {
 		"repo":     map[string]any{"url": "git@github.com:o/r.git", "revision": "main"},
 		"stacks":   stacks,
 		"sampleDB": map[string]any{"image": sampleImage[mode]},
+		"ai":       map[string]any{"ollamaAddress": ollamaAddress[mode]},
 	})
 	manifest, err := helmTemplate(ch, RootApp, Namespace, vals)
 	if err != nil {
@@ -529,7 +534,7 @@ func TestCloudTerraformNoNATAndTagged(t *testing.T) {
 // Overlay files that hold no mode difference stay identical in both modes.
 func TestOverlaySharedFilesIdentical(t *testing.T) {
 	for _, f := range []string{"core/gateway/certificate.yaml", "core/gateway/argocd-route.yaml",
-		"obs/routes/grafana-route.yaml", "sample-app/routes/podinfo-route.yaml"} {
+		"obs/routes/grafana-route.yaml", "sample-app/routes/podinfo-route.yaml", "ai/routes/langfuse-route.yaml"} {
 		a, errA := os.ReadFile(filepath.Join(repoRoot, "gitops/overlays/local", f))
 		b, errB := os.ReadFile(filepath.Join(repoRoot, "gitops/overlays/cloud", f))
 		if errA != nil || errB != nil || string(a) != string(b) {

@@ -1,7 +1,9 @@
 package compat
 
 import (
+	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +19,7 @@ func TestFor(t *testing.T) {
 		mode string
 		want []string
 	}{
-		{"local", []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "kind node images"}},
+		{"local", []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "Langfuse", "ClickHouse operator", "Ollama", "kind node images"}},
 		{"cloud", []string{"Karpenter", "AWS Load Balancer Controller", "AWS EBS CSI driver", "Argo CD", "Kyverno", "External Secrets Operator"}},
 		{"other", nil},
 	}
@@ -129,7 +131,9 @@ func TestForStacks(t *testing.T) {
 		active []string
 		want   []string
 	}{
-		{"local", nil, []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "kind node images"}},
+		{"local", nil, []string{"Argo CD", "Kyverno", "External Secrets Operator", "Moto", "Langfuse", "ClickHouse operator", "Ollama", "kind node images"}},
+		{"local", []string{"cluster", "gitops", "secrets", "obs", "ai"}, []string{"Argo CD", "External Secrets Operator", "Moto", "Langfuse",
+			"ClickHouse operator", "Ollama", "kind node images"}},
 		{"local", []string{"cluster", "gitops"}, []string{"Argo CD", "kind node images"}},
 		{"local", []string{"cluster", "gitops", "policy"}, []string{"Argo CD", "Kyverno", "kind node images"}},
 		{"local", []string{"cluster", "gitops", "secrets"}, []string{"Argo CD", "External Secrets Operator", "Moto", "kind node images"}},
@@ -143,6 +147,27 @@ func TestForStacks(t *testing.T) {
 	for _, c := range Table {
 		if c.Stack == "" {
 			t.Errorf("%s has no Stack", c.Name)
+		}
+	}
+}
+
+// The ai stack's rows carry the pins the bootstrap template installs.
+func TestAIRowsMatchPins(t *testing.T) {
+	b, err := os.ReadFile("../../gitops/bootstrap/templates/ai.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := string(b)
+	for _, c := range Table {
+		switch c.Name {
+		case "Langfuse":
+			if !strings.Contains(tmpl, "chart: langfuse\n      targetRevision: "+c.ChartVersion+"\n") {
+				t.Errorf("ai.yaml does not pin the langfuse chart at %s", c.ChartVersion)
+			}
+		case "ClickHouse operator":
+			if !strings.Contains(tmpl, "chart: clickhouse-operator-helm\n      targetRevision: "+c.ChartVersion+"\n") {
+				t.Errorf("ai.yaml does not pin clickhouse-operator-helm at %s", c.ChartVersion)
+			}
 		}
 	}
 }

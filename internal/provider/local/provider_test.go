@@ -198,6 +198,7 @@ func testProvider(t *testing.T, rt *fakeRuntime, kc *fakeClusters, purge bool) *
 		Options{Home: home, Kubeconfig: filepath.Join(home, "kubeconfig"), K8sVersion: "1.36", Purge: purge})
 	p.zotReady = func(context.Context, io.Writer) error { return rt.call("zotReady") }
 	p.nodesReady = func(context.Context, string, int, io.Writer) error { return rt.call("nodesReady") }
+	p.buckets = &fakeBuckets{}
 	return p
 }
 

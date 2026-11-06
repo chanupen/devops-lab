@@ -177,6 +177,9 @@ func (p *Podman) Container(ctx context.Context, name string) (ContainerInfo, err
 				HostIP   string `json:"HostIp"`
 				HostPort string `json:"HostPort"`
 			} `json:"Ports"`
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
 		} `json:"NetworkSettings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
@@ -188,8 +191,12 @@ func (p *Podman) Container(ctx context.Context, name string) (ContainerInfo, err
 			ports[p] = append(ports[p], net.JoinHostPort(b.HostIP, b.HostPort))
 		}
 	}
+	nets := map[string]string{}
+	for n, s := range d.NetworkSettings.Networks {
+		nets[n] = s.IPAddress
+	}
 	return ContainerInfo{Name: name, Exists: true, Running: d.State.Running, Image: d.ImageName, Labels: d.Config.Labels,
-		StartedAt: d.State.StartedAt, FinishedAt: d.State.FinishedAt, HostPorts: ports}, nil
+		StartedAt: d.State.StartedAt, FinishedAt: d.State.FinishedAt, HostPorts: ports, Networks: nets}, nil
 }
 
 // Containers implements Runtime. libpod's list gives the times as Unix

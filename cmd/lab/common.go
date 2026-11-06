@@ -373,13 +373,17 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			// credentials in Moto before its app syncs.
 			l.Router["secrets"] = seqRunner{lp, g}
 			l.Router["sample-db"] = sampleDBRunner{lp, g}
-			l.stale = staleWithSampleDB(l.stale, lp, g)
+			l.Router["ai"] = aiRunner{lp, g}
+			l.stale = staleWithAI(staleWithSampleDB(l.stale, lp, g), lp, g)
 		}
 		if cloud != nil {
 			// Cloud mode: sample-db's image is built for arm64 and pushed
 			// to ECR, and its first credentials go into AWS Secrets
 			// Manager, before its app syncs.
 			l.Router["sample-db"] = cloudSampleDBRunner{cloud: cloud, gitops: g, repo: opts.RepoRoot}
+			for _, s := range labaws.GitOpsUnsupported() {
+				delete(l.Router, s)
+			}
 		}
 		l.hosts = g.AppHosts
 	}
@@ -413,6 +417,61 @@ func staleWithSampleDB(next func(context.Context) (map[string]string, error), lp
 		}
 		return out, nil
 	}
+}
+
+// staleWithAI adds the ai stack to what lab up re-applies when the host's
+// Ollama is on another address than the one ollama.ai.svc points at (the
+// Quadlet's address changed). Best effort, like staleWithSampleDB.
+func staleWithAI(next func(context.Context) (map[string]string, error), lp *local.Provider, g *gitops.Runner) func(context.Context) (map[string]string, error) {
+	return func(ctx context.Context) (map[string]string, error) {
+		out, err := next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		v, err := g.Value(ctx, "ai")
+		if err != nil || v == nil {
+			return out, nil
+		}
+		deployed, _ := v["ollamaAddress"].(string)
+		if addr, err := lp.OllamaAddress(ctx); err == nil && deployed != "" && addr != deployed {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out["ai"] = fmt.Sprintf("Ollama moved from %s to %s on the kind network", deployed, addr)
+		}
+		return out, nil
+	}
+}
+
+// aiRunner applies the ai stack in local mode: check the host's Ollama
+// (on the kind network, published on loopback only), make Langfuse's
+// secrets and S3 bucket in Moto, point ollama.ai.svc at Ollama, give its
+// address to the app-of-apps (for the NetworkPolicy), then turn the stack
+// on. Destroy removes the apps and the ai namespace, the EndpointSlice with it.
+type aiRunner struct {
+	local  *local.Provider
+	gitops *gitops.Runner
+}
+
+func (r aiRunner) Apply(ctx context.Context, stack string, log io.Writer) error {
+	addr, err := r.local.OllamaAddress(ctx)
+	if err != nil {
+		return err
+	}
+	if err := r.local.SeedAI(ctx, log); err != nil {
+		return err
+	}
+	if err := r.local.WriteOllamaEndpoints(ctx, addr, log); err != nil {
+		return err
+	}
+	if err := r.gitops.SetValue(ctx, "ai", map[string]any{"ollamaAddress": addr}, log); err != nil {
+		return err
+	}
+	return r.gitops.Apply(ctx, stack, log)
+}
+
+func (r aiRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
+	return r.gitops.Destroy(ctx, stack, log)
 }
 
 // seqRunner applies a stack with first, then second, and destroys it in
@@ -522,7 +581,11 @@ func stackSupport(cfg config.Config) func(string) bool {
 		stacks = append(stacks, labaws.Stacks()...)
 	}
 	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) {
-		stacks = append(stacks, gitops.Stacks()...)
+		for _, s := range gitops.Stacks() {
+			if cfg.Mode != "cloud" || !slices.Contains(labaws.GitOpsUnsupported(), s) {
+				stacks = append(stacks, s)
+			}
+		}
 	}
 	return func(s string) bool { return slices.Contains(stacks, s) }
 }

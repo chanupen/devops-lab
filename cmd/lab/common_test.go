@@ -51,3 +51,23 @@ func TestActiveStacks(t *testing.T) {
 		})
 	}
 }
+
+// The ai stack runs in local mode only: a cloud plan skips it (no GPU node
+// yet), so it is never "to apply" and then refused.
+func TestStackSupportAI(t *testing.T) {
+	tests := []struct {
+		mode string
+		want map[string]bool
+	}{
+		{"local", map[string]bool{"ai": true, "obs": true, "secrets": true, "cluster": true}},
+		{"cloud", map[string]bool{"ai": false, "obs": true, "secrets": true, "cluster": true}},
+	}
+	for _, tt := range tests {
+		supports := stackSupport(config.Config{Mode: tt.mode, GitOps: "argocd"})
+		for stack, want := range tt.want {
+			if got := supports(stack); got != want {
+				t.Errorf("%s: supports(%s) = %v, want %v", tt.mode, stack, got, want)
+			}
+		}
+	}
+}

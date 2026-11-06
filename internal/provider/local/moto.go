@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -315,7 +316,20 @@ func (p *Provider) reseed(ctx context.Context, log io.Writer) error {
 	for _, k := range put {
 		logf(log, "put %s back into %s from its Secret in the cluster (Moto keeps no state across restarts)", k, MotoContainer)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// The ai stack keeps Langfuse's raw events in Moto's S3: make the bucket
+	// again while the stack is there. Events Moto lost were already
+	// processed into ClickHouse.
+	_, nsErr := c.Core.CoreV1().Namespaces().Get(ctx, AINamespace, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(nsErr):
+		return nil
+	case nsErr != nil:
+		return nsErr
+	}
+	return p.ensureLangfuseBucket(ctx, log)
 }
 
 // motoAnswers waits until Moto's Secrets Manager answers on the host port.
