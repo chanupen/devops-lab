@@ -27,8 +27,12 @@ func TestLabsCommands(t *testing.T) {
 
 	out, err := runLab(append([]string{"labs", "list"}, flags...)...)
 	// Column widths follow the longest title, so compare the line's fields.
-	if err != nil || !hasFields(out, "○ 01-argocd-bootstrap Bootstrap Argo CD from scratch 45m beginner scratch not started") {
+	if err != nil || !hasFields(out, "○ 01-argocd-bootstrap Bootstrap Argo CD from scratch 45m beginner scratch local not started") {
 		t.Errorf("list: %v\n%s", err, out)
+	}
+	// lab.yaml's mode is local: lab 6 runs only in cloud mode, and says so.
+	if !hasFields(out, "○ 06-karpenter Karpenter consolidation, PDBs and spot interruptions 50m advanced lab cloud not in local mode") {
+		t.Errorf("list: lab 6 should say it is not in local mode\n%s", out)
 	}
 	if out, err := runLab(append([]string{"labs", "status"}, flags...)...); err != nil || !strings.Contains(out, "no lab is started") {
 		t.Errorf("status with no lab: %v\n%s", err, out)

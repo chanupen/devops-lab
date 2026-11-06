@@ -256,6 +256,12 @@ func (f *cloudFlags) baseline(cmd *cobra.Command) (*labaws.Baseline, error) {
 	if err != nil {
 		return nil, err
 	}
+	// tofu records the package's path in the plan, so the path must not
+	// depend on which worktree runs lab: a copy at one fixed place keeps
+	// the baseline plan clean from any of them.
+	if zip, err = stageReaperZip(zip, home); err != nil {
+		return nil, err
+	}
 	varFile := filepath.Join(home, baselineVarFile)
 	if _, err := os.Stat(varFile); err != nil {
 		return nil, fmt.Errorf("%s is missing: create it with alert_email = \"you@example.com\" (budget alerts go there)", varFile)
@@ -398,4 +404,23 @@ func newLeftoversCmd() *cobra.Command {
 	}
 	flags.register(cmd)
 	return cmd
+}
+
+// stageReaperZip copies the reaper package to ~/.lab/aws/reaper.zip (home is
+// ~/.lab) and returns that path. The bytes, and so source_code_hash, are the
+// package's own.
+func stageReaperZip(src, home string) (string, error) {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(home, "aws", "reaper.zip")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return "", err
+	}
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return "", err
+	}
+	return dst, os.Rename(tmp, dst)
 }

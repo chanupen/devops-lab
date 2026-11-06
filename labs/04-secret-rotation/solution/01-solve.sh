@@ -10,7 +10,7 @@ pw() { head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 for s in "$ADMIN_SECRET:postgres" "$APP_SECRET:app_v1"; do
   name=${s%%:*} user=${s##*:}
   aws secretsmanager describe-secret --secret-id "$name" >/dev/null 2>&1 ||
-    aws secretsmanager create-secret --name "$name" \
+    aws secretsmanager create-secret --name "$name" ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} \
       --secret-string "$(jq -cn --arg u "$user" --arg p "$(pw)" '{username: $u, password: $p}')" >/dev/null
 done
 img=$(kubectl -n sample-db get deployment sample-db -o jsonpath='{.spec.template.spec.containers[0].image}')

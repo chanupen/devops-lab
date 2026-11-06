@@ -101,6 +101,9 @@ type Manager struct {
 	// Env is added to every script's environment, after lab's own
 	// variables (the e2e test gives the scripts a throwaway HOME this way).
 	Env []string
+	// EnvFunc adds to Env each time a script runs, so values that expire
+	// (cloud mode: the session's temporary keys) are fresh. Nil adds nothing.
+	EnvFunc func() ([]string, error)
 	// Prepare readies the host for a lab before it is recorded as started
 	// (local mode: the mirror files that let the cluster pull from the lab
 	// registry). Nil does nothing.
@@ -112,6 +115,24 @@ type Manager struct {
 	// "" is this host's.
 	Platform string
 }
+
+// env is Env plus EnvFunc's values.
+func (m *Manager) env() ([]string, error) {
+	env := slices.Clone(m.Env)
+	if m.EnvFunc == nil {
+		return env, nil
+	}
+	more, err := m.EnvFunc()
+	if err != nil {
+		return nil, fmt.Errorf("the lab scripts' environment: %w", err)
+	}
+	return append(env, more...), nil
+}
+
+// ScriptEnv is what every lab script of this manager runs with besides
+// lab's own variables: Env and EnvFunc's values. The e2e test runs the
+// solutions with it.
+func (m *Manager) ScriptEnv() ([]string, error) { return m.env() }
 
 // Scratch is the name of lab l's scratch cluster.
 func (m *Manager) Scratch(l Lab) string {
@@ -242,6 +263,11 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 			return l, fmt.Errorf("lab %s: %w", l.ID, err)
 		}
 	}
+	// The scripts' environment must resolve now (cloud: an AWS session and
+	// a running cloud lab), not at the first verify.
+	if _, err := m.env(); err != nil {
+		return l, fmt.Errorf("lab %s: %w", l.ID, err)
+	}
 	// Only now, with the cluster up and every check passed, is the lab
 	// recorded as started: a start that fails leaves no progress behind.
 	now := m.now()
@@ -363,7 +389,11 @@ func (m *Manager) Reset(ctx context.Context, log io.Writer) (Lab, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, ResetTimeout)
 	defer cancel()
-	out, err := m.Runner.Run(ctx, l.ResetScript(), l.Dir, append(scriptEnv(l, 0, m.Kubeconfig(l)), m.Env...))
+	env, err := m.env()
+	if err != nil {
+		return l, err
+	}
+	out, err := m.Runner.Run(ctx, l.ResetScript(), l.Dir, append(scriptEnv(l, 0, m.Kubeconfig(l)), env...))
 	_, _ = io.WriteString(log, out)
 	if err != nil {
 		return l, fmt.Errorf("reset.sh: %w", err)
@@ -402,7 +432,11 @@ func (m *Manager) Verify(ctx context.Context, n int) (Lab, Result, error) {
 	if timeout == 0 {
 		timeout = VerifyTimeout
 	}
-	res := verify(ctx, m.Runner, l, n, m.Kubeconfig(l), timeout, m.Env)
+	env, err := m.env()
+	if err != nil {
+		return l, Result{}, err
+	}
+	res := verify(ctx, m.Runner, l, n, m.Kubeconfig(l), timeout, env)
 	now := m.now()
 	return l, res, m.Store.Update(func(s *state.State) error {
 		p := s.Labs[l.ID]

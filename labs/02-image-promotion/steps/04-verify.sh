@@ -2,6 +2,7 @@
 # Step 4: Deployment hello in lab02-dev runs the dev image by its digest.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
+need_registry
 need_cluster
 d=$(tag_digest dev)
 [ -n "$d" ] || fail "the registry has no $PUSH/$REPO:dev"

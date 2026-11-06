@@ -4,9 +4,9 @@
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../steps/lib.sh
 . "$(dirname "$0")/../steps/lib.sh"
-skopeo() { podman run --rm --network host "$SKOPEO_IMAGE" "$@"; }
-digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$PUSH/lab02-hello:dev")
-skopeo copy --preserve-digests --src-tls-verify=false --dest-tls-verify=false \
+need_registry
+digest=$(skopeo inspect --tls-verify="$TLS" --format '{{.Digest}}' "docker://$PUSH/lab02-hello:dev")
+skopeo copy --preserve-digests --src-tls-verify="$TLS" --dest-tls-verify="$TLS" \
   "docker://$PUSH/lab02-hello@$digest" "docker://$PUSH/lab02-hello:prod"
 kubectl create namespace lab02-prod --dry-run=client -o yaml | kubectl apply -f -
 sed "s#NAMESPACE#lab02-prod#; s#IMAGE#$PULL/lab02-hello@$digest#" "$(dirname "$0")/04-deployment.yaml" | kubectl apply -f -

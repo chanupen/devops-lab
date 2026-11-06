@@ -7,7 +7,7 @@
  ○ 03  SLO and burn-rate alerts for the sample app  0/7    │                                        
  ○ 04  Rotate a database password without restarting the a…│ ○ 1  Install Argo CD with Helm         
  ○ 05  Kyverno policy that blocks images without a digest …│ ○ 2  Log in with the argocd CLI        
-                                                           │ ○ 3  Deploy an app from Git            
+ ○ 06  Karpenter consolidation, PDBs and spot interruption…│ ○ 3  Deploy an app from Git            
                                                            │ ○ 4  Turn on auto-sync                 
                                                            │ ○ 5  Watch Argo CD undo drift          
                                                            │ ○ 6  Manage apps with an app of apps   

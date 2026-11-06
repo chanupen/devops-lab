@@ -121,3 +121,31 @@ func TestCloudLoginNeedsTerminal(t *testing.T) {
 		t.Errorf("cached session removed: %v", err)
 	}
 }
+
+// The reaper package goes to one fixed path whatever the worktree, with
+// the same bytes, so tofu's plan does not change between worktrees.
+func TestStageReaperZip(t *testing.T) {
+	home := t.TempDir()
+	for _, wt := range []string{"wt-a", "wt-b"} {
+		src := filepath.Join(t.TempDir(), wt, "bin", "reaper.zip")
+		if err := os.MkdirAll(filepath.Dir(src), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(src, []byte("package "+wt), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := stageReaperZip(src, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := filepath.Join(home, "aws", "reaper.zip"); got != want {
+			t.Errorf("%s: staged at %s, want %s", wt, got, want)
+		}
+		if b, _ := os.ReadFile(got); string(b) != "package "+wt {
+			t.Errorf("%s: staged %q", wt, b)
+		}
+	}
+	if _, err := stageReaperZip(filepath.Join(home, "missing.zip"), home); err == nil {
+		t.Error("a missing package must fail")
+	}
+}

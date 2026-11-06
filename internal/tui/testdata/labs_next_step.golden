@@ -7,7 +7,7 @@
  ○ 03  SLO and burn-rate alerts for the sample app  0/7    │ Make Argo CD sync podinfo on its own.  
  ○ 04  Rotate a database password without restarting the a…│ Turn on self-heal, so it undoes        
  ○ 05  Kyverno policy that blocks images without a digest …│ changes made in the cluster. Turn on   
-                                                           │ prune, so it deletes what was removed  
+ ○ 06  Karpenter consolidation, PDBs and spot interruption…│ prune, so it deletes what was removed  
                                                            │ from Git.                              
                                                            │                                        
                                                            │ h shows a hint (2 left)                

@@ -11,7 +11,16 @@ export AWS_ENDPOINT_URL_SECRETS_MANAGER=http://127.0.0.1:4566 AWS_REGION=ap-sout
   AWS_ACCESS_KEY_ID=lab-dummy AWS_SECRET_ACCESS_KEY=lab-dummy-not-a-secret
 ```
 
-The keys are dummies: Moto checks none. In cloud mode you leave all four unset and use your AWS profile.
+The keys are dummies: Moto checks none.
+
+In cloud mode (`lab labs start 4 --mode cloud`) Secrets Manager is the real one in ap-south-1, and ESO reads it with EKS Pod Identity: its role may read `lab/*` and `labNN/*` secrets only. There is no endpoint. Instead of the exports above, load what the scripts use: the cloud session's temporary keys and `LAB_AWS_TAGS`, the lab tags (lab, owner, expires-at, component) as the JSON list `--tags` takes:
+
+```bash
+unset AWS_ENDPOINT_URL_SECRETS_MANAGER
+eval "$(lab labs env --mode cloud)"
+```
+
+Add `--tags "$LAB_AWS_TAGS"` to each `create-secret`, so `lab down` and the TTL reaper remove the secrets even if you never reset the lab. The keys end with the session (`lab cloud login` starts a new one; run the `eval` again after it).
 
 You need `podman`, `kubectl` and `jq`. The aws CLI runs as a pinned image through rootless Podman, so there is nothing else to install:
 
@@ -55,7 +64,7 @@ Use random passwords. Then deploy the manifests in `labs/04-secret-rotation/app`
 While it starts, read the setup. How often does ESO check Secrets Manager? Where does the app find its credentials, and how are they mounted?
 
 ### Hints
-- A password: `head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n'`. Build the JSON with jq, so quoting cannot break it: `aws secretsmanager create-secret --name lab04/db/app --secret-string "$(jq -cn --arg p "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')" '{username: "app_v1", password: $p}')"`.
+- A password: `head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n'`. Build the JSON with jq, so quoting cannot break it: `aws secretsmanager create-secret --name lab04/db/app --secret-string "$(jq -cn --arg p "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')" '{username: "app_v1", password: $p}')"`. In cloud mode add `--tags "$LAB_AWS_TAGS"`.
 - The image: `kubectl -n sample-db get deployment sample-db -o jsonpath='{.spec.template.spec.containers[0].image}'`. It is pinned by digest. Then `sed "s|SAMPLE_DB_IMAGE|$img|" app.yaml | kubectl apply -f -`.
 - `kubectl -n lab04-app get externalsecret` shows whether ESO could read both secrets. The `refreshInterval` is in its spec.
 - The app's credentials are a Secret volume at `/etc/db`, with no `subPath`. Postgres gets its own from environment variables, which it reads only at its first start.

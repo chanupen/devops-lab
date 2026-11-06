@@ -3,6 +3,7 @@
 # and Deployment hello in lab02-prod runs it by that digest.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
+need_registry
 need_cluster
 dev=$(tag_digest dev)
 prod=$(tag_digest prod)

@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/labs"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -212,12 +214,34 @@ func TestE2EMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []struct {
+	type labCase struct {
 		id string
 		// staleFor: lab 3's first steps read rates over 2 minutes, which
 		// still hold a previous run's traffic for a while.
 		staleFor time.Duration
-	}{{"02", 0}, {"03", 4 * time.Minute}, {"04", 0}, {"05", 0}}
+	}
+	tests := []labCase{{"02", 0}, {"03", 4 * time.Minute}, {"04", 0}, {"05", 0}}
+	// LAB_E2E_MODE=cloud runs them on the cloud lab (kubeconfig
+	// ~/.lab/cloud/kubeconfig), with lab 6, which runs only there.
+	mode := os.Getenv("LAB_E2E_MODE")
+	if mode == "" {
+		mode = "local"
+	}
+	// The labs' environment: Zot and Moto locally; in cloud mode ECR, the
+	// cloud session's keys and the lab tags (the same as lab labs env).
+	modeEnv := append(local.LabRegistryEnv(), local.MotoEnv()...)
+	prepare := func(labs.Lab) error { return local.EnsureLabRegistry(filepath.Dir(kubeconfig)) }
+	if mode == "cloud" {
+		tests = append(tests, labCase{"06", 0})
+		if modeEnv, err = cloudLabsEnv(filepath.Dir(kubeconfig)); err != nil {
+			t.Fatal(err)
+		}
+		prepare = nil
+	}
+	// LAB_E2E_LABS=02,06 runs only those.
+	if only := os.Getenv("LAB_E2E_LABS"); only != "" {
+		tests = slices.DeleteFunc(tests, func(c labCase) bool { return !slices.Contains(strings.Split(only, ","), c.id) })
+	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			labHome := t.TempDir()
@@ -232,10 +256,9 @@ func TestE2EMain(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			scriptEnv := append(append(local.LabRegistryEnv(), local.MotoEnv()...), "LAB_WORK="+work)
-			m := &labs.Manager{Labs: all, Store: store, Mode: "local", Runner: labs.ExecRunner{}, Home: labHome,
-				MainKubeconfig: kubeconfig, LookPath: exec.LookPath, Env: scriptEnv,
-				Prepare: func(labs.Lab) error { return local.EnsureLabRegistry(filepath.Dir(kubeconfig)) }}
+			scriptEnv := append(slices.Clone(modeEnv), "LAB_WORK="+work)
+			m := &labs.Manager{Labs: all, Store: store, Mode: mode, Runner: labs.ExecRunner{}, Home: labHome,
+				MainKubeconfig: kubeconfig, LookPath: exec.LookPath, Env: scriptEnv, Prepare: prepare}
 			ctx := context.Background()
 			var timings []string
 			timed := func(what string, f func()) {
@@ -262,4 +285,26 @@ func TestE2EMain(t *testing.T) {
 			runSteps(t, m, l, m.Kubeconfig(l), scriptEnv, timed, tt.staleFor)
 		})
 	}
+}
+
+// cloudLabsEnv is lab labs env --mode cloud: home is the cloud lab's home
+// (~/.lab/cloud), which holds its expires-at. The AWS session must be
+// cached (lab cloud login); the test never asks for an MFA code.
+func cloudLabsEnv(home string) ([]string, error) {
+	cfg, err := config.Load(filepath.Join("..", "..", "lab.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	cache, err := labaws.DefaultCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	p, err := labaws.New(ctx, labaws.Session{Profile: labaws.DefaultProfile, CacheDir: cache},
+		labaws.Options{Home: home, Owner: cfg.Cloud.Owner, Profile: labaws.DefaultProfile})
+	if err != nil {
+		return nil, err
+	}
+	return p.LabsEnv()
 }
