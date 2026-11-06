@@ -12,9 +12,12 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/doctor"
+	"github.com/chanupen/devops-lab/internal/kube"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -51,6 +54,7 @@ func newDoctorCmd() *cobra.Command {
 				sys.LabRegistry = doctorLabRegistry
 				sys.MotoSecrets = local.NewMotoSecrets(local.MotoEndpointHost).Count
 				sys.AI = doctorAI
+				sys.GitOps = doctorGitOps
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
@@ -83,6 +87,27 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
 	return cmd
+}
+
+func doctorGitOps(ctx context.Context) (doctor.GitOpsState, error) {
+	path, err := state.DefaultPath()
+	if err != nil {
+		return doctor.GitOpsState{}, err
+	}
+	cfg, err := kube.RESTConfig(filepath.Join(filepath.Dir(path), "kubeconfig"))
+	if err != nil {
+		return doctor.GitOpsState{}, err
+	}
+	clients, err := kube.NewClients(kube.WarningsTo(cfg, io.Discard))
+	if err != nil {
+		return doctor.GitOpsState{}, err
+	}
+	app, err := clients.Dynamic.Resource(kube.AppGVR).Namespace("argocd").Get(ctx, "lab-bootstrap", metav1.GetOptions{})
+	if err != nil {
+		return doctor.GitOpsState{}, err
+	}
+	revision, _, _ := unstructured.NestedString(app.Object, "spec", "source", "targetRevision")
+	return doctor.GitOpsState{Revision: revision, Problems: kube.AppFrom(app).Problems}, nil
 }
 
 // requireLinux stops doctor on the client machine: every check reads Linux host state.

@@ -74,6 +74,8 @@ type System struct {
 	// AI reads the ai stack (Ollama through the cluster, Langfuse); nil
 	// skips its checks.
 	AI func(ctx context.Context) (AIState, error)
+	// GitOps reads the root Argo CD Application.
+	GitOps func(ctx context.Context) (GitOpsState, error)
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -157,6 +159,7 @@ func Checks() []Check {
 		{"ollama in cluster", aiDeployed(checkOllamaInCluster)},
 		{"ollama model", aiDeployed(checkOllamaModel)},
 		{"langfuse", aiDeployed(checkLangfuse)},
+		{"gitops revision", checkGitOpsRevision},
 		{"lan listeners", checkLANListeners},
 		{"go", toolCheck("go")},
 		{"kind", toolCheck("kind")},

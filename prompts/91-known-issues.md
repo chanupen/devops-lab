@@ -9,6 +9,7 @@ Problems hit while building the lab, and the fix for each. Check here first when
 | Version check passed on the wrong version | kind's Podman provider pulls by digest, so the image name has no tag | Read `/kind/version` in the node; never parse the image name |
 | `lab` says the lab is pinned to an old version after `git pull` | The installed binary is old | `make install` after every pull |
 | Argo CD `lab-bootstrap` Unknown, `Permission denied (publickey)` | Short GitHub-side failure, or the repo Secret is stale | Test the key with `ssh -i ~/.ssh/devops-lab-deploy -T git@github.com`; `lab up --stacks gitops --refresh-repo`; hard refresh the app |
+| Argo CD `lab-bootstrap` Unknown, `unable to resolve ... to a commit SHA` | The GitOps revision tracks a branch that was deleted after merge | Plain `lab up` moves GitOps back to `main`; after testing a branch, always move it back before finishing |
 | Kyverno app stays OutOfSync | Chart CRDs ship empty labels/annotations and are too big for client-side apply | `ignoreDifferences` on CRD metadata and `ServerSideApply=true` |
 | `profile lab: credential type source_profile requires role_arn, profile devops` | Something added `source_profile = devops` to `[profile devops]` (likely `claws`) | Remove that line; `[profile devops]` holds only region and output |
 | Cloud apply failed: `AmazonEBSCSIDriverPolicyV2 does not exist` | Wrong policy name | `service-role/AmazonEBSCSIDriverPolicy`; check every managed policy ARN before apply |

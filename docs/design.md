@@ -552,6 +552,7 @@ The revision is deliberately not in `lab.yaml`: `lab-bootstrap` and the in-repo 
 - **Testing a branch:** `lab up --revision <branch>` syncs the gitops stack from that branch, so GitOps changes can be tried before they merge. The plan warns that gitops will not track `main`.
 - **A rotated deploy key:** `lab up --stacks gitops --refresh-repo` re-applies the gitops stack, which reloads Argo CD's repository Secret from `repo.sshKeyFile`; without it an applied gitops stack is unchanged.
 - **State:** `~/.lab/state.json` records the revision the gitops stack applied. A plain `lab up` (no `--revision`) re-applies gitops whenever the recorded revision is not `main`, which moves the root app back.
+- **`lab doctor`:** reports an unresolved non-main root revision as a failure and recommends plain `lab up` to return GitOps to `main`. Other comparison errors do not receive that advice.
 - **`lab status`:** lists every stack with its state and the revision (highlighted when it is not `main`). The header's Kubernetes version is the `lab.yaml` pin. Once the cluster stack is applied it adds live health from one look at the cluster (5-second timeout): nodes Ready, in local mode the node's Kubernetes version (✕ with the fix when it is not the pin), Argo CD apps Synced and Healthy, and each app that is not, with its sync and health status. A cluster that does not answer shows as off with the reason, or as stopped with the command that starts it. Once core is up it lists the app URLs. It changes nothing.
 
 ### Repository layout
