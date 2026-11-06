@@ -26,7 +26,8 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			"--stacks, destroys only those stacks and the deployed stacks that need them. In local\n" +
 			"mode it first starts the main cluster's nodes and lab-zot when a reboot stopped them, and\n" +
 			"the registry's image cache volume is kept unless --purge is given. In cloud mode,\n" +
-			"lab down then lists anything still tagged lab=true outside the baseline.",
+			"lab down then deletes any network interface, EBS volume or secret still tagged with this\n" +
+			"lab's owner and expires-at, and lists anything still tagged lab=true outside the baseline.",
 		Example: "  lab down\n  lab down --stacks sample-app",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

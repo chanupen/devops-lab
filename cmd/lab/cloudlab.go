@@ -17,6 +17,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
 	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
+	"github.com/chanupen/devops-lab/internal/reaper/sweep"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -59,6 +60,7 @@ type cloudLab interface {
 	PreflightCheck(ctx context.Context, w io.Writer) error
 	Extend(ctx context.Context, d time.Duration, log io.Writer) (time.Time, []string, error)
 	Leftovers(ctx context.Context) (labaws.LeftoverReport, error)
+	Sweep(ctx context.Context, log io.Writer) (sweep.Result, error)
 	Finish() error
 }
 
@@ -129,7 +131,8 @@ func confirmCloudApply(cmd *cobra.Command, prov provider, p engine.Plan, ttl tim
 }
 
 // reportCloudDown runs after a cloud lab down: when no stack is left it
-// clears the expiry, then lists every lab=true resource that still exists
+// sweeps what is left of this environment (Sweep), clears the expiry,
+// then lists every lab=true resource that still exists
 // outside the baseline, because anything there may still bill.
 func reportCloudDown(cmd *cobra.Command, prov provider, store *state.Store) error {
 	c, ok := prov.(cloudLab)
@@ -143,16 +146,59 @@ func reportCloudDown(cmd *cobra.Command, prov provider, store *state.Store) erro
 	if len(st.Stacks) > 0 {
 		return nil
 	}
+	// The sweep needs this environment's expires-at, which Finish clears.
+	sctx, scancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+	swept, sweepErr := c.Sweep(sctx, cmd.ErrOrStderr())
+	scancel()
+	if sweepErr == nil {
+		if err := writeSweep(cmd.OutOrStdout(), swept); err != nil {
+			return err
+		}
+		if len(swept.Errors) > 0 {
+			sweepErr = fmt.Errorf("the sweep could not delete or check %d resources (above)", len(swept.Errors))
+		}
+	} else {
+		sweepErr = fmt.Errorf("sweep after destroy: %w", sweepErr)
+	}
 	if err := c.Finish(); err != nil {
-		return err
+		return errors.Join(sweepErr, err)
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 	defer cancel()
 	left, err := c.Leftovers(ctx)
 	if err != nil {
-		return fmt.Errorf("list resources still tagged lab=true: %w", err)
+		return errors.Join(sweepErr, fmt.Errorf("list resources still tagged lab=true: %w", err))
 	}
-	return writeLeftovers(cmd.OutOrStdout(), left)
+	return errors.Join(sweepErr, writeLeftovers(cmd.OutOrStdout(), left))
+}
+
+// writeSweep prints what the final sweep deleted, what was still in use
+// and what it could not delete or check.
+func writeSweep(w io.Writer, r sweep.Result) error {
+	var b strings.Builder
+	if len(r.Deleted)+len(r.Waiting)+len(r.Errors) == 0 {
+		b.WriteString("\nsweep after destroy: nothing of this lab left (network interfaces, EBS volumes, secrets)\n")
+	}
+	if len(r.Deleted) > 0 {
+		fmt.Fprintf(&b, "\nsweep after destroy deleted (%d): tofu destroy and the stacks' release left these:\n", len(r.Deleted))
+		for _, t := range r.Deleted {
+			fmt.Fprintf(&b, "  %s\n", labaws.ShortARN(t.ARN))
+		}
+	}
+	if len(r.Waiting) > 0 {
+		fmt.Fprintf(&b, "\nsweep after destroy: still in use, not deleted (%d):\n", len(r.Waiting))
+		for _, s := range r.Waiting {
+			fmt.Fprintf(&b, "  %s\n", s)
+		}
+	}
+	if len(r.Errors) > 0 {
+		fmt.Fprintf(&b, "\nsweep after destroy: failed (%d):\n", len(r.Errors))
+		for _, s := range r.Errors {
+			fmt.Fprintf(&b, "  %s\n", s)
+		}
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 // writeLeftovers prints what is really left, then the stale tagging-index

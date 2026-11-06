@@ -22,6 +22,7 @@ import (
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/reaper"
+	"github.com/chanupen/devops-lab/internal/reaper/sweep"
 )
 
 // ClusterName is the lab's EKS cluster. It matches the module's default.
@@ -451,6 +452,28 @@ func (p *Provider) Extend(ctx context.Context, d time.Duration, log io.Writer) (
 // Leftovers lists lab=true resources outside the baseline.
 func (p *Provider) Leftovers(ctx context.Context) (LeftoverReport, error) {
 	return Leftovers(ctx, p.cfg)
+}
+
+// Sweep is lab down's safety net after OpenTofu has destroyed the
+// environment: it deletes any ENI, EBS volume or Secrets Manager secret
+// still tagged with this environment's owner and expires-at (sweep.Run),
+// listed both by the tagging API and directly. It needs the recorded
+// expiry: without one it sweeps nothing, and the reaper handles what is
+// left once it expires.
+func (p *Provider) Sweep(ctx context.Context, log io.Writer) (sweep.Result, error) {
+	exp, err := ReadExpiry(ExpiryFile(p.opts.Home))
+	if errors.Is(err, os.ErrNotExist) {
+		_, _ = fmt.Fprintln(log, "sweep: no expires-at recorded for this lab; nothing swept")
+		return sweep.Result{}, nil
+	}
+	if err != nil {
+		return sweep.Result{}, err
+	}
+	a := reaper.NewAWS(p.cfg)
+	lister := sweep.Listers{a, sweep.Lister{AWS: a, Account: p.account, Region: Region}}
+	env := map[string]string{sweep.OwnerTag: p.opts.Owner, reaper.ExpiresTag: exp.UTC().Format(time.RFC3339)}
+	logf := func(format string, args ...any) { _, _ = fmt.Fprintf(log, "sweep: "+format+"\n", args...) }
+	return sweep.Run(ctx, lister, a, a, env, sweep.Kinds, logf)
 }
 
 // Finish clears the expiry once lab down has destroyed every stack.
