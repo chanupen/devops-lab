@@ -6,10 +6,10 @@
 need_cluster
 need_cap
 # The interrupted NodeClaims of the pool (named lab06-...) and their nodes.
-hit=$(interrupt_events | awk -v p="$POOL-" '($1 == "NodeClaim" && index($2, p) == 1) || $1 == "Node"')
-[ -n "$hit" ] || fail "no interruption event yet: send the interruption warning for a node of $POOL to Karpenter's queue"
+hit=$(events SpotInterrupted | awk -v p="$POOL-" '($1 == "NodeClaim" && index($2, p) == 1) || $1 == "Node" {print $1, $2}' | sort -u)
+[ -n "$hit" ] || fail "no SpotInterrupted event yet: send the interruption warning for a node of $POOL to Karpenter's queue"
 claimhit=$(awk '$1 == "NodeClaim"' <<<"$hit")
-[ -n "$claimhit" ] || fail "the interruption events name no NodeClaim of $POOL: send the warning for a node of $POOL"
+[ -n "$claimhit" ] || fail "the SpotInterrupted events name no NodeClaim of $POOL: send the warning for a node of $POOL"
 while read -r kind name; do
   case "$kind" in
     NodeClaim) kubectl get nodeclaim "$name" >/dev/null 2>&1 && fail "NodeClaim $name is still there: Karpenter is draining it; verify again in a minute" ;;

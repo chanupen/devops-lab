@@ -53,11 +53,11 @@ Apply `app/inflate.yaml`. It is a Deployment of pause containers that only take 
 - `kubectl -n lab06-karpenter scale deployment inflate --replicas=4`.
 - Pending pods are Karpenter's signal. `kubectl get nodeclaims -w` shows a NodeClaim per node it decides to launch, before the node exists.
 - A 2-vCPU node has about 1.9 vCPU allocatable, and DaemonSets (VPC CNI, kube-proxy, node exporter) take some of it. Two 700m pods fit; a third does not. So 4 pods need 2 nodes.
-- `kubectl get nodes -l karpenter.sh/nodepool=lab06 -L node.kubernetes.io/instance-type,karpenter.sh/capacity-type,topology.kubernetes.io/zone` shows what Karpenter chose. It picks the cheapest instance types that fit, among those the requirements allow.
+- `kubectl get nodes -l karpenter.sh/nodepool=lab06 -L node.kubernetes.io/instance-type,karpenter.sh/capacity-type,topology.kubernetes.io/zone` shows what Karpenter chose. Karpenter lists every type that fits and the requirements allow (16 here), and EC2 Fleet chooses with the `price-capacity-optimized` strategy: the pools least likely to be interrupted, then the cheapest of those. So it may not pick the cheapest type: in the test run it chose m8gd.large ($0.035/h) over t4g.medium ($0.011/h).
 - `kubectl -n kube-system logs deploy/karpenter | grep -i -e launched -e created` shows its decisions.
 
 ### Expected result
-Two spot nodes of `lab06` in about a minute, each with two inflate pods.
+Two spot nodes of `lab06` in under a minute (38 s in the test run), each with two inflate pods.
 
 ## Step 3: Scale down and watch consolidation
 
@@ -68,6 +68,7 @@ Scale inflate to 2. The two remaining pods fit on one node. Watch what Karpenter
 - `consolidateAfter: 30s` is how long a node must stay unchanged before Karpenter considers it.
 - `kubectl get events -A --field-selector source=karpenter -w`, or `kubectl describe nodeclaim <name>`, shows why a node goes (`Empty`, `Underutilized`).
 - The ReplicaSet chose which pods to delete; usually the newest. Which node became empty?
+- You may also see `Unconsolidatable`: "SpotToSpotConsolidation is disabled, can't replace a spot node with a spot node". Karpenter can delete a spot node and move its pods, but by default it does not replace one spot node with a cheaper spot node (a feature gate turns that on).
 
 ### Expected result
 One node of `lab06` left, running both pods. The other was drained and terminated.
@@ -80,7 +81,7 @@ A PDB limits voluntary disruptions: evictions for a drain, which is how Karpente
 - When a ReplicaSet scales down, it deletes pods with a lower `controller.kubernetes.io/pod-deletion-cost` first. Annotate one pod on each node with a higher cost before you scale down: `kubectl -n lab06-karpenter annotate pod <pod> controller.kubernetes.io/pod-deletion-cost=1000`.
 - `kubectl -n lab06-karpenter get pdb` shows `ALLOWED DISRUPTIONS`. With `maxUnavailable: 0` it stays 0.
 - Scaling down is not an eviction: a PDB never stops `kubectl scale`. It stops drains.
-- `kubectl describe node <name>` lists a `DisruptionBlocked` event that names the PDB. `kubectl get nodeclaims -o wide` and their `Consolidatable` condition show that Karpenter would consolidate them.
+- After a minute or two, `kubectl describe nodeclaim <name>` lists a `DisruptionBlocked` event: `Pdb prevents pod evictions (PodDisruptionBudget=[lab06-karpenter/inflate])`. The NodeClaims' `Consolidatable` condition is True: Karpenter would consolidate them.
 
 ### Expected result
 Two nodes with one pod each, and they stay. A PDB that never allows a disruption also blocks node upgrades, `expireAfter` and drift replacement: the node is stuck until someone changes the PDB.
@@ -105,8 +106,8 @@ Send Karpenter the interruption warning that EC2 would send for the node inflate
 - The instance ID is the end of the node's `spec.providerID`: `kubectl get node <name> -o jsonpath='{.spec.providerID}'`.
 - The queue's name is in Karpenter's settings: `kubectl -n kube-system get deployment karpenter -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="INTERRUPTION_QUEUE")].value}'`. Its URL: `aws sqs get-queue-url --queue-name <name>`.
 - The message is the EventBridge event, as JSON: `{"version":"0","id":"<uuid>","detail-type":"EC2 Spot Instance Interruption Warning","source":"aws.ec2","account":"<account>","time":"<now, RFC3339>","region":"ap-south-1","resources":["arn:aws:ec2:ap-south-1:<account>:instance/<id>"],"detail":{"instance-id":"<id>","instance-action":"terminate"}}`. Build it with `jq -n`, then `aws sqs send-message --queue-url <url> --message-body "$body"`.
-- `kubectl get events -A -w | grep -i interrupt` shows Karpenter taking it.
+- `kubectl get events -A -w | grep -i interrupt` shows Karpenter taking it: `SpotInterrupted` ("Spot interruption warning was triggered") and `TerminatingOnInterruption`, on the NodeClaim and the Node, within a second.
 - A real warning gives two minutes. Here nothing forces that, but Karpenter acts at once either way. Ask what your workload needs to survive two minutes' notice: more than one replica, a PDB that allows a disruption, and a short shutdown.
 
 ### Expected result
-Karpenter records the interruption on the NodeClaim, drains the node, terminates the instance and launches another spot node. inflate is back to 2 available pods on the new node. That is the end of the lab: `lab labs reset` removes the NodePool and its nodes.
+Karpenter records the interruption on the NodeClaim, drains the node, terminates the instance and launches another spot node. inflate is back to 2 available pods on the new node, about 40 seconds later. Until then it runs on one pod: the drain does not wait for the replacement, which is why one replica is never enough on spot. That is the end of the lab: `lab labs reset` removes the NodePool and its nodes.

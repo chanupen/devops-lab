@@ -199,6 +199,16 @@ func newLabsListCmd() *cobra.Command {
 // spentFunc is a lab's time spent; Manager.TimeSpent asks its cluster.
 type spentFunc func(labs.Lab, state.LabProgress) time.Duration
 
+// doneHint says what is left to do once a lab is done: a scratch lab's
+// cluster goes with lab labs stop; a lab on the main cluster leaves its
+// work there until lab labs reset.
+func doneHint(l labs.Lab) string {
+	if l.Needs == labs.NeedsScratch {
+		return "lab labs stop deletes its cluster."
+	}
+	return "lab labs reset removes its work from the main lab, then lab labs stop ends it."
+}
+
 // writeLabList lists the labs; a lab that does not run in mode says so
 // instead of its progress.
 func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc, mode string) error {
@@ -397,7 +407,7 @@ func newLabsVerifyCmd() *cobra.Command {
 			if next, ok := l.Step(p.Step); ok {
 				_, _ = fmt.Fprintf(out, "next: step %d, %s (lab labs status shows the task)\n", next.N, next.Title)
 			} else if res.Step == len(l.Steps) {
-				_, _ = fmt.Fprintf(out, "Lab %s is done in %s. lab labs stop deletes its cluster.\n", l.Number(), shortDuration(m.TimeSpent(l, p)))
+				_, _ = fmt.Fprintf(out, "Lab %s is done in %s. %s\n", l.Number(), shortDuration(m.TimeSpent(l, p)), doneHint(l))
 			}
 			return nil
 		},

@@ -96,18 +96,20 @@ pods_per_node() {
     -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' 2>/dev/null | sort | uniq -c | awk '{print $2, $1}'
 }
 
-# events <reason>: Karpenter's events with that reason, as "kind name time
-# message" lines (time is the last time it was seen).
-events() {
-  kubectl get events -A --field-selector "reason=$1" -o json 2>/dev/null | jq -r '.items[]
-    | "\(.involvedObject.kind) \(.involvedObject.name) \(.lastTimestamp // .eventTime // .metadata.creationTimestamp) \(.message)"'
+# pool_since: when NodePool lab06 was made. reset.sh deletes it, so events
+# from an earlier run of the lab (they last an hour) are older.
+pool_since() {
+  kubectl get nodepool "$POOL" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
 }
 
-# interrupt_events: Karpenter's interruption events (SpotInterrupted and
-# the termination it starts), as "kind name" lines. The reason is matched
-# loosely, so a renamed reason in a newer Karpenter still counts.
-interrupt_events() {
-  kubectl get events -A -o json 2>/dev/null | jq -r '.items[]
-    | select(.reason | test("interrupt"; "i"))
-    | "\(.involvedObject.kind) \(.involvedObject.name)"' | sort -u
+# events <reason>: Karpenter's events with exactly that reason since the
+# lab's NodePool was made, as "kind name time message" lines (time is the
+# last time it was seen). Karpenter 1.15 names them DisruptionBlocked (a
+# PDB: "Pdb prevents pod evictions (PodDisruptionBudget=[ns/name])") and
+# SpotInterrupted ("Spot interruption warning was triggered"), on both the
+# NodeClaim and the Node.
+events() {
+  kubectl get events -A --field-selector "reason=$1" -o json 2>/dev/null | jq -r --arg since "$(pool_since)" '.items[]
+    | select((.lastTimestamp // .eventTime // .metadata.creationTimestamp) >= $since)
+    | "\(.involvedObject.kind) \(.involvedObject.name) \(.lastTimestamp // .eventTime // .metadata.creationTimestamp) \(.message)"'
 }

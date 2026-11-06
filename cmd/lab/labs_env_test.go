@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/chanupen/devops-lab/internal/labs"
+
 	"bytes"
 	"os/exec"
 	"strings"
@@ -37,5 +39,19 @@ func TestWriteExports(t *testing.T) {
 				t.Errorf("shell read %q, want %q", out, v)
 			}
 		})
+	}
+}
+
+func TestDoneHint(t *testing.T) {
+	tests := []struct {
+		needs, want string
+	}{
+		{labs.NeedsScratch, "lab labs stop deletes its cluster."},
+		{labs.NeedsLab, "lab labs reset removes its work from the main lab, then lab labs stop ends it."},
+	}
+	for _, tt := range tests {
+		if got := doneHint(labs.Lab{Needs: tt.needs}); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.needs, got, tt.want)
+		}
 	}
 }
