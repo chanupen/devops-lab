@@ -136,6 +136,9 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			}
 		}
 		data = Redact(data)
+		if source == "pods" {
+			data = focusPodEvidence(data)
+		}
 		if len(data) > evidenceLimit {
 			data = data[:evidenceLimit] + " [truncated]"
 		}
@@ -216,6 +219,47 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			add(decision.Tool.Name, string(data), callStarted, false)
 		}
 	}
+}
+
+func focusPodEvidence(data string) string {
+	var object map[string]any
+	if json.Unmarshal([]byte(data), &object) != nil {
+		return data
+	}
+	focus := func(pod map[string]any) {
+		statuses, ok := pod["containerStatuses"].([]any)
+		if !ok || len(statuses) == 0 {
+			return
+		}
+		delete(pod, "conditions")
+		for _, raw := range statuses {
+			status, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			for key := range status {
+				switch key {
+				case "name", "ready", "restartCount", "lastState", "state":
+				default:
+					delete(status, key)
+				}
+			}
+		}
+	}
+	if items, ok := object["items"].([]any); ok {
+		for _, item := range items {
+			if pod, ok := item.(map[string]any); ok {
+				focus(pod)
+			}
+		}
+	} else {
+		focus(object)
+	}
+	b, err := json.Marshal(object)
+	if err != nil {
+		return data
+	}
+	return string(b)
 }
 
 type recipeCall struct {

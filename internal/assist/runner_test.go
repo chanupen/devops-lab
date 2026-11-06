@@ -147,6 +147,34 @@ func TestRedactPreservesTimestamps(t *testing.T) {
 	}
 }
 
+func TestFocusPodEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+		drop  []string
+	}{
+		{"termination", `{"name":"p","conditions":[{"message":"` + strings.Repeat("x", 700) + `"}],"containerStatuses":[{"name":"app","lastState":{"terminated":{"reason":"OOMKilled","exitCode":137}},"imageID":"unneeded","restartCount":2}]}`, []string{"OOMKilled", "137", "restartCount"}, []string{"conditions", "imageID"}},
+		{"pending", `{"name":"p","conditions":[{"reason":"Unschedulable"}]}`, []string{"Unschedulable"}, nil},
+		{"list", `{"items":[{"name":"p","conditions":[{"reason":"Ready"}],"containerStatuses":[{"name":"app","state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}],"truncated":true}`, []string{"CrashLoopBackOff", `"truncated":true`}, []string{"conditions"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := focusPodEvidence(tt.input)
+			for _, s := range tt.want {
+				if !strings.Contains(got, s) {
+					t.Errorf("missing %q in %s", s, got)
+				}
+			}
+			for _, s := range tt.drop {
+				if strings.Contains(got, s) {
+					t.Errorf("unexpected %q in %s", s, got)
+				}
+			}
+		})
+	}
+}
+
 func TestRunnerRemovesTraceKeys(t *testing.T) {
 	tools := &fakeTools{data: `{"message":"secret-fixture"}`}
 	model := &fakeModel{decisions: []Decision{{Note: &Note{

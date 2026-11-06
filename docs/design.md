@@ -309,7 +309,9 @@ Missing labels, empty results and errors remain visible in the bundle; the
 runner does not silently substitute guessed context. The model reasons over
 that bundle with evidence citations and may request additional allowlisted
 calls from a separate budget. Both the initial bundle and extra calls share
-the overall deadline and output-size bounds.
+the overall deadline and output-size bounds. Pod excerpts prioritize container
+termination and restart status over conditions when container status exists,
+so a long conditions list does not hide the failure reason.
 
 The model selects only allowlisted extra operations and supplies validated,
 bounded arguments; it cannot choose URLs or invoke a shell, exec, arbitrary
@@ -349,7 +351,8 @@ and other spec fields; Argo CD output contains only revision history.
 **Small-model reliability.** The default is host Ollama with `llama3.2:3b`.
 The runner presents the small tool set and validates a structured response
 schema rather than relying on free-form tool calls. Each returned observation
-gets a stable evidence ID, source, timestamp and bounded excerpt. A run has
+gets a stable evidence ID, source, timestamp and bounded excerpt. Local model
+output constrains citations to IDs in the current bundle. A run has
 a proposed budget of eight additional tool calls and a 180-second overall
 deadline, including the initial collection, model and extra calls; these
 defaults need evaluation on the host.

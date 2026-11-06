@@ -24,7 +24,7 @@ func (t *modelTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestOllamaSettings(t *testing.T) {
 	rt := &modelTransport{}
 	model := HTTPModel{URL: "http://127.0.0.1:11434", Name: "llama3.2:3b", Client: &http.Client{Transport: rt}}
-	if _, err := model.Decide(context.Background(), Alert{Name: "A"}, nil); err != nil {
+	if _, err := model.Decide(context.Background(), Alert{Name: "A"}, []Evidence{{ID: "E1"}, {ID: "E2"}}); err != nil {
 		t.Fatal(err)
 	}
 	var body struct {
@@ -52,6 +52,9 @@ func TestOllamaSettings(t *testing.T) {
 				Properties struct {
 					Evidence struct {
 						MaxItems int `json:"maxItems"`
+						Items    struct {
+							Enum []string `json:"enum"`
+						} `json:"items"`
 					} `json:"evidence"`
 				} `json:"properties"`
 			} `json:"items"`
@@ -59,6 +62,15 @@ func TestOllamaSettings(t *testing.T) {
 	}
 	if err := json.Unmarshal(schema["$defs"], &defs); err != nil || defs.Claims.MaxItems < 1 || defs.Claims.Items.Properties.Evidence.MaxItems < 1 {
 		t.Fatal("Ollama schema must bound claims and citations")
+	}
+	if got := strings.Join(defs.Claims.Items.Properties.Evidence.Items.Enum, ","); got != "E1,E2" {
+		t.Fatalf("citation IDs = %q", got)
+	}
+	format := string(body.Format)
+	if !(strings.Index(format, `"what_fired"`) < strings.Index(format, `"likely_cause"`) &&
+		strings.Index(format, `"likely_cause"`) < strings.Index(format, `"commands_to_confirm"`) &&
+		strings.Index(format, `"commands_to_confirm"`) < strings.Index(format, `"fix"`)) {
+		t.Fatal("Ollama schema must keep incident sections in reasoning order")
 	}
 }
 
