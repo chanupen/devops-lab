@@ -36,7 +36,7 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 
 core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app.
 
-Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (not yet measured). The deployed subset including ai measured 7.46 GiB median of three `podman stats` samples; AI pods used 1,664 MiB by `kubectl top`, included in the node totals. CI, chaos and scaling were not deployed. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
+Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (not yet measured). The deployed subset including ai measured 7.47 GiB median of three `podman stats` samples; AI pods used 1,664 MiB by `kubectl top`, included in the node totals. CI, chaos and scaling were not deployed. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 
 ## TUI rules
 
