@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
+	"github.com/chanupen/devops-lab/internal/reaper"
+	"github.com/chanupen/devops-lab/internal/reaper/sweep"
 )
 
 // Flags that are refused before any provider, AWS call or lock.
@@ -76,5 +78,43 @@ func TestWriteLeftovers(t *testing.T) {
 				t.Errorf("%s: has %q:\n%s", tt.name, h, b.String())
 			}
 		}
+	}
+}
+
+func TestWriteSweep(t *testing.T) {
+	secret := "arn:aws:secretsmanager:ap-south-1:111122223333:secret:lab/sample-db/app-AbCdEf"
+	tests := []struct {
+		name string
+		r    sweep.Result
+		want []string
+	}{
+		{"nothing left", sweep.Result{},
+			[]string{"sweep after destroy: nothing of this lab left (network interfaces, EBS volumes, secrets)"}},
+		{"deleted, waiting and failed", sweep.Result{
+			Deleted: []reaper.Target{{Kind: reaper.Secret, ARN: secret}},
+			Waiting: []string{"arn:aws:ec2:ap-south-1:111122223333:volume/vol-1: not yet: in use"},
+			Errors:  []string{"check arn:aws:ec2:ap-south-1:111122223333:network-interface/eni-1: throttled"},
+		}, []string{
+			"sweep after destroy deleted (1): tofu destroy and the stacks' release left these:",
+			"  secretsmanager:secret:lab/sample-db/app-AbCdEf",
+			"still in use, not deleted (1):", "vol-1: not yet: in use",
+			"failed (1):", "eni-1: throttled",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b strings.Builder
+			if err := writeSweep(&b, tt.r); err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(b.String(), w) {
+					t.Errorf("missing %q in:\n%s", w, b.String())
+				}
+			}
+			if len(tt.r.Deleted) > 0 && strings.Contains(b.String(), "nothing of this lab left") {
+				t.Errorf("says nothing left after deleting:\n%s", b.String())
+			}
+		})
 	}
 }

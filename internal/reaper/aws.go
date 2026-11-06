@@ -26,6 +26,7 @@ import (
 	taggingtypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/smithy-go"
 )
@@ -38,12 +39,14 @@ type AWS struct {
 	ELB       *elbv2.Client
 	ClassicLB *elb.Client
 	ECR       *ecr.Client
+	Secrets   *secretsmanager.Client
 }
 
 // NewAWS builds the clients from one config.
 func NewAWS(cfg aws.Config) *AWS {
 	return &AWS{Tagging: tagging.NewFromConfig(cfg), EC2: ec2.NewFromConfig(cfg), EKS: eks.NewFromConfig(cfg),
-		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg), ECR: ecr.NewFromConfig(cfg)}
+		ELB: elbv2.NewFromConfig(cfg), ClassicLB: elb.NewFromConfig(cfg), ECR: ecr.NewFromConfig(cfg),
+		Secrets: secretsmanager.NewFromConfig(cfg)}
 }
 
 // Check implements Checker with one Describe call per resource. EC2 and
@@ -64,6 +67,16 @@ func (a *AWS) Check(ctx context.Context, arn string) (Live, error) {
 		var out *ec2.DescribeInstancesOutput
 		if out, err = a.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids}); err == nil {
 			live = instanceLive(out)
+		}
+	case service == "ec2" && typ == "spot-instances-request":
+		var out *ec2.DescribeSpotInstanceRequestsOutput
+		if out, err = a.EC2.DescribeSpotInstanceRequests(ctx, &ec2.DescribeSpotInstanceRequestsInput{SpotInstanceRequestIds: ids}); err == nil {
+			live = spotRequestLive(out)
+		}
+	case service == "ec2" && typ == "fleet":
+		var out *ec2.DescribeFleetsOutput
+		if out, err = a.EC2.DescribeFleets(ctx, &ec2.DescribeFleetsInput{FleetIds: ids}); err == nil {
+			live = fleetLive(out)
 		}
 	case service == "ec2" && typ == "volume":
 		var out *ec2.DescribeVolumesOutput
@@ -132,6 +145,11 @@ func (a *AWS) Check(ctx context.Context, arn string) (Live, error) {
 		_, err = a.ELB.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{arn}})
 	case service == "ecr" && typ == "repository":
 		_, err = a.ECR.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{RepositoryNames: ids})
+	case service == "secretsmanager" && strings.HasPrefix(resource, "secret:"):
+		var out *secretsmanager.DescribeSecretOutput
+		if out, err = a.Secrets.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(arn)}); err == nil {
+			live = secretLive(out)
+		}
 	default:
 		return Live{}, nil
 	}
@@ -154,6 +172,19 @@ func notFound(err error) bool {
 	return strings.HasSuffix(c, "NotFound") || strings.HasSuffix(c, "NotFoundException")
 }
 
+// secretLive: a secret scheduled for deletion is gone (it is not billed
+// and cannot be read); the API shows it until the window ends.
+func secretLive(out *secretsmanager.DescribeSecretOutput) Live {
+	if out.DeletedDate != nil {
+		return Live{Known: true, Gone: true}
+	}
+	tags := map[string]string{}
+	for _, t := range out.Tags {
+		tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+	}
+	return Live{Known: true, Tags: tags}
+}
+
 // instanceLive: a terminated instance is gone; the API lists it for about
 // an hour after.
 func instanceLive(out *ec2.DescribeInstancesOutput) Live {
@@ -165,6 +196,35 @@ func instanceLive(out *ec2.DescribeInstancesOutput) Live {
 		return Live{Known: true, Gone: true}
 	}
 	return Live{Known: true, Tags: ec2Tags(i.Tags)}
+}
+
+// spotRequestLive: a closed, cancelled or failed spot request bills
+// nothing (its instance is checked on its own); the API lists it for
+// hours after Karpenter's node goes.
+func spotRequestLive(out *ec2.DescribeSpotInstanceRequestsOutput) Live {
+	if len(out.SpotInstanceRequests) == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	r := out.SpotInstanceRequests[0]
+	switch r.State {
+	case ec2types.SpotInstanceStateClosed, ec2types.SpotInstanceStateCancelled, ec2types.SpotInstanceStateFailed:
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(r.Tags)}
+}
+
+// fleetLive: an instant fleet (how Karpenter launches nodes) is a record
+// of one launch. It bills nothing and cannot be deleted; its instances are
+// checked on their own. Other fleets are gone once deleted.
+func fleetLive(out *ec2.DescribeFleetsOutput) Live {
+	if len(out.Fleets) == 0 {
+		return Live{Known: true, Gone: true}
+	}
+	f := out.Fleets[0]
+	if f.Type == ec2types.FleetTypeInstant || strings.HasPrefix(string(f.FleetState), "deleted") {
+		return Live{Known: true, Gone: true}
+	}
+	return Live{Known: true, Tags: ec2Tags(f.Tags)}
 }
 
 func ec2Live(n int, tags func() []ec2types.Tag) Live {
@@ -303,6 +363,9 @@ func (a *AWS) Delete(ctx context.Context, t Target) error {
 		_, err = a.EC2.DeleteNetworkInterface(ctx, &ec2.DeleteNetworkInterfaceInput{NetworkInterfaceId: aws.String(t.ID)})
 	case TargetGroup:
 		_, err = a.ELB.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{TargetGroupArn: aws.String(t.ID)})
+	case Secret:
+		_, err = a.Secrets.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{SecretId: aws.String(t.ID),
+			ForceDeleteWithoutRecovery: aws.Bool(true)})
 	default:
 		err = fmt.Errorf("no delete for kind %q", t.Kind)
 	}

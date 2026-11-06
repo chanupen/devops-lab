@@ -68,6 +68,7 @@ func TestCompatibilityMatchesPins(t *testing.T) {
 	pins := map[string]string{
 		"Karpenter":                    KarpenterChart.Version,
 		"AWS Load Balancer Controller": LBCChart.Version,
+		"AWS EBS CSI driver":           EBSCSIChart.Version,
 		"Argo CD":                      gitops.ArgoChartVersion,
 		"Kyverno":                      bootstrapPin(t, "policy.yaml", "kyverno"),
 		"External Secrets Operator":    bootstrapChartPin(t, "secrets.yaml", "external-secrets"),

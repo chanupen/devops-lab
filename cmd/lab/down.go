@@ -26,7 +26,8 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 			"--stacks, destroys only those stacks and the deployed stacks that need them. In local\n" +
 			"mode it first starts the main cluster's nodes and lab-zot when a reboot stopped them, and\n" +
 			"the registry's image cache volume is kept unless --purge is given. In cloud mode,\n" +
-			"lab down then lists anything still tagged lab=true outside the baseline.",
+			"lab down then deletes any network interface, EBS volume or secret still tagged with this\n" +
+			"lab's owner and expires-at, and lists anything still tagged lab=true outside the baseline.",
 		Example: "  lab down\n  lab down --stacks sample-app",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -35,7 +36,7 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 				return err
 			}
 			command := downCommand(stacks, purge)
-			p, err := engine.New(g, store, nil).PlanDown(cfg, engine.DownOptions{Stacks: stacks})
+			p, err := engine.New(g, store, nil).PlanDown(cfg, downOptions(cfg.Mode, stacks))
 			if err != nil {
 				return err
 			}
@@ -75,6 +76,18 @@ func newDownCmd(newProvider providerFactory) *cobra.Command {
 	cmd.Flags().StringSliceVar(&stacks, "stacks", nil, "destroy only these stacks and the deployed stacks that need them")
 	registerTimeout(cmd, &timeout)
 	return cmd
+}
+
+// downOptions plans a down. In cloud mode a whole-environment down does
+// not destroy the in-cluster stacks one by one, waiting on Argo CD app
+// health: they go with the EKS cluster, whose destroy first releases what
+// would outlive it (load balancers, their network interfaces, EBS volumes).
+func downOptions(mode string, stacks []string) engine.DownOptions {
+	o := engine.DownOptions{Stacks: stacks}
+	if mode == "cloud" {
+		o.WithCluster = "cluster"
+	}
+	return o
 }
 
 // downCommand is the CLI command recorded in the ops log.

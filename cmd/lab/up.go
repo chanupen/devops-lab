@@ -12,6 +12,7 @@ import (
 
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/engine"
+	labaws "github.com/chanupen/devops-lab/internal/provider/aws"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -95,6 +96,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g, ok := prov.(stackVersionGate); ok {
+				if err := g.CheckNewStacks(cmd.Context(), newStacks(p, store)); err != nil {
+					return err
+				}
+			}
 			out := cmd.OutOrStdout()
 			if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
 				return err
@@ -112,7 +118,11 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 						return err
 					}
 				}
+				if err := prefetchCharts(cmd.Context(), prov, p, cmd.OutOrStdout()); err != nil {
+					return err
+				}
 				if err := run(cmd, prov, g, store, p, command); err != nil {
+					warnHalfBuilt(cmd, flags, store)
 					return err
 				}
 			}
@@ -180,6 +190,29 @@ func restoreOneDrill(cmd *cobra.Command, flags labFlags, store *state.Store, wha
 		_, _ = fmt.Fprintln(out, "● the drill is restored")
 		return nil
 	})
+}
+
+// stackVersionGate is implemented by providers whose running cluster keeps
+// its Kubernetes version (cloud): a stack added to it must support that
+// version.
+type stackVersionGate interface {
+	CheckNewStacks(ctx context.Context, stacks []string) error
+}
+
+// newStacks are the stacks plan p applies that the state does not record
+// as applied: the ones being added, not re-applied.
+func newStacks(p engine.Plan, store *state.Store) []string {
+	st, err := store.Load()
+	if err != nil {
+		st = state.State{}
+	}
+	var out []string
+	for _, s := range p.Steps {
+		if s.Action == engine.Apply && !st.IsApplied(s.Stack) {
+			out = append(out, s.Stack)
+		}
+	}
+	return out
 }
 
 // upCommand is the CLI command recorded in the ops log.
@@ -281,4 +314,56 @@ func writeEvent(w io.Writer, r *lipgloss.Renderer, e engine.Event, starts map[st
 		d := time.Since(starts[e.Step.Stack]).Round(100 * time.Millisecond)
 		_, _ = fmt.Fprintf(w, "%s %s: %s failed after %s\n", r.NewStyle().Foreground(lipgloss.Color("1")).Render("✕"), e.Step.Stack, verb, d)
 	}
+}
+
+// warnHalfBuilt tells the learner, in red, that a cloud lab up stopped
+// with AWS resources still running, and the command that removes them. A
+// failed apply is never left to the TTL silently: the reaper is the dead
+// man's switch, not the plan.
+func warnHalfBuilt(cmd *cobra.Command, flags labFlags, store *state.Store) {
+	st, err := store.Load()
+	if err != nil || len(st.HalfBuilt()) == 0 {
+		return
+	}
+	out := cmd.ErrOrStderr()
+	red := lipgloss.NewRenderer(out).NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	until := "the reaper removes it after expires-at"
+	if exp, err := labaws.ReadExpiry(labaws.ExpiryFile(homeOf(store))); err == nil {
+		until = "the reaper removes it after expires-at " + exp.Local().Format("2006-01-02 15:04 MST")
+	}
+	_, _ = fmt.Fprintf(out, "\n%s\n%s\n",
+		red.Render(fmt.Sprintf("lab up failed (%s): the cloud lab is half built and still billed; %s.",
+			strings.Join(st.HalfBuilt(), ", "), until)),
+		red.Render("run now: "+cloudDownCommand(flags)))
+}
+
+// cloudDownCommand is the cloud lab down command for the same config and state as
+// this one.
+func cloudDownCommand(flags labFlags) string {
+	c := "lab down --mode cloud"
+	if flags.cfgPath != "" {
+		c += " --config " + flags.cfgPath
+	}
+	if flags.statePath != "" {
+		c += " --state " + flags.statePath
+	}
+	return c
+}
+
+// prefetchCharts fetches the Helm charts the plan's applies install from
+// the host, before the first stack runs. A chart repository that does not
+// answer then fails lab up with nothing built, instead of after the
+// cluster stack has run for ten minutes.
+func prefetchCharts(ctx context.Context, prov provider, p engine.Plan, out io.Writer) error {
+	pf, ok := prov.(chartPrefetcher)
+	if !ok {
+		return nil
+	}
+	var stacks []string
+	for _, s := range p.Steps {
+		if s.Action == engine.Apply {
+			stacks = append(stacks, s.Stack)
+		}
+	}
+	return pf.PrefetchCharts(ctx, stacks, out)
 }

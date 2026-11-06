@@ -44,7 +44,13 @@ func TestStatusCmd(t *testing.T) {
 			[]string{"gitops revision: unrecorded (lab up records it and moves gitops to main)"}, nil},
 		{"failed stack shows its error",
 			`{"version":1,"mode":"local","stacks":{"registry":{"status":"failed","error":"port 5000 already in use"}},"ops":[]}`,
-			[]string{"✕ registry", "failed: port 5000 already in use"}, nil},
+			[]string{"✕ registry", "failed: port 5000 already in use"}, []string{"still billed"}},
+		{"half-built cloud lab says it is billed",
+			`{"version":1,"mode":"cloud","stacks":{"registry":{"status":"applied"},"cluster":{"status":"failed","error":"tofu apply: exit status 1"}},"ops":[]}`,
+			[]string{"cloud mode", "✕ failed, still billed, run lab down (cluster): lab down --mode cloud\n", "✕ cluster"}, nil},
+		{"healthy cloud lab says nothing about billing",
+			`{"version":1,"mode":"cloud","stacks":{"registry":{"status":"applied"}},"ops":[]}`,
+			[]string{"● registry"}, []string{"still billed"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

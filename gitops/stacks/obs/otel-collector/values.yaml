@@ -3,6 +3,8 @@
 # Traces and metrics pipelines come with Tempo in a later stack change.
 fullnameOverride: otel-collector
 mode: daemonset
+# One pod per node, like node-exporter: it must win a full node's last pod slot.
+priorityClassName: system-node-critical
 image:
   repository: otel/opentelemetry-collector-k8s
 presets:

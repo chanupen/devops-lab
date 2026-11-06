@@ -7,10 +7,15 @@ locals {
   }
 }
 
-# One repository for every lab image. force_delete lets lab down remove it
-# with its images; the lab never keeps anything here it cannot rebuild.
+# One repository per lab image, all under the lab/ prefix: the lab registry
+# (LAB_REGISTRY_PUSH/PULL) is <account>.dkr.ecr.<region>.amazonaws.com/lab,
+# like Zot's writable lab/ namespace in local mode. ECR does not create
+# repositories on push, so every image name the lab pushes is listed in
+# var.repositories. force_delete lets lab down remove them with their
+# images; the lab never keeps anything here it cannot rebuild.
 resource "aws_ecr_repository" "lab" {
-  name                 = var.repository
+  for_each             = toset(var.repositories)
+  name                 = "${var.prefix}/${each.value}"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -24,7 +29,8 @@ resource "aws_ecr_repository" "lab" {
 }
 
 resource "aws_ecr_lifecycle_policy" "lab" {
-  repository = aws_ecr_repository.lab.name
+  for_each   = aws_ecr_repository.lab
+  repository = each.value.name
   policy = jsonencode({
     rules = [{
       rulePriority = 1

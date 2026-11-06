@@ -112,6 +112,18 @@ func TestSpotNodePool(t *testing.T) {
 	if len(want) > 0 {
 		t.Errorf("missing requirements %v", want)
 	}
+	// No micro or small nodes: with prefix delegation they take 32 pods on
+	// 1-2 GiB.
+	memFloor := false
+	for _, r := range reqs {
+		m := r.(map[string]any)
+		if m["key"] == "karpenter.k8s.aws/instance-memory" && m["operator"] == "Gt" && slices.Equal(m["values"].([]any), []any{"4000"}) {
+			memFloor = true
+		}
+	}
+	if !memFloor {
+		t.Error("no 4 GiB memory floor")
+	}
 	// lab extend changes the node class tags; that must not roll nodes.
 	budgets := field(t, np, "spec", "disruption", "budgets").([]any)
 	if b := budgets[0].(map[string]any); b["nodes"] != "0" || !slices.Equal(b["reasons"].([]any), []any{"Drifted"}) {
@@ -133,6 +145,10 @@ func TestEC2NodeClassCarriesLabTags(t *testing.T) {
 	}
 	if field(t, nc, "spec", "metadataOptions", "httpTokens") != "required" {
 		t.Error("IMDSv2 not required")
+	}
+	// Prefix delegation: max pods must not follow the ENI limit.
+	if field(t, nc, "spec", "kubelet", "podsPerCore") != int64(16) || field(t, nc, "spec", "kubelet", "maxPods") != int64(110) {
+		t.Errorf("kubelet = %v", field(t, nc, "spec", "kubelet"))
 	}
 }
 
@@ -265,13 +281,36 @@ func TestModulesMatchTheProvider(t *testing.T) {
 	}
 	check("cluster", cluster, p.clusterModule(t0, []string{"203.0.113.7/32"}, io.Discard).Vars,
 		"cluster_name", "cluster_endpoint", "cluster_ca", "vpc_id", "karpenter_queue", "karpenter_node_role")
-	check("registry", registry, p.registryModule(t0, io.Discard).Vars, "repository_url")
+	check("registry", registry, p.registryModule(t0, io.Discard).Vars, "lab_registry")
+	// ECR makes no repository on push: every image the lab pushes has one.
+	for _, repo := range []string{SampleDBRepo, "lab02-hello"} {
+		if !regexp.MustCompile(`default *= \[[^\]]*"` + repo + `"`).MatchString(registry) {
+			t.Errorf("registry module's repositories do not include %s", repo)
+		}
+	}
+	if !strings.Contains(registry, `default     = "lab"`) || LabRegistryFor("123456789012") != "123456789012.dkr.ecr.ap-south-1.amazonaws.com/lab" {
+		t.Error("the lab registry is not <registry>/lab")
+	}
 	if !strings.Contains(cluster, `default     = "`+ClusterName+`"`) {
 		t.Errorf("cluster module's default cluster_name is not %q", ClusterName)
 	}
 	for _, src := range []string{cluster, registry} {
 		if !strings.Contains(src, `"expires-at" = var.expires_at`) {
 			t.Error("a module does not tag expires-at")
+		}
+	}
+}
+
+// Cloud Argo CD asks for memory, so Karpenter sizes its node.
+func TestArgoCDValuesRequestMemory(t *testing.T) {
+	v := ArgoCDValues()
+	for _, c := range []string{"controller", "repoServer", "server", "applicationSet", "redis"} {
+		m, _ := v[c].(map[string]any)
+		r, _ := m["resources"].(map[string]any)
+		req, _ := r["requests"].(map[string]any)
+		lim, _ := r["limits"].(map[string]any)
+		if req["memory"] == nil || lim["memory"] == nil {
+			t.Errorf("%s: resources = %v", c, r)
 		}
 	}
 }

@@ -142,6 +142,44 @@ type labRunner struct {
 	start func(context.Context, io.Writer) ([]local.Unit, error)
 	// stale lists deployed stacks to re-apply, with why; nil in cloud mode.
 	stale func(context.Context) (map[string]string, error)
+	// charts are the Helm charts each stack installs from the host, and
+	// where they are cached; lab up fetches them before it applies anything.
+	charts                map[string][]gitops.HelmRelease
+	helmHome, chartsCache string
+}
+
+// chartPrefetcher is implemented by providers whose stacks install Helm
+// charts from the host.
+type chartPrefetcher interface {
+	PrefetchCharts(ctx context.Context, stacks []string, log io.Writer) error
+}
+
+// PrefetchCharts implements chartPrefetcher: it puts the charts the given
+// stacks install into the shared cache, so a chart repository that does
+// not answer stops lab up before anything is built.
+func (l labRunner) PrefetchCharts(ctx context.Context, stacks []string, log io.Writer) error {
+	var rs []gitops.HelmRelease
+	for _, s := range stacks {
+		rs = append(rs, l.charts[s]...)
+	}
+	if len(rs) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(log, "\nHelm charts, fetched before any stack runs:")
+	if err := gitops.FetchCharts(ctx, l.helmHome, l.chartsCache, rs, log); err != nil {
+		return fmt.Errorf("charts: %w; nothing was applied", err)
+	}
+	return nil
+}
+
+// chartCache is the Helm chart cache both modes share: ~/.lab/helm/charts
+// for the default state, beside the state file otherwise. A cloud lab's
+// home is the cloud directory inside the lab home.
+func chartCache(mode, home string) string {
+	if mode == "cloud" {
+		home = filepath.Dir(home)
+	}
+	return filepath.Join(home, "helm", "charts")
 }
 
 // staleReporter is implemented by providers that can tell a deployed stack
@@ -282,7 +320,8 @@ type providerFactory func(cfg config.Config, home string, opts runOptions) (prov
 // in-cluster stacks to the GitOps runner, which is the same in every mode.
 func defaultProvider(cfg config.Config, home string, opts runOptions) (provider, error) {
 	kubeconfig := filepath.Join(home, "kubeconfig")
-	l := labRunner{Router: engine.Router{}}
+	l := labRunner{Router: engine.Router{}, charts: map[string][]gitops.HelmRelease{},
+		helmHome: filepath.Join(home, "helm"), chartsCache: chartCache(cfg.Mode, home)}
 	var cloud *labaws.Provider
 	var lp *local.Provider
 	switch cfg.Mode {
@@ -308,6 +347,7 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			return nil, err
 		}
 		l.Router["registry"], l.Router["cluster"] = p, p
+		l.charts["cluster"] = labaws.ClusterCharts()
 		// No load balancer: lab tunnel forwards the same ports a local lab
 		// publishes, so the URLs are the same too.
 		l.url = local.AppURL
@@ -318,7 +358,12 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 		return nil, fmt.Errorf("%s mode has no provider yet", cfg.Mode)
 	}
 	if cfg.GitOps == "argocd" && gitops.HasOverlay(cfg.Mode) { // Flux is the second option and not built yet
-		g := gitops.New(gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}, kubeconfig, filepath.Join(home, "helm"))
+		gopts := gitops.Options{Mode: cfg.Mode, Repo: cfg.Repo, Revision: opts.Revision, Timeout: opts.Timeout}
+		if cfg.Mode == "cloud" {
+			gopts.ArgoValues = labaws.ArgoCDValues()
+		}
+		g := gitops.New(gopts, kubeconfig, l.helmHome, l.chartsCache)
+		l.charts[engine.RevisionStack] = []gitops.HelmRelease{gitops.ArgoCDChart}
 		for _, s := range gitops.Stacks() {
 			l.Router[s] = g
 		}
@@ -329,6 +374,12 @@ func defaultProvider(cfg config.Config, home string, opts runOptions) (provider,
 			l.Router["secrets"] = seqRunner{lp, g}
 			l.Router["sample-db"] = sampleDBRunner{lp, g}
 			l.stale = staleWithSampleDB(l.stale, lp, g)
+		}
+		if cloud != nil {
+			// Cloud mode: sample-db's image is built for arm64 and pushed
+			// to ECR, and its first credentials go into AWS Secrets
+			// Manager, before its app syncs.
+			l.Router["sample-db"] = cloudSampleDBRunner{cloud: cloud, gitops: g, repo: opts.RepoRoot}
 		}
 		l.hosts = g.AppHosts
 	}
@@ -407,6 +458,57 @@ func (r sampleDBRunner) Apply(ctx context.Context, stack string, log io.Writer) 
 
 func (r sampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
 	return r.gitops.Destroy(ctx, stack, log)
+}
+
+// cloudSampleDBRunner is sampleDBRunner for cloud mode: the image goes to
+// ECR (built by the host's Podman for the arm64 nodes) and the credentials
+// to AWS Secrets Manager, with the lab tags. Destroy deletes the secrets
+// without a recovery window after the app is gone; Release deletes them
+// when the app goes with the cluster.
+type cloudSampleDBRunner struct {
+	cloud  *labaws.Provider
+	gitops *gitops.Runner
+	repo   string
+}
+
+func (r cloudSampleDBRunner) Apply(ctx context.Context, stack string, log io.Writer) error {
+	if r.repo == "" {
+		return errors.New("the sample-db image is built from the repo: run lab from it, or keep ~/.lab/lab.yaml a symlink into it")
+	}
+	sock, err := local.PodmanSocket()
+	if err != nil {
+		return fmt.Errorf("the sample-db image is built with rootless Podman: %w", err)
+	}
+	dir := filepath.Join(r.repo, "apps", "sample-db")
+	tag, err := local.SourceTag(dir)
+	if err != nil {
+		return fmt.Errorf("sample-db sources: %w", err)
+	}
+	ref, err := r.cloud.BuildSampleDB(ctx, local.NewPodman(sock), dir, tag, log)
+	if err != nil {
+		return err
+	}
+	if err := r.cloud.SeedSampleDB(ctx, log); err != nil {
+		return err
+	}
+	if err := r.gitops.SetValue(ctx, "sampleDB", map[string]any{"image": ref}, log); err != nil {
+		return err
+	}
+	return r.gitops.Apply(ctx, stack, log)
+}
+
+func (r cloudSampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer) error {
+	if err := r.gitops.Destroy(ctx, stack, log); err != nil {
+		return err
+	}
+	return r.cloud.RemoveSampleDB(ctx, log)
+}
+
+// Release deletes the secrets when the stack goes with the cluster (a
+// whole cloud lab down): the cluster's destroy takes the app, not the
+// secrets in Secrets Manager.
+func (r cloudSampleDBRunner) Release(ctx context.Context, _ string, log io.Writer) error {
+	return r.cloud.RemoveSampleDB(ctx, log)
 }
 
 // stackSupport reports which stacks cfg's mode can run, without building a

@@ -24,10 +24,16 @@ variable "expires_at" {
   }
 }
 
-variable "repository" {
-  description = "ECR repository for lab images."
+variable "prefix" {
+  description = "Prefix of every lab repository: the lab registry is <registry>/<prefix>."
   type        = string
   default     = "lab"
+}
+
+variable "repositories" {
+  description = "Image names the lab pushes, each a repository under prefix: the sample-db stack's app and the labs' images."
+  type        = list(string)
+  default     = ["sample-db", "lab02-hello"]
 }
 
 variable "keep_images" {

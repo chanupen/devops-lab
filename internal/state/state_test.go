@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -271,4 +272,22 @@ func TestLockLab(t *testing.T) {
 		t.Fatalf("LockLab after unlock: %v", err)
 	}
 	unlock2()
+}
+
+func TestHalfBuilt(t *testing.T) {
+	stacks := map[string]StackState{"registry": {Status: Applied}, "cluster": {Status: Failed}, "gitops": {Status: Failed}}
+	tests := []struct {
+		name string
+		st   State
+		want []string
+	}{
+		{"cloud lists failed stacks sorted", State{Mode: "cloud", Stacks: stacks}, []string{"cluster", "gitops"}},
+		{"local is never billed", State{Mode: "local", Stacks: stacks}, nil},
+		{"cloud without failures", State{Mode: "cloud", Stacks: map[string]StackState{"registry": {Status: Applied}}}, nil},
+	}
+	for _, tt := range tests {
+		if got := tt.st.HalfBuilt(); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
 }

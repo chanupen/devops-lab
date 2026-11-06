@@ -13,13 +13,16 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/chanupen/devops-lab/internal/compat"
 	"github.com/chanupen/devops-lab/internal/config"
 	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/reaper"
+	"github.com/chanupen/devops-lab/internal/reaper/sweep"
 )
 
 // ClusterName is the lab's EKS cluster. It matches the module's default.
@@ -38,6 +41,7 @@ func Stacks() []string { return []string{"registry", "cluster"} }
 type Options struct {
 	RepoRoot   string        // the repo: modules are under infra/terraform/aws/cluster
 	Home       string        // the cloud lab's home, ~/.lab/cloud: expires-at, kubeconfig, helm
+	ChartCache string        // Helm chart archives, shared with the local lab: ~/.lab/helm/charts
 	TofuHome   string        // where module work dirs go, ~/.lab/tofu
 	Tofu       string        // path to the tofu binary
 	Kubeconfig string        // written after the cluster apply
@@ -71,6 +75,8 @@ type Provider struct {
 	// inCluster is the in-cluster part of the cluster stack (Karpenter, the
 	// NodePool, the Load Balancer Controller).
 	inCluster inCluster
+	// secrets is AWS Secrets Manager (the sample-db stack's credentials).
+	secrets Secrets
 }
 
 // inCluster installs and removes what lab puts in the cluster itself.
@@ -105,7 +111,8 @@ func New(ctx context.Context, s Session, opts Options) (*Provider, error) {
 	}
 	p := &Provider{opts: opts, cfg: cfg, env: env, account: account, myIP: PublicIP, now: time.Now,
 		teardown: func(ctx context.Context) (string, error) { return RunningTeardown(ctx, cfg) }}
-	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"))
+	p.helm = gitops.NewHelm(opts.Kubeconfig, filepath.Join(opts.Home, "helm"), opts.ChartCache)
+	p.secrets = NewSecrets(cfg)
 	p.inCluster = &clusterAddons{helm: p.helm, kubeconfig: opts.Kubeconfig, cfg: cfg, timeout: opts.Timeout}
 	return p, nil
 }
@@ -131,7 +138,7 @@ func (p *Provider) Apply(ctx context.Context, stack string, log io.Writer) error
 		}
 		outs, err := m.Outputs(ctx)
 		if err == nil {
-			_, _ = fmt.Fprintf(log, "registry: %s\n", outs["repository_url"])
+			_, _ = fmt.Fprintf(log, "lab registry: %s\n", outs["lab_registry"])
 		}
 		return nil
 	case "cluster":
@@ -264,6 +271,9 @@ func (p *Provider) destroyCluster(ctx context.Context, exp time.Time, log io.Wri
 	if err := p.clusterModule(exp, []string{"127.0.0.1/32"}, log).Destroy(ctx); err != nil {
 		return err
 	}
+	if err := sweepClusterVolumes(ctx, p.cfg, log); err != nil {
+		_, _ = fmt.Fprintf(log, "warning: delete EBS volumes: %v\n", err)
+	}
 	if err := os.Remove(p.opts.Kubeconfig); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -282,6 +292,7 @@ func LabTags(owner string, exp time.Time) map[string]string {
 func (p *Provider) module(name, dir, key string, vars map[string]any, log io.Writer) *Module {
 	stack := strings.TrimPrefix(name, "cloud-")
 	return &Module{
+		CheckPlan:   func(ctx context.Context, plan *tfjson.Plan) error { return checkPlanPolicies(ctx, p.cfg, plan, log) },
 		BeforeApply: func(ctx context.Context, workDir string) error { return p.uploadBundle(ctx, stack, workDir, log) },
 		ModuleDir:   dir,
 		WorkDir:     filepath.Join(p.opts.TofuHome, name),
@@ -443,6 +454,28 @@ func (p *Provider) Leftovers(ctx context.Context) (LeftoverReport, error) {
 	return Leftovers(ctx, p.cfg)
 }
 
+// Sweep is lab down's safety net after OpenTofu has destroyed the
+// environment: it deletes any ENI, EBS volume or Secrets Manager secret
+// still tagged with this environment's owner and expires-at (sweep.Run),
+// listed both by the tagging API and directly. It needs the recorded
+// expiry: without one it sweeps nothing, and the reaper handles what is
+// left once it expires.
+func (p *Provider) Sweep(ctx context.Context, log io.Writer) (sweep.Result, error) {
+	exp, err := ReadExpiry(ExpiryFile(p.opts.Home))
+	if errors.Is(err, os.ErrNotExist) {
+		_, _ = fmt.Fprintln(log, "sweep: no expires-at recorded for this lab; nothing swept")
+		return sweep.Result{}, nil
+	}
+	if err != nil {
+		return sweep.Result{}, err
+	}
+	a := reaper.NewAWS(p.cfg)
+	lister := sweep.Listers{a, sweep.Lister{AWS: a, Account: p.account, Region: Region}}
+	env := map[string]string{sweep.OwnerTag: p.opts.Owner, reaper.ExpiresTag: exp.UTC().Format(time.RFC3339)}
+	logf := func(format string, args ...any) { _, _ = fmt.Fprintf(log, "sweep: "+format+"\n", args...) }
+	return sweep.Run(ctx, lister, a, a, env, sweep.Kinds, logf)
+}
+
 // Finish clears the expiry once lab down has destroyed every stack.
 func (p *Provider) Finish() error { return ClearExpiry(p.opts.Home) }
 
@@ -506,4 +539,17 @@ func maxExtend(current, now time.Time) time.Duration {
 		return 0
 	}
 	return d
+}
+
+// checkPlanPolicies checks the AWS managed policies a saved plan attaches.
+func checkPlanPolicies(ctx context.Context, cfg aws.Config, plan *tfjson.Plan, log io.Writer) error {
+	arns := PlanManagedPolicies(plan)
+	if len(arns) == 0 {
+		return nil
+	}
+	if err := CheckManagedPolicies(ctx, iam.NewFromConfig(cfg), arns); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(log, "AWS managed policies: %d checked, all exist\n", len(arns))
+	return nil
 }

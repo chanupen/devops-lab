@@ -29,6 +29,12 @@ func main() {
 			os.Exit(exit.code)
 		}
 		fmt.Fprintln(os.Stderr, "error:", err)
+		// Errors that know the next step (a profile that does not
+		// resolve) print it on its own line.
+		var fixer interface{ Fix() string }
+		if errors.As(err, &fixer) {
+			fmt.Fprintln(os.Stderr, "fix:", fixer.Fix())
+		}
 		os.Exit(1)
 	}
 }

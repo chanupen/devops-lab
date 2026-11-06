@@ -1,0 +1,24 @@
+# Cloud mode: logs live in an emptyDir (no EBS volume) for 24 hours at most.
+# With persistence off the chart mounts nothing at /var/loki (and the root
+# filesystem is read-only), so mount one here.
+loki:
+  limits_config:
+    retention_period: 24h
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+singleBinary:
+  persistence:
+    enabled: false
+  extraVolumes:
+    - name: data
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: data
+      mountPath: /var/loki
+# The rules sidecar asks for memory near what it uses on the local lab
+# (kubectl top), so Karpenter sizes nodes for it.
+sidecar:
+  resources:
+    requests: {cpu: 10m, memory: 96Mi}   # uses 68Mi
+    limits: {memory: 192Mi}

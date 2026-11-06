@@ -273,7 +273,7 @@ func TestExecute(t *testing.T) {
 
 func TestExecuteGuards(t *testing.T) {
 	g := catalogGraph(t)
-	plan := Plan{Mode: "local", Steps: []Step{{"cluster", Apply, ""}, {"gitops", Apply, ""}}}
+	plan := Plan{Mode: "local", Steps: []Step{{"cluster", Apply, "", ""}, {"gitops", Apply, "", ""}}}
 
 	t.Run("no runner", func(t *testing.T) {
 		err := New(g, &memStore{st: state.New()}, nil).Execute(context.Background(), plan, "lab up", nil)
@@ -295,7 +295,7 @@ func TestExecuteGuards(t *testing.T) {
 	t.Run("skip and keep steps do not run", func(t *testing.T) {
 		store := &memStore{st: state.New()}
 		runner := &fakeRunner{}
-		p := Plan{Mode: "local", Steps: []Step{{"registry", Keep, ""}, {"secrets", Skip, "not supported"}, {"cluster", Apply, ""}}}
+		p := Plan{Mode: "local", Steps: []Step{{"registry", Keep, "", ""}, {"secrets", Skip, "not supported", ""}, {"cluster", Apply, "", ""}}}
 		if err := New(g, store, runner).Execute(context.Background(), p, "lab up", nil); err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +324,7 @@ func TestExecuteRemovesDroppedLogs(t *testing.T) {
 	store := &memStore{st: st}
 	eng := New(catalogGraph(t), store, &fakeRunner{})
 	eng.now = func() time.Time { return time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC) }
-	p := Plan{Mode: "local", Steps: []Step{{"registry", Apply, ""}, {"cluster", Apply, ""}}}
+	p := Plan{Mode: "local", Steps: []Step{{"registry", Apply, "", ""}, {"cluster", Apply, "", ""}}}
 	if err := eng.Execute(context.Background(), p, "lab up", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -409,10 +409,10 @@ func TestExecuteRecordsRevision(t *testing.T) {
 		fail  bool
 		want  string
 	}{
-		{"gitops apply records the plan revision", Plan{Revision: "feat/obs", Steps: []Step{{"gitops", Apply, ""}}}, "", false, "feat/obs"},
-		{"failed gitops apply keeps the old revision", Plan{Revision: "main", Steps: []Step{{"gitops", Apply, ""}}}, "feat/obs", true, "feat/obs"},
-		{"gitops destroy clears it", Plan{Steps: []Step{{"gitops", Destroy, ""}}}, "main", false, ""},
-		{"other stacks leave it alone", Plan{Revision: "main", Steps: []Step{{"core", Apply, ""}}}, "feat/obs", false, "feat/obs"},
+		{"gitops apply records the plan revision", Plan{Revision: "feat/obs", Steps: []Step{{"gitops", Apply, "", ""}}}, "", false, "feat/obs"},
+		{"failed gitops apply keeps the old revision", Plan{Revision: "main", Steps: []Step{{"gitops", Apply, "", ""}}}, "feat/obs", true, "feat/obs"},
+		{"gitops destroy clears it", Plan{Steps: []Step{{"gitops", Destroy, "", ""}}}, "main", false, ""},
+		{"other stacks leave it alone", Plan{Revision: "main", Steps: []Step{{"core", Apply, "", ""}}}, "feat/obs", false, "feat/obs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -429,5 +429,117 @@ func TestExecuteRecordsRevision(t *testing.T) {
 				t.Errorf("revision = %q, want %q", store.st.Revision, tt.want)
 			}
 		})
+	}
+}
+
+// A whole cloud down never waits on app health: the in-cluster stacks go
+// with the cluster, and the runner sees only the cluster's and the
+// registry's destroys, in that order.
+func TestExecuteCloudDownGoesWithTheCluster(t *testing.T) {
+	applied := state.Applied
+	st := stateWith("cloud", map[string]string{
+		"registry": applied, "cluster": applied, "gitops": applied, "core": applied, "obs": state.Failed,
+	})
+	g := catalogGraph(t)
+	tests := []struct {
+		name   string
+		opts   DownOptions
+		wantRS []string // runner calls
+		with   []string // steps that run nothing
+	}{
+		{"whole environment", DownOptions{WithCluster: "cluster"},
+			[]string{"destroy cluster", "destroy registry"}, []string{"obs", "core", "gitops"}},
+		{"selected stacks still destroy one by one", DownOptions{Stacks: []string{"obs"}, WithCluster: "cluster"},
+			[]string{"destroy obs"}, nil},
+		{"local mode destroys every stack", DownOptions{},
+			[]string{"destroy obs", "destroy core", "destroy gitops", "destroy cluster", "destroy registry"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &memStore{st: clone(st)}
+			run := &fakeRunner{}
+			e := New(g, store, run)
+			p, err := e.PlanDown(cfgFor("cloud", "minimal"), tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var with []string
+			for _, s := range p.Steps {
+				if s.With != "" {
+					with = append(with, s.Stack)
+					if s.Action != Destroy || s.Reason != "removed with the cluster" {
+						t.Errorf("step %+v", s)
+					}
+				}
+			}
+			if !slices.Equal(with, tt.with) {
+				t.Errorf("removed with the cluster = %v, want %v", with, tt.with)
+			}
+			if err := e.Execute(context.Background(), p, "lab down", nil); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(run.calls, tt.wantRS) {
+				t.Errorf("runner calls = %v, want %v", run.calls, tt.wantRS)
+			}
+			if len(tt.opts.Stacks) == 0 && len(store.st.Stacks) != 0 {
+				t.Errorf("state still has %v", store.st.Stacks)
+			}
+		})
+	}
+}
+
+// releasingRunner is a fakeRunner whose stacks keep something outside the
+// cluster.
+type releasingRunner struct{ *fakeRunner }
+
+func (r releasingRunner) Release(_ context.Context, s string, log io.Writer) error {
+	return r.run("release", s, log)
+}
+
+// A stack that goes with the cluster still releases what it keeps outside
+// it (session 5 left the sample-db secrets in Secrets Manager): the Router
+// calls Release on runners that have it and skips the others.
+func TestExecuteCloudDownReleasesOutsideTheCluster(t *testing.T) {
+	applied := state.Applied
+	st := stateWith("cloud", map[string]string{
+		"registry": applied, "cluster": applied, "gitops": applied, "core": applied, "obs": applied,
+	})
+	run := &fakeRunner{}
+	router := Router{
+		"registry": run, "cluster": run, "gitops": run, "core": run,
+		"obs": releasingRunner{run},
+	}
+	store := &memStore{st: clone(st)}
+	e := New(catalogGraph(t), store, router)
+	p, err := e.PlanDown(cfgFor("cloud", "minimal"), DownOptions{WithCluster: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Execute(context.Background(), p, "lab down", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"release obs", "destroy cluster", "destroy registry"}
+	if !slices.Equal(run.calls, want) {
+		t.Errorf("runner calls = %v, want %v", run.calls, want)
+	}
+
+	// A failed release fails the step and keeps the cluster, so lab down can
+	// run again.
+	run = &fakeRunner{fail: map[string]bool{"obs": true}}
+	router["obs"], router["cluster"], router["registry"] = releasingRunner{run}, run, run
+	store = &memStore{st: clone(st)}
+	e = New(catalogGraph(t), store, router)
+	p, err = e.PlanDown(cfgFor("cloud", "minimal"), DownOptions{WithCluster: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Execute(context.Background(), p, "lab down", nil); err == nil {
+		t.Fatal("want the release error")
+	}
+	if !slices.Equal(run.calls, []string{"release obs"}) {
+		t.Errorf("runner calls after a failed release = %v", run.calls)
+	}
+	if store.st.Stacks["cluster"].Status != applied {
+		t.Errorf("cluster = %q after a failed release, want applied", store.st.Stacks["cluster"].Status)
 	}
 }

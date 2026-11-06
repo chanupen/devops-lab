@@ -1,12 +1,15 @@
-# The sample-db app. Built by the local provider through Podman's API and
-# pushed to the lab registry (lab-zot:5000/lab/sample-db), so the cluster
-# pulls it by digest without registry credentials.
-FROM docker.io/library/golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
+# The sample-db app. Built through Podman's API and pushed to the lab
+# registry: lab-zot:5000/lab/sample-db in local mode (the host's arch), ECR
+# in cloud mode (linux/arm64, for the Graviton nodes). The Go stage always
+# runs on the build host and cross-compiles for the target, so an arm64
+# build needs no emulation; the final stage only copies the binary.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /sample-db .
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /sample-db .
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /sample-db /sample-db

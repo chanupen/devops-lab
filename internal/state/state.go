@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 )
@@ -238,6 +239,27 @@ func (s *State) AppendOp(op Op) []Op {
 
 // IsApplied reports whether the stack's last result was a successful apply.
 func (s State) IsApplied(stack string) bool { return s.Stacks[stack].Status == Applied }
+
+// BilledWarning is what lab status and the TUI header say about a cloud lab
+// with a failed stack.
+const BilledWarning = "failed, still billed, run lab down"
+
+// HalfBuilt lists, sorted, the failed stacks of a cloud lab. A failed tofu
+// apply or destroy can leave AWS resources behind that bill until lab down,
+// or the reaper after expires-at, removes them. A local lab returns nil.
+func (s State) HalfBuilt() []string {
+	if s.Mode != "cloud" {
+		return nil
+	}
+	var failed []string
+	for name, ss := range s.Stacks {
+		if ss.Status == Failed {
+			failed = append(failed, name)
+		}
+	}
+	sort.Strings(failed)
+	return failed
+}
 
 // DefaultPath returns ~/.lab/state.json.
 func DefaultPath() (string, error) {

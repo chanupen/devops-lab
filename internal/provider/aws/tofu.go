@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
+	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/chanupen/devops-lab/internal/reaper"
 )
@@ -31,6 +32,10 @@ type Module struct {
 	Vars      map[string]any    // written to lab.auto.tfvars.json
 	Env       map[string]string // AWS credentials for tofu, from Session.Env
 	Out       io.Writer         // tofu's output
+	// CheckPlan runs on every saved plan that changes something, so lab
+	// cloud plan and lab up both fail before apply: the cloud provider
+	// checks the AWS managed policies the plan attaches.
+	CheckPlan func(ctx context.Context, plan *tfjson.Plan) error
 	// BeforeApply runs after the plan and before tofu apply, with the work
 	// dir ready: the cloud provider uploads the teardown bundle there.
 	BeforeApply func(ctx context.Context, workDir string) error
@@ -96,6 +101,11 @@ func (m *Module) Plan(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("tofu plan: %w", err)
 	}
+	if changes && m.CheckPlan != nil {
+		if err := m.checkPlan(ctx); err != nil {
+			return false, err
+		}
+	}
 	return changes, nil
 }
 
@@ -122,6 +132,19 @@ func (m *Module) Apply(ctx context.Context) error {
 		return fmt.Errorf("tofu apply: %w", err)
 	}
 	return nil
+}
+
+func (m *Module) checkPlan(ctx context.Context) error {
+	tf, err := m.tofu()
+	if err != nil {
+		return err
+	}
+	tf.SetStdout(io.Discard)
+	plan, err := tf.ShowPlanFile(ctx, m.PlanFile())
+	if err != nil {
+		return fmt.Errorf("read the saved plan: %w", err)
+	}
+	return m.CheckPlan(ctx, plan)
 }
 
 // Destroy removes everything in the module's state.

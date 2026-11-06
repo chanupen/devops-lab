@@ -40,6 +40,31 @@ const defaultDuration = 4 * time.Hour
 // valid. lab cloud login fixes it.
 var ErrNeedMFA = errors.New("this profile needs an MFA code: run lab cloud login first")
 
+// ProfileError means the AWS SDK cannot resolve the profile from
+// ~/.aws/config and ~/.aws/credentials: a missing profile, or a broken
+// source_profile chain such as a profile that names itself. A cached role
+// session does not help, because lab finds the cache file by the profile's
+// role settings. lab never edits those files, so the error says what to
+// check and what to run after the fix.
+type ProfileError struct {
+	Profile string
+	Err     error
+}
+
+func (e *ProfileError) Error() string {
+	return fmt.Sprintf("profile %s does not resolve in ~/.aws/config: %v", e.Profile, e.Err)
+}
+
+func (e *ProfileError) Unwrap() error { return e.Err }
+
+// Fix is the next step to print under the error.
+func (e *ProfileError) Fix() string {
+	return fmt.Sprintf("check the profiles with: aws configure list --profile %s. "+
+		"[profile %s] needs role_arn (lab-admin), source_profile and mfa_serial; the source profile "+
+		"(devops) needs neither role_arn nor source_profile, its keys stay in ~/.aws/credentials. "+
+		"lab never edits these files. Then run: lab cloud login", e.Profile, e.Profile)
+}
+
 // Session resolves credentials for one profile. For a profile that assumes
 // a role it shares the AWS CLI's role cache: a session the aws CLI cached
 // is used as is, and a session lab gets (asking for the MFA code once) is
@@ -52,6 +77,10 @@ type Session struct {
 	Now      func() time.Time
 	// Role reads the profile's role settings; nil reads ~/.aws/config.
 	Role func(ctx context.Context, profile string) (Role, error)
+
+	// configFiles and credentialsFiles replace the SDK's default shared
+	// files when set (tests).
+	configFiles, credentialsFiles []string
 }
 
 // Role is what the AWS CLI hashes into its cache file name.
@@ -96,9 +125,13 @@ func (s Session) role(ctx context.Context) (Role, error) {
 	if s.Role != nil {
 		return s.Role(ctx, s.Profile)
 	}
-	sc, err := config.LoadSharedConfigProfile(ctx, s.Profile)
+	sc, err := config.LoadSharedConfigProfile(ctx, s.Profile, func(o *config.LoadSharedConfigOptions) {
+		if s.configFiles != nil {
+			o.ConfigFiles, o.CredentialsFiles = s.configFiles, s.credentialsFiles
+		}
+	})
 	if err != nil {
-		return Role{}, fmt.Errorf("profile %s: %w", s.Profile, err)
+		return Role{}, &ProfileError{Profile: s.Profile, Err: err}
 	}
 	r := Role{ARN: sc.RoleARN, MFASerial: sc.MFASerial, ExternalID: sc.ExternalID}
 	if sc.RoleDurationSeconds != nil {
@@ -173,7 +206,7 @@ func (s Session) Config(ctx context.Context) (aws.Config, error) {
 		if errors.Is(err, ErrNeedMFA) || (needed && s.Prompt == nil) {
 			return aws.Config{}, ErrNeedMFA
 		}
-		return aws.Config{}, fmt.Errorf("credentials for profile %s: %w", s.Profile, err)
+		return aws.Config{}, fmt.Errorf("credentials for profile %s: %w (run lab cloud login for a fresh session)", s.Profile, err)
 	}
 	if creds.CanExpire {
 		s.writeCache(r, creds)

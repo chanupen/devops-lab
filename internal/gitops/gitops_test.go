@@ -721,3 +721,75 @@ func TestRootUpdateRetriesOnConflict(t *testing.T) {
 		})
 	}
 }
+
+// A cloud apply stops at once on a pod the scheduler has given up on,
+// with its reason, instead of waiting out the timeout. Local mode waits.
+func TestWaitAppsFailsFastOnUnschedulablePod(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "node-exporter-x"},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+			Message:            "0/4 nodes are available: 1 Too many pods",
+		}}},
+	}
+	for _, mode := range []string{"cloud", "local"} {
+		t.Run(mode, func(t *testing.T) {
+			e := newEnv(t, false)
+			if _, err := e.core.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			e.runner.opts.Mode, e.runner.opts.Timeout = mode, 2*time.Second
+			if mode == "cloud" {
+				e.runner.opts.Timeout = 30 * time.Second
+			}
+			c, _ := e.runner.clients(io.Discard)
+			start := time.Now()
+			err := e.runner.waitApps(context.Background(), c, "obs", true, io.Discard)
+			if err == nil {
+				t.Fatal("wait succeeded")
+			}
+			unsched := strings.Contains(err.Error(), "pod monitoring/node-exporter-x unschedulable for") &&
+				strings.Contains(err.Error(), "Too many pods")
+			if mode == "cloud" && (!unsched || time.Since(start) > 10*time.Second) {
+				t.Errorf("err = %v after %s", err, time.Since(start))
+			}
+			if mode == "local" && unsched {
+				t.Errorf("local mode failed on the pod: %v", err)
+			}
+		})
+	}
+}
+
+// The provider's Argo CD values (cloud: memory requests) merge over lab's
+// own, key by key, and reach the release.
+func TestApplyGitOpsMergesArgoValues(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.opts.ArgoValues = map[string]any{
+		"controller": map[string]any{"resources": map[string]any{"requests": map[string]any{"memory": "640Mi"}}},
+		"redis":      map[string]any{"resources": map[string]any{"requests": map[string]any{"memory": "32Mi"}}},
+	}
+	var log bytes.Buffer
+	if err := e.runner.Apply(context.Background(), "gitops", &log); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	v := e.helm.ensured[0].Values
+	get := func(path ...string) any {
+		var cur any = v
+		for _, p := range path {
+			m, _ := cur.(map[string]any)
+			cur = m[p]
+		}
+		return cur
+	}
+	if get("controller", "resources", "requests", "memory") != "640Mi" || get("redis", "resources", "requests", "memory") != "32Mi" {
+		t.Errorf("provider values missing: %v", v)
+	}
+	// lab's own values under the same key survive.
+	if get("redis", "image", "repository") != "docker.io/library/redis" || get("dex", "enabled") != false {
+		t.Errorf("lab's values lost: %v", v)
+	}
+	if _, ok := argoValues()["controller"]; ok {
+		t.Error("merge changed argoValues")
+	}
+}

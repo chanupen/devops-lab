@@ -19,6 +19,15 @@ type Runner interface {
 	Destroy(ctx context.Context, stack string, log io.Writer) error
 }
 
+// Releaser is implemented by runners whose stacks keep something outside
+// the cluster (a secret in AWS Secrets Manager). When a stack goes with
+// the cluster (Step.With), the engine calls Release instead of Destroy:
+// the cluster's destroy removes everything inside it, and Release removes
+// the rest. A runner without it releases nothing.
+type Releaser interface {
+	Release(ctx context.Context, stack string, log io.Writer) error
+}
+
 // Store is the state persistence the engine needs. *state.Store implements it.
 type Store interface {
 	Load() (state.State, error)
@@ -125,9 +134,18 @@ func (e *Engine) runStep(ctx context.Context, step Step, command string, w io.Wr
 	start := e.now()
 	_, _ = fmt.Fprintf(tw, "%s: %s %s\n", command, step.Action, step.Stack)
 	var err error
-	if step.Action == Apply {
+	rel, releases := e.runner.(Releaser)
+	switch {
+	case step.With != "" && !releases:
+		_, _ = fmt.Fprintf(tw, "nothing to run: removed with the %s\n", step.With)
+		_ = tw.Flush()
+		return nil
+	case step.With != "":
+		_, _ = fmt.Fprintf(tw, "removed with the %s; releasing what it keeps outside it\n", step.With)
+		err = rel.Release(ctx, step.Stack, tw)
+	case step.Action == Apply:
 		err = e.runner.Apply(ctx, step.Stack, tw)
-	} else {
+	default:
 		err = e.runner.Destroy(ctx, step.Stack, tw)
 	}
 	d := e.now().Sub(start).Round(100 * time.Millisecond)

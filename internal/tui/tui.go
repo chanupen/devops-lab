@@ -750,6 +750,9 @@ func (m Model) header() string {
 	if d.readOnly != "" {
 		note = "  " + warn.Render("read-only: another lab is running ("+holderPID(d.readOnly)+")")
 	}
+	if failed := d.st.HalfBuilt(); len(failed) > 0 {
+		note += "  " + danger.Render("✕ "+state.BilledWarning)
+	}
 	if dh := drillHeader(d, m.now()); dh != "" {
 		note += "  " + dh
 	}

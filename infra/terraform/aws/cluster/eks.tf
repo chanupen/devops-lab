@@ -146,7 +146,9 @@ resource "aws_eks_node_group" "system" {
     effect = "NO_SCHEDULE"
   }
 
-  depends_on = [aws_iam_role_policy_attachment.node]
+  # The VPC CNI's prefix delegation must be on before the node joins, so
+  # its max pods follow it.
+  depends_on = [aws_iam_role_policy_attachment.node, aws_eks_addon.before_nodes]
 }
 
 # Managed add-ons at the default version for the cluster's Kubernetes
@@ -161,6 +163,13 @@ resource "aws_eks_addon" "before_nodes" {
   addon_name                  = each.value
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
+
+  # Prefix delegation: each ENI slot holds a /28, so small nodes are no
+  # longer capped at 11 (t4g.small) or 17 (t4g.medium) pods. The managed
+  # node group sets max pods from it; Karpenter's EC2NodeClass sets its own.
+  configuration_values = each.value == "vpc-cni" ? jsonencode({
+    env = { ENABLE_PREFIX_DELEGATION = "true", WARM_PREFIX_TARGET = "1" }
+  }) : null
 }
 
 # CoreDNS needs a node to become active.

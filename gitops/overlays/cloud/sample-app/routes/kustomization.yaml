@@ -1,0 +1,5 @@
+# The podinfo frontend at https://podinfo.localtest.me:8443 (cloud mode: through lab tunnel).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - podinfo-route.yaml

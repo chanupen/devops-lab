@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,5 +93,31 @@ func TestBaselineSummary(t *testing.T) {
 		if err := writeBaselineSummary(&b, tt.changes, tt.remote, tt.applying); err != nil || !strings.Contains(b.String(), tt.want) {
 			t.Errorf("summary = %q, want %q", b.String(), tt.want)
 		}
+	}
+}
+
+// Without a terminal, lab cloud login says it needs one and keeps the
+// cached session: it must not drop a working session it cannot replace.
+func TestCloudLoginNeedsTerminal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cache := filepath.Join(home, ".aws", "cli", "cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cached := filepath.Join(cache, "session.json")
+	if err := os.WriteFile(cached, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newRootCmd()
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"cloud", "login"})
+	if err := cmd.Execute(); !errors.Is(err, errLoginNeedsTerminal) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(cached); err != nil {
+		t.Errorf("cached session removed: %v", err)
 	}
 }

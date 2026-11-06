@@ -88,16 +88,13 @@ func TestPlanCmd(t *testing.T) {
 			wantErr: `profile "huge"`,
 		},
 		{
-			// Cloud mode plans the same stacks as local; until the cloud
-			// GitOps overlay exists, the GitOps stacks are skipped.
+			// Cloud mode plans the same stacks as local, the GitOps ones
+			// with the cloud overlay.
 			name:   "--mode cloud plans the profile with the cloud provider",
 			config: "cloud:\n  owner: someone\n",
 			args:   []string{"--mode", "cloud"},
 			want: []string{"cloud mode, minimal + obs profile, Kubernetes chosen by lab (EKS standard support)", "+ registry", "+ cluster",
-				"- gitops      skip: not supported by the cloud provider yet",
-				"- sample-app  skip: not supported by the cloud provider yet",
-				"2 to apply, 0 to destroy, 0 unchanged, 4 skipped",
-				"warning: 4 stacks skipped, not supported by the cloud provider yet: gitops, core, sample-app, obs"},
+				"+ gitops", "+ core", "+ sample-app", "+ obs", "6 to apply, 0 to destroy, 0 unchanged"},
 		},
 		{
 			name:    "--mode cloud needs an owner",

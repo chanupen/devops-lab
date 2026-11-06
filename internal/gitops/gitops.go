@@ -70,7 +70,8 @@ const GrafanaSecret = "grafana-admin"
 // NewHelm returns the Helm v4 SDK client the GitOps runner uses, for
 // providers that install a chart themselves before GitOps exists (the cloud
 // provider's Karpenter and Load Balancer Controller).
-func NewHelm(kubeconfig, home string) Helm { return newSDKHelm(kubeconfig, home) }
+// charts is the chart cache the local and cloud labs share.
+func NewHelm(kubeconfig, home, charts string) Helm { return newSDKHelm(kubeconfig, home, charts) }
 
 // Helm installs and removes one release. The Helm v4 SDK implements it; tests
 // use a fake.
@@ -81,6 +82,10 @@ type Helm interface {
 	// Uninstall removes the release; a missing release is not an error.
 	Uninstall(ctx context.Context, name, namespace string, log io.Writer) error
 }
+
+// ArgoCDChart is the Argo CD release the gitops stack installs from the
+// host, without values: lab up prefetches its chart.
+var ArgoCDChart = HelmRelease{Name: Release, Namespace: Namespace, RepoURL: ArgoChartRepo, Chart: ArgoChart, Version: ArgoChartVersion}
 
 // HelmRelease is a chart from a Helm repository, or, with an empty
 // RepoURL, an oci:// chart reference.
@@ -100,6 +105,9 @@ type Options struct {
 	// Timeout bounds each wait (Argo CD install, apps Synced and Healthy).
 	// Image pulls dominate on a slow network.
 	Timeout time.Duration
+	// ArgoValues are merged over the Argo CD chart values: what the mode's
+	// provider needs (cloud mode: memory requests, so Karpenter sizes nodes).
+	ArgoValues map[string]any
 }
 
 // Runner applies and destroys the gitops and app stacks. It implements
@@ -114,9 +122,10 @@ type Runner struct {
 	password func() (string, error)
 }
 
-// New returns a Runner that reaches the cluster through kubeconfig.
-func New(opts Options, kubeconfig, helmHome string) *Runner {
-	return newRunner(opts, newSDKHelm(kubeconfig, helmHome), func(log io.Writer) (*kube.Clients, error) {
+// New returns a Runner that reaches the cluster through kubeconfig. Chart
+// archives go to charts, the cache the local and cloud labs share.
+func New(opts Options, kubeconfig, helmHome, charts string) *Runner {
+	return newRunner(opts, newSDKHelm(kubeconfig, helmHome, charts), func(log io.Writer) (*kube.Clients, error) {
 		cfg, err := kube.RESTConfig(kubeconfig)
 		if err != nil {
 			return nil, err
@@ -144,10 +153,8 @@ func (r *Runner) Supports(stack string) bool {
 // stacks whose apps it switches on in the app-of-apps.
 func Stacks() []string { return append([]string{"gitops"}, appStacks...) }
 
-// overlayModes are the modes with overlays under gitops/overlays. Cloud
-// gets its overlay in the next phase-3 change; until then its GitOps
-// stacks are skipped at plan time.
-var overlayModes = []string{"local"}
+// overlayModes are the modes with overlays under gitops/overlays.
+var overlayModes = []string{"local", "cloud"}
 
 // HasOverlay reports whether the GitOps stacks can run in mode.
 func HasOverlay(mode string) bool { return slices.Contains(overlayModes, mode) }
@@ -190,11 +197,9 @@ func (r *Runner) applyGitOps(ctx context.Context, log io.Writer) error {
 		return fmt.Errorf("deploy key: %w", err)
 	}
 	logf(log, "installing Argo CD (chart %s %s)", ArgoChart, ArgoChartVersion)
-	if err := r.helm.Ensure(ctx, HelmRelease{
-		Name: Release, Namespace: Namespace,
-		RepoURL: ArgoChartRepo, Chart: ArgoChart, Version: ArgoChartVersion,
-		Values: argoValues(), Timeout: r.opts.Timeout,
-	}, log); err != nil {
+	argo := ArgoCDChart
+	argo.Values, argo.Timeout = mergeValues(argoValues(), r.opts.ArgoValues), r.opts.Timeout
+	if err := r.helm.Ensure(ctx, argo, log); err != nil {
 		return fmt.Errorf("install Argo CD: %w", err)
 	}
 	c, err := r.clients(log)
@@ -378,13 +383,39 @@ func (r *Runner) deleteNamespaces(ctx context.Context, c *kube.Clients, names []
 // waitApps waits until the root app has compared its current source and every
 // Application is Synced and Healthy. With a stack, it also waits until that
 // stack's apps exist (on) or are gone (off).
+//
+// In cloud mode an apply also fails, with the reason, as soon as the
+// cluster shows it will not get there (kube.Stuck under StuckRules): a node
+// NotReady or a pod unschedulable for 3 minutes, or a container crash
+// looping after 3 restarts. Waiting out the 30-minute timeout tells nothing
+// more. Local mode keeps waiting: lab namespaces on the main cluster may
+// hold a learner's crash-looping pod on purpose.
 func (r *Runner) waitApps(ctx context.Context, c *kube.Clients, stack string, on bool, log io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
-	return kube.WaitApps(ctx, c.Dynamic, Namespace, func(apps []kube.App) (bool, string) {
+	if r.opts.Mode == "cloud" && on && c.Core != nil {
+		var stop context.CancelCauseFunc
+		ctx, stop = context.WithCancelCause(ctx)
+		defer stop(nil)
+		go func() {
+			if msg := kube.WatchStuck(ctx, c.Core, StuckRules); msg != "" {
+				stop(errors.New(msg))
+			}
+		}()
+	}
+	err := kube.WaitApps(ctx, c.Dynamic, Namespace, func(apps []kube.App) (bool, string) {
 		return appsDone(apps, stack, on)
 	}, log)
+	if cause := context.Cause(ctx); err != nil && cause != nil && !errors.Is(cause, context.DeadlineExceeded) && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return err
 }
+
+// StuckRules is when a cloud apply gives up early. Karpenter launches a
+// spot node in one to two minutes, and a new node is NotReady for less
+// than one.
+var StuckRules = kube.StuckRules{Grace: 3 * time.Minute, Restarts: 3}
 
 // appsDone is the wait condition, kept pure for tests.
 func appsDone(apps []kube.App, stack string, on bool) (bool, string) {

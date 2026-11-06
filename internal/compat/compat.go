@@ -69,7 +69,7 @@ func TestedNotStated(v string, comps []Component, deployed func(stack string) bo
 //   - Argo CD 3.5: tested on 1.33 to 1.36. This row holds both labs at 1.36
 //     until an Argo CD release lists 1.37.
 //
-// Checked on 2026-11-03:
+// Checked on 2026-11-03 (EBS CSI driver on 2026-11-05):
 //   - Kyverno 1.19 (chart 3.9.2): kyverno.io/docs/installation/releases lists
 //     "Kubernetes Versions Supported: v1.33 - v1.35", but the release-1.19
 //     conformance workflow (.github/workflows/tests-conformance.yaml) tests
@@ -84,6 +84,10 @@ func TestedNotStated(v string, comps []Component, deployed func(stack string) bo
 //     (k8sVersion, or a newer EKS choice) needs an ESO bump in the same PR.
 //   - Moto 5.2.5 (motoserver/moto) runs as a Podman container beside the
 //     cluster, so no Kubernetes range applies.
+//   - AWS EBS CSI driver 1.67 (chart 2.67.1): the README's Compatibility
+//     section says it works with every Kubernetes version the Kubernetes
+//     project or EKS supports (extended support included); docs/install.md
+//     requires 1.20 or later. No upper bound.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
 //     1.37.0 (internal/provider/local NodeImages, digests from the release
 //     notes).
@@ -92,6 +96,8 @@ var Table = []Component{
 		Source: "karpenter.sh/docs/upgrading/compatibility, v1.15.0 release notes", Modes: []string{"cloud"}, Stack: "cluster"},
 	{Name: "AWS Load Balancer Controller", ChartVersion: "3.6.2", AppVersion: "v3.6.2", MinK8s: "1.19",
 		Source: "aws-load-balancer-controller docs/deploy/installation.md", Modes: []string{"cloud"}, Stack: "cluster"},
+	{Name: "AWS EBS CSI driver", ChartVersion: "2.67.1", AppVersion: "v1.67.1", MinK8s: "1.20",
+		Source: "aws-ebs-csi-driver README (Compatibility) and docs/install.md", Modes: []string{"cloud"}, Stack: "cluster"},
 	{Name: "Argo CD", ChartVersion: gitops.ArgoChartVersion, AppVersion: "v3.5.5", MinK8s: "1.33", MaxK8s: "1.36",
 		Source: "argo-cd docs/operator-manual/tested-kubernetes-versions.md", Modes: []string{"local", "cloud"}, Stack: "gitops"},
 	{Name: "Kyverno", ChartVersion: "3.9.2", AppVersion: "v1.19.2", MinK8s: "1.33", MaxK8s: "1.36",

@@ -124,3 +124,12 @@ func (g *Graph) neededBy(stack string, targets []string) string {
 	}
 	return ""
 }
+
+// inside reports whether stack depends, directly or not, on host.
+func (g *Graph) inside(stack, host string) bool {
+	if host == "" || stack == host {
+		return false
+	}
+	deps, err := g.Order(stack)
+	return err == nil && slices.Contains(deps, host)
+}

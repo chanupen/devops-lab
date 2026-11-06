@@ -104,6 +104,11 @@ func newCloudLoginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Without a terminal there is no way to ask for the code: say so
+			// before Forget drops a session that still works.
+			if s.Prompt == nil {
+				return errLoginNeedsTerminal
+			}
 			if err := s.Forget(cmd.Context()); err != nil { // a login always asks for a fresh session
 				return err
 			}
@@ -122,6 +127,11 @@ func newCloudLoginCmd() *cobra.Command {
 	flags.register(cmd)
 	return cmd
 }
+
+// errLoginNeedsTerminal: lab cloud login reads the MFA code from a
+// terminal (an agent's shell or a pipe has none).
+var errLoginNeedsTerminal = errors.New("lab cloud login reads the MFA code from a terminal, and stdin is not one; " +
+	"run it in a terminal (from the Mac: ssh -t fedora lab cloud login). The cached session was kept")
 
 func newBaselineCmd() *cobra.Command {
 	base := &cobra.Command{

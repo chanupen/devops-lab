@@ -122,6 +122,16 @@ func (p *Provider) manifestDigest(ctx context.Context, repo, tag string) (string
 	return d, nil
 }
 
+// SourceTag is the image tag for the sources in dir: the first 12 hex
+// digits of their hash, as BuildSampleDB tags the sample-db image.
+func SourceTag(dir string) (string, error) {
+	sum, err := dirHash(dir)
+	if err != nil {
+		return "", err
+	}
+	return sum[:12], nil
+}
+
 // dirHash hashes the names and contents of dir's files (hidden ones left
 // out, as the build context leaves them out).
 func dirHash(dir string) (string, error) {

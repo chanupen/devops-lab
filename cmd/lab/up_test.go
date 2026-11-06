@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 )
@@ -589,5 +591,129 @@ func TestLabHolder(t *testing.T) {
 	}
 	if got := labHolder(root); !strings.HasPrefix(got, "the TUI (pid ") {
 		t.Errorf("root holder = %q", got)
+	}
+}
+
+func TestNewStacks(t *testing.T) {
+	store := state.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Update(func(s *state.State) error {
+		s.Stacks["cluster"] = state.StackState{Status: state.Applied}
+		s.Stacks["obs"] = state.StackState{Status: state.Failed}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := engine.Plan{Steps: []engine.Step{{Stack: "cluster", Action: engine.Apply}, {Stack: "obs", Action: engine.Apply},
+		{Stack: "policy", Action: engine.Apply}, {Stack: "core", Action: engine.Keep}, {Stack: "ci", Action: engine.Skip}}}
+	if got := newStacks(p, store); !slices.Equal(got, []string{"obs", "policy"}) {
+		t.Errorf("newStacks = %v, want [obs policy]", got)
+	}
+}
+
+// TestUpCloudFailureSaysLabDown: a failed cloud lab up exits non-zero and
+// says, in its last lines, that the lab is still billed and which lab down
+// to run, with the same --config and --state.
+func TestUpCloudFailureSaysLabDown(t *testing.T) {
+	tests := []struct {
+		name     string
+		fail     map[string]bool
+		wantWarn bool
+	}{
+		{"cluster apply fails after the registry", map[string]bool{"apply cluster": true}, true},
+		{"first stack fails, still recorded as failed", map[string]bool{"apply registry": true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\ncloud:\n  owner: tester\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fp := &fakeProvider{fail: tt.fail}
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { return fp, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"up", "--mode", "cloud", "--stacks", "cluster", "--yes", "--config", cfgPath, "--state", statePath})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("lab up succeeded; want an error\n%s", out.String())
+			}
+			got := out.String()
+			for _, w := range []string{"half built and still billed", "run now: lab down --mode cloud --config " + cfgPath + " --state " + statePath} {
+				if strings.Contains(got, w) != tt.wantWarn {
+					t.Errorf("output contains %q = %v, want %v:\n%s", w, !tt.wantWarn, tt.wantWarn, got)
+				}
+			}
+		})
+	}
+}
+
+// prefetchProvider is a fakeProvider whose charts fail or succeed.
+type prefetchProvider struct {
+	*fakeProvider
+	err    error
+	stacks []string
+}
+
+func (p *prefetchProvider) PrefetchCharts(_ context.Context, stacks []string, log io.Writer) error {
+	p.stacks = stacks
+	_, _ = io.WriteString(log, "prefetch\n")
+	return p.err
+}
+
+// TestUpPrefetchesChartsFirst: lab up fetches charts for the stacks it
+// applies before the first stack, and a fetch failure applies nothing.
+func TestUpPrefetchesChartsFirst(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantCalls []string
+	}{
+		{"charts fetched, stacks run", nil, []string{"apply registry", "apply cluster"}},
+		{"chart repo down, nothing runs", errors.New("charts: fetch chart argo-cd: timeout; nothing was applied"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath, statePath := filepath.Join(dir, "lab.yaml"), filepath.Join(dir, "state.json")
+			if err := os.WriteFile(cfgPath, []byte("profile: minimal\nextraStacks: []\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			pp := &prefetchProvider{fakeProvider: &fakeProvider{}, err: tt.err}
+			cmd := newRootCmdWith(func(config.Config, string, runOptions) (provider, error) { return pp, nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"up", "--stacks", "cluster", "--config", cfgPath, "--state", statePath})
+			err := cmd.Execute()
+			if (err != nil) != (tt.err != nil) {
+				t.Fatalf("err %v, want %v\n%s", err, tt.err, out.String())
+			}
+			if !slices.Equal(pp.calls, tt.wantCalls) {
+				t.Errorf("provider calls %v, want %v", pp.calls, tt.wantCalls)
+			}
+			if !slices.Equal(pp.stacks, []string{"registry", "cluster"}) {
+				t.Errorf("prefetched for %v, want the applied stacks", pp.stacks)
+			}
+			if i, j := strings.Index(out.String(), "prefetch"), strings.Index(out.String(), "$ lab up"); tt.err == nil && (i < 0 || j < i) {
+				t.Errorf("prefetch must come before the first stack:\n%s", out.String())
+			}
+		})
+	}
+}
+
+func TestChartCacheShared(t *testing.T) {
+	if l, c := chartCache("local", "/h/.lab"), chartCache("cloud", "/h/.lab/cloud"); l != c || l != "/h/.lab/helm/charts" {
+		t.Errorf("local %s, cloud %s: want both /h/.lab/helm/charts", l, c)
+	}
+}
+
+func TestPrefetchChartsPicksStacks(t *testing.T) {
+	// No charts for the stacks: nothing to fetch, no network.
+	l := labRunner{charts: map[string][]gitops.HelmRelease{"gitops": {gitops.ArgoCDChart}}}
+	var log bytes.Buffer
+	if err := l.PrefetchCharts(context.Background(), []string{"registry", "core"}, &log); err != nil || log.Len() != 0 {
+		t.Errorf("err %v, log %q: want nothing fetched", err, log.String())
 	}
 }

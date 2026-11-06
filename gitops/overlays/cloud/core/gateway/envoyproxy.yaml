@@ -1,0 +1,13 @@
+# Cloud mode: Envoy's Service is a ClusterIP, so no load balancer is made.
+# lab tunnel port-forwards 127.0.0.1:8080/8443 on the host to it.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: lab-clusterip
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP

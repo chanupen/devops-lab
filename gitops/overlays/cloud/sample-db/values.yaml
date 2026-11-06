@@ -1,0 +1,6 @@
+# Cloud mode: Postgres's data on a 1 GiB gp3 volume (lab-gp3, the EBS CSI
+# driver's StorageClass), deleted with its claim. The image comes from ECR,
+# built for arm64 (set by the stack).
+postgres:
+  storage: 1Gi
+  storageClassName: lab-gp3

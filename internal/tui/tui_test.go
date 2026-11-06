@@ -322,3 +322,18 @@ func TestReconnect(t *testing.T) {
 		t.Error("a report from the current watcher was dropped")
 	}
 }
+
+// TestHeaderSaysHalfBuiltCloudLabIsBilled: a cloud lab with a failed stack
+// says in the header that it is still billed; local failures do not.
+func TestHeaderSaysHalfBuiltCloudLabIsBilled(t *testing.T) {
+	for _, mode := range []string{"cloud", "local"} {
+		st := labState(0)
+		st.Mode = mode
+		st.Stacks["cluster"] = state.StackState{Status: state.Failed, Error: "tofu apply: exit status 1"}
+		m := newModel(st)
+		got := strings.Contains(ansi.Strip(m.header()), "✕ "+state.BilledWarning)
+		if got != (mode == "cloud") {
+			t.Errorf("%s: header warns = %v: %q", mode, got, ansi.Strip(m.header()))
+		}
+	}
+}

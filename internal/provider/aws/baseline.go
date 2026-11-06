@@ -129,6 +129,21 @@ func (b *Baseline) Plan(ctx context.Context) (changes, remote bool, err error) {
 	if err != nil {
 		return false, remote, fmt.Errorf("tofu plan: %w", err)
 	}
+	if changes {
+		// A missing managed policy fails the plan, so apply never starts.
+		tf.SetStdout(io.Discard)
+		plan, err := tf.ShowPlanFile(ctx, b.PlanFile())
+		if err != nil {
+			return false, remote, fmt.Errorf("read the saved plan: %w", err)
+		}
+		out := b.Out
+		if out == nil {
+			out = io.Discard
+		}
+		if err := checkPlanPolicies(ctx, b.Config, plan, out); err != nil {
+			return false, remote, err
+		}
+	}
 	return changes, remote, nil
 }
 
