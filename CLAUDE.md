@@ -37,6 +37,7 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app.
 
 - ai is in the full profile, or add it with `lab up --stacks ai`; it depends on obs and secrets. e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EAI -timeout 20m ./internal/ai/`.
+- The AI assistant's read-only tools are in `internal/assist`; `ai/assist-tools` has no Secret or write grants. The runner, webhook, TUI and eval remain future work.
 
 Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (7.47 GiB median of three `podman stats` runs for the deployable full profile plus retained sample-db, with Ollama idle). AI pods used 1,664 MiB by `kubectl top`, included in the node totals. The full plan skips unsupported CI, chaos and scaling; those stacks were not measured. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 

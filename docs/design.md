@@ -270,9 +270,10 @@ Kubernetes 1.32.
 
 ### AI On-Call Assistant (draft, local only)
 
-This is a proposal for review, not implemented behaviour. The assistant takes
+The read-only tools and their identity are implemented; the runner, receiver,
+notes and evals below remain a draft. The assistant takes
 an Alertmanager webhook or `lab assist alert <alert>` / `lab assist drill
-<drill>` and produces a short incident note. Alertmanager sends to an
+<drill>` and produces a short incident note. Alertmanager sends to a
 receiver Deployment in the `ai` namespace through a ClusterIP Service, with
 no Gateway route, NodePort or host port. Its pods carry
 `lab.devops/ollama=true`, as required by the existing Ollama egress policy.
@@ -327,6 +328,21 @@ unknown tools, write verbs, exec and secret access and requires rejection
 before any request; an RBAC test checks that the identity cannot write or
 read Secrets. Neither a model-produced command nor a webhook can execute a
 fix.
+
+The tools live in `internal/assist`. The `ai/assist-tools` ServiceAccount,
+installed with the Ollama GitOps app, has get/list on pods and events, get on
+Argo CD Applications in `argocd`, and get on the two named Service proxies in
+`monitoring`; it has no Secret or write grant. Token automount is disabled.
+The client requires an explicitly supplied bearer-token identity and rejects
+exec credential plugins, impersonation, insecure TLS and custom transports.
+The caller must supply the restricted identity, not an admin token; Kubernetes
+RBAC is additive, so extra external bindings could broaden its privileges.
+The client and transport both reject paths outside the allowlist. The
+transport rejects non-GET requests, headers and bodies, and follows no
+redirects. Each request has a 10-second timeout and a 1 MiB response limit;
+lists are capped at 100 and report truncation, and Loki ranges at one hour.
+Pod summaries include container resource requests and limits but omit env
+and other spec fields; Argo CD output contains only revision history.
 
 **Small-model reliability.** The default is host Ollama with `llama3.2:3b`.
 The runner presents the small tool set and validates a structured response
@@ -389,7 +405,7 @@ coverage gap instead of giving credit for unsupported guesses.
 
 **Build as small PRs, after approval:**
 
-1. Tools, read-only identity and guard tests.
+1. Tools, read-only identity and guard tests (implemented).
 2. `lab assist` and the in-cluster Alertmanager webhook, with pre-gathered
    evidence, structured notes, budgets, local model and OTLP traces; hosted
    inference remains opt-in.
