@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assist-receiver
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: assist-receiver}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: assist-receiver
+        lab.devops/ollama: "true"
+    spec:
+      serviceAccountName: assist-tools
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: receiver
+          image: {{ required "receiver image is required" .Values.image | quote }}
+          ports:
+            - {name: webhook, containerPort: 8080}
+          env:
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom: {secretKeyRef: {name: langfuse-credentials, key: public-key}}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: langfuse-credentials, key: secret-key}}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          readinessProbe:
+            httpGet: {path: /ready, port: webhook}
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: identity, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+      volumes:
+        - name: identity
+          projected:
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef: {fieldPath: metadata.namespace}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: assist-receiver
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: assist-receiver}
+  ports:
+    - {name: webhook, port: 8080, targetPort: webhook}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: assist-alertmanager-only
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: assist-receiver}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alertmanager}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: assist-receiver
+spec:
+  route:
+    receiver: assist
+    groupWait: 10s
+    groupInterval: 5m
+    repeatInterval: 4h
+  receivers:
+    - name: assist
+      webhookConfigs:
+        - url: http://assist-receiver.ai.svc:8080/webhook
+          sendResolved: false

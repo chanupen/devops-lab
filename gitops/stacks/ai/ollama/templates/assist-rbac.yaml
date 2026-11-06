@@ -5,6 +5,38 @@ metadata:
   namespace: ai
 automountServiceAccountToken: false
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: assist-trace
+  namespace: ai
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-assist-trace
+  namespace: ai
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["langfuse-credentials"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-assist-trace
+  namespace: ai
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lab-assist-trace
+subjects:
+  - kind: ServiceAccount
+    name: assist-trace
+    namespace: ai
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

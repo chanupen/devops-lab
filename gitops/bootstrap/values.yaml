@@ -24,6 +24,7 @@ sampleDB:
 # on the kind network, for ollama.ai.svc's NetworkPolicy.
 ai:
   ollamaAddress: ""
+  assistantImage: ""
 # Container resources for the core charts (metrics-server, cert-manager),
 # whose values live in the templates. Empty keeps the charts' defaults.
 # Set per mode in gitops/overlays/<mode>/bootstrap/values.yaml.

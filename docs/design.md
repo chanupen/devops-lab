@@ -268,10 +268,9 @@ The Langfuse Kubernetes 1.32 minimum is derived rather than vendor-stated:
 its Postgres sub-chart uses StatefulSet PVC retention, which became GA in
 Kubernetes 1.32.
 
-### AI On-Call Assistant (draft, local only)
+### AI On-Call Assistant (local only)
 
-The read-only tools and their identity are implemented; the runner, receiver,
-notes and evals below remain a draft. The assistant takes
+The assistant takes
 an Alertmanager webhook or `lab assist alert <alert>` / `lab assist drill
 <drill>` and produces a short incident note. Alertmanager sends to a
 receiver Deployment in the `ai` namespace through a ClusterIP Service, with
@@ -287,10 +286,13 @@ A drill run gets the alert and live context, not the drill's `cause`, hints,
 solution or fault-injection details. Ambiguous or missing alerts fail with a
 clear message rather than picking one.
 
-The receiver is not built yet. Budget an estimated 64 MiB request and 128 MiB
-limit for one Go receiver pod, excluding Ollama, Langfuse and the existing
-stacks. This is a sizing estimate, not a measurement; measure its idle and
-peak working set under evaluation before setting final requests and limits.
+The receiver image is built from a restricted source context with rootless
+Podman, pushed to Zot and referenced by digest. It runs one replica with an
+estimated 64 MiB request and 128 MiB limit, excluding Ollama, Langfuse and
+the existing stacks. These are estimates, not measured idle or peak working
+sets. Local Alertmanager uses `alertmanagerConfigMatcherStrategy: None` so
+the receiver's `AlertmanagerConfig` can receive alerts from all namespaces;
+this strategy also affects any other AlertmanagerConfigs.
 
 **Read-only tools.** A fixed allowlist behind a Go interface exposes:
 
@@ -371,9 +373,16 @@ tracing, a separate narrowly scoped trace credential may get only that named
 Secret; it is not exposed to the tool interface or model. The tool identity
 still cannot read any Secret. The receiver exports to `langfuse-web.ai.svc`;
 the CLI uses the loopback Gateway's `https://langfuse.localtest.me:8443`
-route with the lab CA. Keys never enter notes or traces.
+route with the lab CA. Pass `--langfuse-ca <PEM file>` if the Gateway
+certificate is not in the host trust store. The CLI uses the operator identity
+only for short-lived TokenRequests for `ai/assist-tools` and the separate
+`ai/assist-trace` identity; neither token is stored in a Secret. The receiver
+uses a rotating projected TokenRequest token. The trace identity can get only
+`ai/langfuse-credentials`. Keys are removed from evidence and notes and are
+never trace attributes.
 Do not record credentials or raw secrets in traces; bound and redact captured
-data. Logs can contain sensitive data despite redaction, so hosted inference
+data. Inline environment and Helm values are redacted before model requests,
+notes and traces. Logs can contain sensitive data despite redaction, so hosted inference
 may still disclose it. By default neither model requests nor traces send
 cluster data outside the host. A hosted model is opt-in only through an
 explicit per-run flag; the webhook cannot enable it from its payload. The
@@ -408,7 +417,8 @@ coverage gap instead of giving credit for unsupported guesses.
 1. Tools, read-only identity and guard tests (implemented).
 2. `lab assist` and the in-cluster Alertmanager webhook, with pre-gathered
    evidence, structured notes, budgets, local model and OTLP traces; hosted
-   inference remains opt-in.
+   inference remains opt-in. The receiver's idle and peak memory still need
+   measurement on a functioning lab.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
 4. `lab assist eval`, the seven drills and seeded known-mistake cases.
 
