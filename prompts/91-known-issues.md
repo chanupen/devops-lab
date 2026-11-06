@@ -23,3 +23,8 @@ Problems hit while building the lab, and the fix for each. Check here first when
 | LocalStack won't start without a token | LocalStack 2026.03 needs an auth token | Moto replaces it (see the decision in `docs/design.md`) |
 | Lab 1's Argo CD chart download timed out | One GitHub release address times out from this host | Install from `oci://ghcr.io/argoproj/argo-helm` |
 | `lab labs stop` kept the time and steps | Fixed in #19 | Time counts only while the cluster runs; stop resets a scratch lab |
+| Ollama answered on the LAN address (192.168.x.x:11434) with no auth | The Quadlet published `11434:11434` with no host IP, so pasta bound `*:11434`, and the FedoraWorkstation zone opens 1025–65535/tcp | `PublishPort=127.0.0.1:11434:11434`; `lab doctor` (lan listeners) fails on any lab port off loopback |
+| Pods cannot reach Ollama through `host.containers.internal` | pasta maps 169.254.1.2 to the host's own address, not its loopback | Ollama's Quadlet joins the kind network at a fixed address (`Network=kind:ip=...`); `ollama.ai.svc` points there |
+| An EndpointSlice in Git is never applied | Argo CD excludes Endpoints and EndpointSlices by default | lab writes `ollama-host` itself; the Service stays in Git |
+| `kubectl get --raw .../services/ollama:11434/proxy/...` says the Service is not found | The API server's service proxy reads Endpoints, not EndpointSlices | Check from a node through the ClusterIP (`lab doctor` does) |
+| Langfuse returns 400 "Event type not accepted" for `trace-create` | Langfuse v4 runs `events_only`: traces come over OTLP only | Send to `/api/public/otel/v1/traces`; read with `/api/public/v2/observations` |
