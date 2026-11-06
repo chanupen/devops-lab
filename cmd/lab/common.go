@@ -463,7 +463,8 @@ func (r sampleDBRunner) Destroy(ctx context.Context, stack string, log io.Writer
 // cloudSampleDBRunner is sampleDBRunner for cloud mode: the image goes to
 // ECR (built by the host's Podman for the arm64 nodes) and the credentials
 // to AWS Secrets Manager, with the lab tags. Destroy deletes the secrets
-// without a recovery window after the app is gone.
+// without a recovery window after the app is gone; Release deletes them
+// when the app goes with the cluster.
 type cloudSampleDBRunner struct {
 	cloud  *labaws.Provider
 	gitops *gitops.Runner
@@ -500,6 +501,13 @@ func (r cloudSampleDBRunner) Destroy(ctx context.Context, stack string, log io.W
 	if err := r.gitops.Destroy(ctx, stack, log); err != nil {
 		return err
 	}
+	return r.cloud.RemoveSampleDB(ctx, log)
+}
+
+// Release deletes the secrets when the stack goes with the cluster (a
+// whole cloud lab down): the cluster's destroy takes the app, not the
+// secrets in Secrets Manager.
+func (r cloudSampleDBRunner) Release(ctx context.Context, _ string, log io.Writer) error {
 	return r.cloud.RemoveSampleDB(ctx, log)
 }
 

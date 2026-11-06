@@ -487,3 +487,59 @@ func TestExecuteCloudDownGoesWithTheCluster(t *testing.T) {
 		})
 	}
 }
+
+// releasingRunner is a fakeRunner whose stacks keep something outside the
+// cluster.
+type releasingRunner struct{ *fakeRunner }
+
+func (r releasingRunner) Release(_ context.Context, s string, log io.Writer) error {
+	return r.run("release", s, log)
+}
+
+// A stack that goes with the cluster still releases what it keeps outside
+// it (session 5 left the sample-db secrets in Secrets Manager): the Router
+// calls Release on runners that have it and skips the others.
+func TestExecuteCloudDownReleasesOutsideTheCluster(t *testing.T) {
+	applied := state.Applied
+	st := stateWith("cloud", map[string]string{
+		"registry": applied, "cluster": applied, "gitops": applied, "core": applied, "obs": applied,
+	})
+	run := &fakeRunner{}
+	router := Router{
+		"registry": run, "cluster": run, "gitops": run, "core": run,
+		"obs": releasingRunner{run},
+	}
+	store := &memStore{st: clone(st)}
+	e := New(catalogGraph(t), store, router)
+	p, err := e.PlanDown(cfgFor("cloud", "minimal"), DownOptions{WithCluster: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Execute(context.Background(), p, "lab down", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"release obs", "destroy cluster", "destroy registry"}
+	if !slices.Equal(run.calls, want) {
+		t.Errorf("runner calls = %v, want %v", run.calls, want)
+	}
+
+	// A failed release fails the step and keeps the cluster, so lab down can
+	// run again.
+	run = &fakeRunner{fail: map[string]bool{"obs": true}}
+	router["obs"], router["cluster"], router["registry"] = releasingRunner{run}, run, run
+	store = &memStore{st: clone(st)}
+	e = New(catalogGraph(t), store, router)
+	p, err = e.PlanDown(cfgFor("cloud", "minimal"), DownOptions{WithCluster: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Execute(context.Background(), p, "lab down", nil); err == nil {
+		t.Fatal("want the release error")
+	}
+	if !slices.Equal(run.calls, []string{"release obs"}) {
+		t.Errorf("runner calls after a failed release = %v", run.calls)
+	}
+	if store.st.Stacks["cluster"].Status != applied {
+		t.Errorf("cluster = %q after a failed release, want applied", store.st.Stacks["cluster"].Status)
+	}
+}

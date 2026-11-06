@@ -41,6 +41,18 @@ func (c cloudRunner) Destroy(ctx context.Context, stack string, log io.Writer) e
 	return c.labRunner.Destroy(ctx, stack, log)
 }
 
+// Release implements engine.Releaser. It is spelled out because the
+// embedded Provider could otherwise make the promoted method ambiguous,
+// and a lost Release leaves secrets behind after lab down (session 5).
+func (c cloudRunner) Release(ctx context.Context, stack string, log io.Writer) error {
+	return c.labRunner.Release(ctx, stack, log)
+}
+
+var (
+	_ engine.Releaser = cloudRunner{}
+	_ engine.Releaser = cloudSampleDBRunner{}
+)
+
 // cloudLab is what lab up, lab down and lab extend need beyond a provider.
 type cloudLab interface {
 	Account() string
