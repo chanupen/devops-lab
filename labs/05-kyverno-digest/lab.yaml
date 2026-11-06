@@ -3,7 +3,7 @@ id: 05-kyverno-digest
 title: Kyverno policy that blocks images without a digest
 time: 35m
 level: intermediate
-modes: [local]      # cloud needs only an overlay: the policy stack runs there too
+modes: [local, cloud]  # the policy stack runs in both modes
 needs: lab          # the main lab's cluster, namespace lab05-apps
 stacks: [policy]
 # The kyverno CLI runs as a pinned image through rootless Podman.

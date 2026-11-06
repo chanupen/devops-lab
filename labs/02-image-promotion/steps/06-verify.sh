@@ -3,6 +3,7 @@
 # pods in lab02-dev and lab02-prod run exactly that digest.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
+need_registry
 need_cluster
 scanned=$(kubectl -n lab02-prod get deployment hello -o jsonpath='{.metadata.annotations.lab\.devops/scanned-digest}' 2>/dev/null)
 [ -n "$scanned" ] || fail "Deployment hello in lab02-prod has no annotation lab.devops/scanned-digest: record the digest you scanned"

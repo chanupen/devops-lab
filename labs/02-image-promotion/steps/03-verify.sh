@@ -3,6 +3,7 @@
 # which Trivy finds no HIGH or CRITICAL CVEs in.
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
+need_registry
 d=$(tag_digest dev)
 [ -n "$d" ] || fail "the registry has no $PUSH/$REPO:dev: push it first (step 2)"
 case "$(base_layer dev)" in

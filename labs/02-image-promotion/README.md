@@ -20,6 +20,21 @@ skopeo() { podman run --rm --network host quay.io/skopeo/stable:v1.22.3@sha256:6
 
 Paste both lines into your shell first. `--network host` lets the containers reach the registry on 127.0.0.1. The volume `lab02-trivy-cache` keeps Trivy's vulnerability database between runs: the first scan downloads it, which takes about half a minute, and it uses about 1.6 GB of disk. `podman volume rm lab02-trivy-cache` frees it when you are done.
 
+### In cloud mode
+
+`lab labs start 2 --mode cloud` runs the lab on the EKS cluster. Three things change; the steps are the same.
+
+- The lab registry is ECR, `<account>.dkr.ecr.ap-south-1.amazonaws.com/lab`, for both push and pull. It speaks HTTPS, so use `--tls-verify=true` where the steps say `false`. Each image name is its own ECR repository, and ECR does not make one on push: `lab/lab02-hello` comes with the `registry` stack.
+- ECR needs a login. Its password is a token that lasts 12 hours. `lab labs env` gives the registry and the cloud session's keys:
+
+  ```bash
+  eval "$(lab labs env --mode cloud)"
+  aws ecr get-login-password | podman login -u AWS --password-stdin "${LAB_REGISTRY_PUSH%%/*}"
+  ```
+
+  Skopeo takes the same login as `--creds "AWS:$(aws ecr get-login-password)"` (`skopeo copy`: `--src-creds` and `--dest-creds`). Trivy reads it from `TRIVY_USERNAME=AWS` and `TRIVY_PASSWORD`; add `-e TRIVY_USERNAME -e TRIVY_PASSWORD` to the `trivy` function.
+- The nodes are Graviton (arm64). Build for them: `podman build --platform linux/arm64 ...`. The host is amd64, so Podman runs the Dockerfile's `RUN` under qemu emulation (the `qemu-user-static` package); it takes a few seconds more. An amd64 image fails on the nodes with `exec format error`. The base layers differ by platform too, which the verify scripts know.
+
 Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
 
 ## Step 1: Build the image with rootless Podman

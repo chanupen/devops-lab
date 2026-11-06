@@ -23,9 +23,17 @@ ADMIN_SECRET=lab04/db/admin
 
 # The aws CLI, as a pinned image through rootless Podman. --network host
 # reaches Moto on 127.0.0.1; -e 'AWS_*' passes the endpoint, region and
-# keys lab sets (locally: Moto and dummy keys).
+# keys lab sets (locally: Moto and dummy keys; in cloud mode: no endpoint
+# and the cloud session's temporary keys).
 AWS_IMAGE=docker.io/amazon/aws-cli:2.38.3@sha256:efe32e825cf203652eaca3e7e94679580274e7d567c39270aaa36a5144737108
 aws() { podman run --rm --network host -e 'AWS_*' "$AWS_IMAGE" "$@"; }
+
+# The tags every AWS resource the lab creates carries, as the JSON list
+# aws ... --tags takes. In cloud mode lab sets LAB_AWS_TAGS to the lab tags
+# (lab, owner, expires-at, component), so lab down's sweep and the TTL
+# reaper find the secrets; locally (Moto) it is unset and nothing is added.
+TAG_ARGS=()
+[ -z "${LAB_AWS_TAGS:-}" ] || TAG_ARGS=(--tags "$LAB_AWS_TAGS")
 
 need_cluster() {
   kubectl version --request-timeout=5s >/dev/null 2>&1 ||
