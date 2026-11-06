@@ -140,6 +140,13 @@ func TestRedactPreservesLokiValues(t *testing.T) {
 	}
 }
 
+func TestRedactPreservesTimestamps(t *testing.T) {
+	const timestamp = "2026-11-06T10:15:30Z"
+	if got := Redact(`{"at":"` + timestamp + `"}`); !strings.Contains(got, timestamp) {
+		t.Fatalf("timestamp lost: %s", got)
+	}
+}
+
 func TestRunnerRemovesTraceKeys(t *testing.T) {
 	tools := &fakeTools{data: `{"message":"secret-fixture"}`}
 	model := &fakeModel{decisions: []Decision{{Note: &Note{

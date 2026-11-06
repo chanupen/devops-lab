@@ -28,13 +28,22 @@ func TestOllamaSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	var body struct {
+		Format  json.RawMessage `json:"format"`
 		Options struct {
 			Temperature int `json:"temperature"`
 			Seed        int `json:"seed"`
 		} `json:"options"`
 	}
-	if err := json.Unmarshal([]byte(rt.body), &body); err != nil || body.Options.Temperature != 0 || body.Options.Seed != 42 {
+	if err := json.Unmarshal([]byte(rt.body), &body); err != nil || body.Options.Temperature != 0 || body.Options.Seed != 42 || !json.Valid(body.Format) || len(body.Format) == 0 || body.Format[0] != '{' {
 		t.Fatalf("settings %s, error %v", rt.body, err)
+	}
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(body.Format, &schema); err != nil {
+		t.Fatal(err)
+	}
+	// A root oneOf causes Ollama to ignore the nested constraints.
+	if _, ok := schema["oneOf"]; ok {
+		t.Fatal("Ollama schema must not use root oneOf")
 	}
 }
 

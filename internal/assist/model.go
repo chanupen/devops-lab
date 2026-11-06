@@ -21,6 +21,32 @@ Tools: events(namespace,pod optional), pods(namespace,pod optional), pod_describ
 loki_logs(query,start,end), prometheus_query(query,end optional), argocd_history(app).
 Do not invent observations, credentials or execute commands. Keep the note short.`
 
+const decisionSchema = `{
+  "type":"object","additionalProperties":false,
+  "properties":{
+    "tool":{"type":"object","additionalProperties":false,
+      "properties":{
+        "name":{"type":"string","enum":["events","pods","pod_describe","loki_logs","prometheus_query","argocd_history"]},
+        "arguments":{"type":"object","additionalProperties":false,"properties":{
+          "namespace":{"type":"string"},"pod":{"type":"string"},"app":{"type":"string"},
+          "query":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"}
+        }}
+      },"required":["name","arguments"]},
+    "note":{"type":"object","additionalProperties":false,
+      "properties":{
+        "what_fired":{"$ref":"#/$defs/claims"},
+        "likely_cause":{"$ref":"#/$defs/claims"},
+        "commands_to_confirm":{"$ref":"#/$defs/claims"},
+        "fix":{"$ref":"#/$defs/claims"}
+      },"required":["what_fired","likely_cause","commands_to_confirm","fix"]}
+  },
+  "$defs":{"claims":{"type":"array","minItems":1,"items":{
+    "type":"object","additionalProperties":false,
+    "properties":{"text":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},
+    "required":["text","evidence"]
+  }}}
+}`
+
 // HTTPModel uses either the local Ollama API or an explicitly configured hosted API.
 type HTTPModel struct {
 	URL    string
@@ -70,7 +96,7 @@ func (m HTTPModel) Decide(ctx context.Context, alert Alert, evidence []Evidence)
 		}
 		u.Path = "/api/chat"
 		body = map[string]any{
-			"model": m.Name, "messages": messages, "stream": false, "format": "json",
+			"model": m.Name, "messages": messages, "stream": false, "format": json.RawMessage(decisionSchema),
 			"options": map[string]any{"temperature": 0, "seed": 42, "num_predict": 700, "num_ctx": 4096},
 		}
 	}

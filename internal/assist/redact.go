@@ -62,6 +62,6 @@ func redactText(input string) string {
 	if loc := block.FindStringIndex(input); loc != nil {
 		input = input[:loc[0]] + "[redacted configuration]"
 	}
-	assign := regexp.MustCompile(`(?im)([a-z_][a-z0-9_.-]*[ \t]*[=:][ \t]*).*$`)
-	return assign.ReplaceAllString(input, "${1}[redacted]")
+	assign := regexp.MustCompile(`(?im)(^|[\s,;])([a-z_][a-z0-9_.-]*[ \t]*[=:][ \t]*).*$`)
+	return assign.ReplaceAllString(input, "${1}${2}[redacted]")
 }
