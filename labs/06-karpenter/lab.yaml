@@ -1,0 +1,10 @@
+# Lab 6. The format is described in labs/README.md.
+id: 06-karpenter
+title: Karpenter consolidation, PDBs and spot interruptions
+time: 50m
+level: advanced
+modes: [cloud]      # Karpenter runs only on EKS
+needs: lab          # the main lab's cluster: namespace lab06-karpenter, NodePool lab06
+stacks: [cluster]
+# The aws CLI runs as a pinned image through rootless Podman.
+tools: [podman, kubectl, jq]

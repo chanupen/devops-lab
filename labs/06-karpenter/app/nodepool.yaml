@@ -1,0 +1,52 @@
+# The lab's own NodePool. Only the lab's pods land on its nodes (the
+# taint), and it can never hold more than 6 vCPUs: three 2-vCPU nodes
+# (limits). Apply it as it is: every step checks the cap.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: lab06
+  labels:
+    lab.devops/lab: 06-karpenter
+spec:
+  template:
+    metadata:
+      labels:
+        lab.devops/lab: 06-karpenter
+    spec:
+      # The cluster's EC2NodeClass: subnets, security group, AMI and the lab
+      # tags (lab, owner, expires-at), so the TTL reaper knows these nodes.
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      taints:
+        - key: lab.devops/lab
+          value: 06-karpenter
+          effect: NoSchedule
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: [arm64]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: [spot]
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: [c, m, t]
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: In
+          values: ["2"]
+        - key: karpenter.k8s.aws/instance-memory   # MiB: 4 GiB and up
+          operator: Gt
+          values: ["4000"]
+      expireAfter: 4h
+  # The hard cap. Karpenter launches nothing that would take the pool past
+  # it, whatever is pending.
+  limits:
+    cpu: "6"
+    memory: 24Gi
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "1"

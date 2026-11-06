@@ -1,0 +1,12 @@
+# Allows no voluntary disruption of inflate's pods: no eviction, so no
+# drain and no consolidation of a node that runs one.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inflate
+  namespace: lab06-karpenter
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: inflate
