@@ -45,6 +45,21 @@ func TestOllamaSettings(t *testing.T) {
 	if _, ok := schema["oneOf"]; ok {
 		t.Fatal("Ollama schema must not use root oneOf")
 	}
+	var defs struct {
+		Claims struct {
+			MaxItems int `json:"maxItems"`
+			Items    struct {
+				Properties struct {
+					Evidence struct {
+						MaxItems int `json:"maxItems"`
+					} `json:"evidence"`
+				} `json:"properties"`
+			} `json:"items"`
+		} `json:"claims"`
+	}
+	if err := json.Unmarshal(schema["$defs"], &defs); err != nil || defs.Claims.MaxItems < 1 || defs.Claims.Items.Properties.Evidence.MaxItems < 1 {
+		t.Fatal("Ollama schema must bound claims and citations")
+	}
 }
 
 func TestHostedRequiresExplicitConfiguration(t *testing.T) {

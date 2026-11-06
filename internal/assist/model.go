@@ -17,6 +17,7 @@ Return JSON only: either {"tool":{"name":"...","arguments":{...}}} or
 {"note":{"what_fired":[claim],"likely_cause":[claim],"commands_to_confirm":[claim],"fix":[claim]}}.
 A claim is {"text":"...","evidence":["E1"]}. Cite the evidence IDs for each claim.
 If evidence is insufficient, say so and leave the evidence array empty.
+Use one concise claim per section. Give actionable commands and fixes, not repeated labels.
 Tools: events(namespace,pod optional), pods(namespace,pod optional), pod_describe(namespace,pod),
 loki_logs(query,start,end), prometheus_query(query,end optional), argocd_history(app).
 Do not invent observations, credentials or execute commands. Keep the note short.`
@@ -40,9 +41,9 @@ const decisionSchema = `{
         "fix":{"$ref":"#/$defs/claims"}
       },"required":["what_fired","likely_cause","commands_to_confirm","fix"]}
   },
-  "$defs":{"claims":{"type":"array","minItems":1,"items":{
+  "$defs":{"claims":{"type":"array","minItems":1,"maxItems":2,"items":{
     "type":"object","additionalProperties":false,
-    "properties":{"text":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},
+    "properties":{"text":{"type":"string"},"evidence":{"type":"array","maxItems":3,"items":{"type":"string"}}},
     "required":["text","evidence"]
   }}}
 }`
