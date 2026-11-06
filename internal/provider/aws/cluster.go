@@ -68,12 +68,14 @@ var (
 	EC2NodeClassGVR = schema.GroupVersionResource{Group: "karpenter.k8s.aws", Version: "v1", Resource: "ec2nodeclasses"}
 )
 
-// Kubelet pod limits on Karpenter's nodes (VPC CNI prefix delegation):
-// 16 per vCPU, at most 110 as EKS recommends.
-const (
-	PodsPerCore = 16
-	MaxPods     = 110
-)
+// MaxPods is the kubelet pod limit on Karpenter's nodes: 110, as EKS
+// recommends with VPC CNI prefix delegation. There is no per-vCPU cap: 16
+// per vCPU held a 1-vCPU 8 GiB node to 16 pods and made Karpenter launch a
+// third spot node at 12-25% memory (session 5, 6 Nov 2026). Memory requests
+// on every container decide how many pods fit, and kube-reserved memory
+// on AL2023 follows the instance's ENI pod limit, not maxPods (443 MiB on
+// an r8gd.medium with maxPods 16; 542 MiB on a t4g.medium with 110).
+const MaxPods = 110
 
 // SpotMinMemoryMiB is the spot NodePool's floor, exclusive: 4 GiB nodes
 // (t4g.medium) and up.
@@ -543,10 +545,9 @@ func EC2NodeClass(c ClusterInfo, tags map[string]string) *unstructured.Unstructu
 			"securityGroupSelectorTerms": discovery,
 			"associatePublicIPAddress":   true, // public subnets, no NAT gateway
 			// The VPC CNI runs with prefix delegation, which Karpenter does
-			// not detect: without this, max pods follows the ENI limit (11
-			// on a t4g.small). 16 per vCPU keeps kube-reserved memory, which
-			// grows with max pods, small on the smallest (4 GiB) nodes.
-			"kubelet": map[string]any{"podsPerCore": int64(PodsPerCore), "maxPods": int64(MaxPods)},
+			// not detect: without maxPods, max pods follows the ENI limit (8
+			// on an r8gd.medium). No podsPerCore: see MaxPods.
+			"kubelet": map[string]any{"maxPods": int64(MaxPods)},
 			"metadataOptions": map[string]any{
 				"httpEndpoint": "enabled", "httpTokens": "required", "httpPutResponseHopLimit": int64(1),
 			},

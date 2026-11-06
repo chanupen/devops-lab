@@ -146,9 +146,31 @@ func TestEC2NodeClassCarriesLabTags(t *testing.T) {
 	if field(t, nc, "spec", "metadataOptions", "httpTokens") != "required" {
 		t.Error("IMDSv2 not required")
 	}
-	// Prefix delegation: max pods must not follow the ENI limit.
-	if field(t, nc, "spec", "kubelet", "podsPerCore") != int64(16) || field(t, nc, "spec", "kubelet", "maxPods") != int64(110) {
-		t.Errorf("kubelet = %v", field(t, nc, "spec", "kubelet"))
+}
+
+// Prefix delegation: max pods must not follow the ENI limit, and no
+// per-vCPU cap may hold a 1-vCPU node below it (session 5: 16 pods on an
+// r8gd.medium forced a third spot node).
+func TestEC2NodeClassKubeletPods(t *testing.T) {
+	kubelet := field(t, EC2NodeClass(info, nil), "spec", "kubelet").(map[string]any)
+	tests := []struct {
+		key  string
+		want any // nil: must be absent
+	}{
+		{"maxPods", int64(110)},
+		{"podsPerCore", nil},
+	}
+	for _, tt := range tests {
+		got, ok := kubelet[tt.key]
+		switch {
+		case tt.want == nil && ok:
+			t.Errorf("kubelet.%s = %v, want it unset", tt.key, got)
+		case tt.want != nil && got != tt.want:
+			t.Errorf("kubelet.%s = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+	if len(kubelet) != len(tests)-1 {
+		t.Errorf("kubelet = %v, want only maxPods", kubelet)
 	}
 }
 
