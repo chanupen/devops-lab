@@ -67,9 +67,9 @@ func TestOllamaSettings(t *testing.T) {
 		t.Fatalf("citation IDs = %q", got)
 	}
 	format := string(body.Format)
-	if !(strings.Index(format, `"what_fired"`) < strings.Index(format, `"likely_cause"`) &&
-		strings.Index(format, `"likely_cause"`) < strings.Index(format, `"commands_to_confirm"`) &&
-		strings.Index(format, `"commands_to_confirm"`) < strings.Index(format, `"fix"`)) {
+	if strings.Index(format, `"what_fired"`) >= strings.Index(format, `"likely_cause"`) ||
+		strings.Index(format, `"likely_cause"`) >= strings.Index(format, `"commands_to_confirm"`) ||
+		strings.Index(format, `"commands_to_confirm"`) >= strings.Index(format, `"fix"`) {
 		t.Fatal("Ollama schema must keep incident sections in reasoning order")
 	}
 }
