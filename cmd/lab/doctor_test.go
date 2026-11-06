@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chanupen/devops-lab/internal/doctor"
 	"github.com/chanupen/devops-lab/internal/provider/local"
 	"github.com/chanupen/devops-lab/internal/state"
 	"github.com/chanupen/devops-lab/internal/tui"
@@ -102,5 +103,12 @@ func TestDrillState(t *testing.T) {
 	set(main, &state.DrillRun{Drill: "oom", Phase: state.DrillRunning})
 	if d := drillState(main, e2e); d == nil || d.Label != "drill oom" || d.Fix != "" {
 		t.Fatalf("the lab's own drill comes first: %+v", d)
+	}
+}
+
+// lab doctor expects the model the ai stack's smoke test uses.
+func TestDoctorAIModel(t *testing.T) {
+	if doctor.AIModel != local.OllamaModel {
+		t.Errorf("doctor expects %s, the ai stack uses %s", doctor.AIModel, local.OllamaModel)
 	}
 }

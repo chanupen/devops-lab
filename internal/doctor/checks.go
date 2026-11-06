@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -227,12 +228,13 @@ func ollamaVRAM(apps string) (held int, others []string) {
 	return held, others
 }
 
-// aiCheck wraps a check the ai stack needs. Only the full profile runs that
-// stack, so other profiles see a failure as a warning.
+// aiCheck wraps a check the ai stack needs. Only the full profile asks for
+// that stack, so other profiles see a failure as a warning unless the ai
+// stack is deployed.
 func aiCheck(run func(context.Context, System, Options) Result) func(context.Context, System, Options) Result {
 	return func(ctx context.Context, sys System, opts Options) Result {
 		r := run(ctx, sys, opts)
-		if r.Status == Fail && opts.Profile != "full" {
+		if r.Status == Fail && opts.Profile != "full" && !slices.Contains(opts.Stacks, "ai") {
 			r.Status = Warn
 			r.Detail += " (only the full profile needs it)"
 		}
