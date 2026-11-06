@@ -262,6 +262,10 @@ func TestPlanUpStacks(t *testing.T) {
 			want: "=registry =cluster =gitops"},
 		{name: "selection outside the profile is allowed", stacks: []string{"chaos"}, st: state.New(),
 			want: "+registry +cluster +gitops +core +obs +chaos"},
+		// sample-db's TLS (gitops/stacks/sample-db/templates/tls.yaml) needs
+		// cert-manager from core: without it Argo CD cannot sync the app.
+		{name: "sample-db pulls in core", stacks: []string{"sample-db"}, st: state.New(),
+			want: "+registry +cluster +gitops +core +secrets +sample-db"},
 		{name: "unknown stack", stacks: []string{"harbor"}, st: state.New(), wantErr: `unknown stack "harbor"`},
 		{name: "prune with a selection is refused", stacks: []string{"cluster"}, prune: true, st: state.New(),
 			wantErr: "cannot be combined with a stack selection"},

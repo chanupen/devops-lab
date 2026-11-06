@@ -34,8 +34,8 @@ func Catalog() []Stack {
 		{Name: "sample-app", DependsOn: []string{"core", "registry"}},
 		// The DB-backed sample app and Postgres, for lab 4 and the drills. Its
 		// credentials come from Secrets Manager through ESO; its image from the
-		// lab registry.
-		{Name: "sample-db", DependsOn: []string{"secrets", "registry"}},
+		// lab registry. Its TLS certificates come from cert-manager in core.
+		{Name: "sample-db", DependsOn: []string{"core", "secrets", "registry"}},
 	}
 }
 
