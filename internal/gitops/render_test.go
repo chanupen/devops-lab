@@ -531,6 +531,38 @@ func TestCloudTerraformNoNATAndTagged(t *testing.T) {
 	}
 }
 
+// No two Applications deploy the same object: Argo CD would flip it
+// between them (SharedResourceWarning). An ExternalSecret counts as its
+// target Secret, which ESO makes at run time: the Langfuse chart renders an
+// (empty) Secret langfuse-app, so no ExternalSecret may target that name.
+// Kustomize output carries no namespace (the app's destination sets it),
+// so an empty namespace matches any.
+func TestRenderNoSharedObjects(t *testing.T) {
+	type obj struct{ app, kind, ns, name string }
+	for _, mode := range overlayModes {
+		var objs []obj
+		for _, o := range renderMode(t, mode) {
+			kind, _ := o.Obj["kind"].(string)
+			ns, _ := field(o.Obj, "metadata", "namespace").(string)
+			name, _ := field(o.Obj, "metadata", "name").(string)
+			objs = append(objs, obj{o.App, kind, ns, name})
+			if kind == "ExternalSecret" {
+				if target, _ := field(o.Obj, "spec", "target", "name").(string); target != "" {
+					name = target
+				}
+				objs = append(objs, obj{o.App, "Secret", ns, name})
+			}
+		}
+		for i, a := range objs {
+			for _, b := range objs[i+1:] {
+				if a.app != b.app && a.kind == b.kind && a.name == b.name && (a.ns == b.ns || a.ns == "" || b.ns == "") {
+					t.Errorf("%s: %s %s/%s is deployed by %s and %s", mode, a.kind, a.ns, a.name, a.app, b.app)
+				}
+			}
+		}
+	}
+}
+
 // Overlay files that hold no mode difference stay identical in both modes.
 func TestOverlaySharedFilesIdentical(t *testing.T) {
 	for _, f := range []string{"core/gateway/certificate.yaml", "core/gateway/argocd-route.yaml",

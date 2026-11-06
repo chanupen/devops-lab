@@ -14,13 +14,13 @@ langfuse:
   logging:
     level: warn
   salt:
-    secretKeyRef: {name: langfuse-app, key: salt}
+    secretKeyRef: {name: langfuse-credentials, key: salt}
   encryptionKey:
-    secretKeyRef: {name: langfuse-app, key: encryption-key}
+    secretKeyRef: {name: langfuse-credentials, key: encryption-key}
   nextauth:
     url: https://langfuse.localtest.me:8443
     secret:
-      secretKeyRef: {name: langfuse-app, key: nextauth-secret}
+      secretKeyRef: {name: langfuse-credentials, key: nextauth-secret}
   # Headless init: the lab organisation and project, the API keys the smoke
   # test and the assistant use, and the UI login (admin@lab.local).
   additionalEnv:
@@ -29,13 +29,13 @@ langfuse:
     - {name: LANGFUSE_INIT_PROJECT_ID, value: lab}
     - {name: LANGFUSE_INIT_PROJECT_NAME, value: lab}
     - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
-      valueFrom: {secretKeyRef: {name: langfuse-app, key: public-key}}
+      valueFrom: {secretKeyRef: {name: langfuse-credentials, key: public-key}}
     - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
-      valueFrom: {secretKeyRef: {name: langfuse-app, key: secret-key}}
+      valueFrom: {secretKeyRef: {name: langfuse-credentials, key: secret-key}}
     - {name: LANGFUSE_INIT_USER_EMAIL, value: admin@lab.local}
     - {name: LANGFUSE_INIT_USER_NAME, value: admin}
     - name: LANGFUSE_INIT_USER_PASSWORD
-      valueFrom: {secretKeyRef: {name: langfuse-app, key: admin-password}}
+      valueFrom: {secretKeyRef: {name: langfuse-credentials, key: admin-password}}
   web:
     image:
       repository: docker.io/langfuse/langfuse

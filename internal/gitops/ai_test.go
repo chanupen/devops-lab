@@ -91,7 +91,7 @@ func TestRenderAI(t *testing.T) {
 		t.Fatal("langfuse-web not rendered")
 	}
 	y := toYAML(web)
-	for _, want := range []string{"http://lab-moto:5000", "name: langfuse-app", "docker.io/langfuse/langfuse:4.75.0@sha256:"} {
+	for _, want := range []string{"http://lab-moto:5000", "name: langfuse-credentials", "docker.io/langfuse/langfuse:4.75.0@sha256:"} {
 		if !strings.Contains(y, want) {
 			t.Errorf("langfuse-web lacks %q", want)
 		}

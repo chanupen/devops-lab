@@ -38,7 +38,7 @@ const (
 	// NetworkPolicy).
 	OllamaLabel = "lab.devops/ollama"
 	// AppSecret holds Langfuse's project API keys (ESO, from Secrets Manager).
-	AppSecret = "langfuse-app"
+	AppSecret = "langfuse-credentials"
 	// Question is what the smoke test asks.
 	Question = "In one sentence: what does the kubelet do when a container's liveness probe keeps failing?"
 )
@@ -191,7 +191,7 @@ type Trace struct {
 
 // FindTrace asks Langfuse at baseURL (v4 API, /api/public/v2/observations)
 // for a trace's observations with the project's keys from the
-// langfuse-app Secret. Langfuse writes events in batches, so the caller
+// langfuse-credentials Secret. Langfuse writes events in batches, so the caller
 // retries.
 func FindTrace(ctx context.Context, core kubernetes.Interface, baseURL, traceID string) (Trace, error) {
 	s, err := core.CoreV1().Secrets(Namespace).Get(ctx, AppSecret, metav1.GetOptions{})

@@ -24,7 +24,7 @@ func TestSmokeJob(t *testing.T) {
 			keys = append(keys, e.ValueFrom.SecretKeyRef.Name+"/"+e.ValueFrom.SecretKeyRef.Key)
 		}
 	}
-	if strings.Join(keys, ",") != "langfuse-app/public-key,langfuse-app/secret-key" {
+	if strings.Join(keys, ",") != "langfuse-credentials/public-key,langfuse-credentials/secret-key" {
 		t.Errorf("secret keys %v", keys)
 	}
 }
