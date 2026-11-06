@@ -8,4 +8,3 @@ condition = "AND"
 paths = ['''^gitops/overlays/local/ai/langfuse/values\.yaml$''']
 regexTarget = "line"
 regexes = ['''^\s*(accessKeyId: \{value: lab-dummy\}|secretAccessKey: \{value: lab-dummy-not-a-secret\})\s*$''']
-
