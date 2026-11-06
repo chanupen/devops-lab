@@ -423,11 +423,11 @@ coverage gap instead of giving credit for unsupported guesses.
 2. `lab assist` and the in-cluster Alertmanager webhook, with pre-gathered
    evidence, structured notes, budgets, local model and OTLP traces; hosted
    inference remains opt-in. On the local lab, `kubectl top pods --containers`
-   sampled the receiver every 10 seconds: 4 MiB idle and an observed peak of
-   8 MiB while handling drill alerts (46 samples, 6 Nov 2026). Sampling may
-   miss short peaks. Live 3B-model drill notes were structurally valid but did
-   not reliably identify the cause or give useful confirmation commands; a
-   citation ID alone does not establish that a claim is supported.
+sampled the receiver every 10 seconds: 3 MiB idle and an observed peak of
+7 MiB while handling drill alerts (54 samples, 6 Nov 2026). Sampling may
+miss short peaks. In live bad-deploy and OOM drills the model abstained on
+root cause; the runner supplied a pod confirmation command. A citation ID
+alone does not establish that a claim is supported.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
 4. `lab assist eval`, the seven drills and seeded known-mistake cases.
 
