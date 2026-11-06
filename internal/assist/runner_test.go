@@ -87,6 +87,37 @@ func TestRunnerRejectsUnknownEvidence(t *testing.T) {
 	}
 }
 
+func TestRunnerPodConfirmation(t *testing.T) {
+	tests := []struct {
+		name, namespace, pod, want string
+	}{
+		{"valid labels", "demo", "frontend-123", "kubectl -n demo describe pod frontend-123"},
+		{"invalid pod", "demo", "bad;name", "inspect the alert"},
+		{"missing namespace", "", "frontend-123", "inspect the alert"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := &fakeModel{decisions: []Decision{{Note: &Note{
+				WhatFired: []Claim{{Text: "fired", Evidence: []string{"E1"}}},
+				Cause:     []Claim{{Text: "unknown"}},
+				Confirm:   []Claim{{Text: "inspect the alert"}},
+				Fix:       []Claim{{Text: "investigate"}},
+			}}}}
+			note, err := (Runner{Tools: &fakeTools{data: `{}`}, Model: model, Tracer: &fakeTracer{}}).
+				Run(context.Background(), Alert{Name: "A", Labels: map[string]string{"namespace": tt.namespace, "pod": tt.pod}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(note.Confirm) != 1 || note.Confirm[0].Text != tt.want {
+				t.Fatalf("confirmation = %+v", note.Confirm)
+			}
+			if tt.name == "valid labels" && (note.Confirm[0].Unsupported || len(note.Confirm[0].Evidence) != 1 || note.Confirm[0].Evidence[0] != "E1") {
+				t.Fatalf("confirmation citation = %+v", note.Confirm[0])
+			}
+		})
+	}
+}
+
 func TestRunnerBoundsExtraCalls(t *testing.T) {
 	var decisions []Decision
 	for range ExtraCallLimit + 1 {

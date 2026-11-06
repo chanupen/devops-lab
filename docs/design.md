@@ -289,8 +289,8 @@ clear message rather than picking one.
 The receiver image is built from a restricted source context with rootless
 Podman, pushed to Zot and referenced by digest. It runs one replica with an
 estimated 64 MiB request and 128 MiB limit, excluding Ollama, Langfuse and
-the existing stacks. These are estimates, not measured idle or peak working
-sets. Local Alertmanager uses `alertmanagerConfigMatcherStrategy: None` so
+the existing stacks; sampled working sets are recorded below. Local
+Alertmanager uses `alertmanagerConfigMatcherStrategy: None` so
 the receiver's `AlertmanagerConfig` can receive alerts from all namespaces;
 this strategy also affects any other AlertmanagerConfigs.
 
@@ -366,7 +366,9 @@ anything without supporting evidence is explicitly marked **unsupported**.
 The runner rejects unknown IDs and marks uncited claims unsupported; a valid
 ID alone does not prove that the cited evidence supports a claim, so the
 evaluation checks that separately. Commands are suggestions for a human to
-review and run, never actions taken by the assistant.
+review and run, never actions taken by the assistant. When the alert names a
+valid namespace and pod, the runner supplies a `kubectl describe pod` command
+from those labels instead of trusting a model-generated command.
 
 **Privacy and traces.** Each run emits a Langfuse trace over OTLP to the local
 Langfuse instance, with tool timings, evidence references, outcome and errors.

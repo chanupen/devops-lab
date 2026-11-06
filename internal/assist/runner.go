@@ -196,6 +196,12 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			result := *decision.Note
 			result.Evidence = note.Evidence
 			result.Error, result.TraceID, result.Incomplete = "", "", false
+			if ns, pod := safeAlert.Labels["namespace"], safeAlert.Labels["pod"]; validNamespace(ns) && validName(pod) {
+				result.Confirm = []Claim{{
+					Text:     "kubectl -n " + ns + " describe pod " + pod,
+					Evidence: []string{"E1"},
+				}}
+			}
 			if err := validateNote(&result, r.Sensitive); err != nil {
 				return note, err
 			}
