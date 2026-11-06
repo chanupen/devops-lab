@@ -36,6 +36,8 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 
 core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app.
 
+- ai is in the full profile, or add it with `lab up --stacks ai`; it depends on obs and secrets. e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EAI -timeout 20m ./internal/ai/`.
+
 Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (7.47 GiB median of three `podman stats` runs for the deployable full profile plus retained sample-db, with Ollama idle). AI pods used 1,664 MiB by `kubectl top`, included in the node totals. The full plan skips unsupported CI, chaos and scaling; those stacks were not measured. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 
 ## TUI rules
@@ -125,6 +127,8 @@ If a phase slips, cut TUI screens before labs.
 ## `lab doctor` checks (phase 0)
 
 Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 and its running image digest matches the compat pin · when ai is deployed: `ollama.ai.svc`, `llama3.2:3b`, Langfuse and its Argo CD apps are healthy · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
+
+Doctor also checks that lab ports 11434, 5000, 4566, 8080 and 8443 listen on loopback only, using `/proc/net/tcp` and `tcp6`.
 
 ## Conventions
 

@@ -78,6 +78,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
 | minimal + obs + policy | the default plus `policy` (Kyverno and the baseline Pod Security policies) | 0.8 GiB more than the default (5.0 to 5.9 GiB, `podman stats` on the `lab-*` containers, median of three); Kyverno's own four pods use about 210 MiB, the rest is the API server and etcd carrying its CRDs, webhooks and reports |
 | the default + secrets + sample-db | the default plus `secrets` (ESO's controller, webhook and cert controller, and the `lab-moto` container) and `sample-db` (Postgres and its app), for lab 4 | about 0.2 GiB more: ESO about 99 MiB and Moto about 66 MiB; Postgres about 28 MiB and the app about 5 MiB, idle (`kubectl top pods` working set and `podman stats` on `lab-moto`, 2026-11-04) |
+| + ai | Langfuse and `ollama.ai.svc`, with Ollama itself on the host | 1.9 GiB more by `podman stats` on the `lab-*` containers, 1.64 GiB by their anonymous memory (medians of three, against the same nodes without the stack); the pods' working sets add up to 1.65 GiB: web 671 MiB, worker 495, ClickHouse 304, Keeper 108, Postgres 81, operator 24, Valkey 7 (6–7 Nov 2026). The first install also leaves about 1.2 GiB of image layers in the nodes' page cache, which `podman stats` counts and the kernel reclaims. Ollama's container idles at about 15 MiB of host RAM and peaked at 1.9 GiB while loading the model; the model then sits in VRAM. |
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | 7.47 GiB median of three `podman stats` runs for the **currently deployable full profile**, plus retained sample-db, on 2026-11-07. The plan skips CI, chaos and scaling because they are unsupported; this is not a measurement of those stacks. The three consecutive `kubectl top pods -n ai` readings each totaled 1,664 MiB, included in the node container totals, not added. Ollama was idle with no model loaded. |
 
@@ -250,6 +251,11 @@ repository; it is the one non-OCI internet chart pull. The alpha
 Langfuse credentials are generated into Moto Secrets Manager and synchronized
 through ESO; raw events use the local Moto S3 bucket. The smoke Job exercises
 Ollama and records a trace in Langfuse.
+
+On the GTX 1650 with `llama3.2:3b` Q4_K_M, the smoke Job measured a
+74.7 s cold response (40.0 s model load) and 0.46 to 0.49 s over five warm
+runs on 6 Nov 2026. Warm answer throughput was 58.7 to 61.8 tokens/s, median
+59.5. The loaded model held 2.5 GiB of VRAM, leaving 1.2 GiB free.
 
 Cloud AI is intentionally a stub: planning skips it and the checked-in cloud
 overlay exists only to preserve rendering invariants. GPU spot support is a
