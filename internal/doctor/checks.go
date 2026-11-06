@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/chanupen/devops-lab/internal/compat"
 )
 
 const (
@@ -227,12 +230,13 @@ func ollamaVRAM(apps string) (held int, others []string) {
 	return held, others
 }
 
-// aiCheck wraps a check the ai stack needs. Only the full profile runs that
-// stack, so other profiles see a failure as a warning.
+// aiCheck wraps a check the ai stack needs. Only the full profile asks for
+// that stack, so other profiles see a failure as a warning unless the ai
+// stack is deployed.
 func aiCheck(run func(context.Context, System, Options) Result) func(context.Context, System, Options) Result {
 	return func(ctx context.Context, sys System, opts Options) Result {
 		r := run(ctx, sys, opts)
-		if r.Status == Fail && opts.Profile != "full" {
+		if r.Status == Fail && opts.Profile != "full" && !slices.Contains(opts.Stacks, "ai") {
 			r.Status = Warn
 			r.Detail += " (only the full profile needs it)"
 		}
@@ -261,13 +265,22 @@ func checkOllama(ctx context.Context, sys System, _ Options) Result {
 	if code != 200 {
 		return fail("", "HTTP %d from :11434", code)
 	}
+	digest, err := sys.Run(ctx, "podman", "inspect", "ollama", "--format", "{{.ImageDigest}}")
+	if err != nil {
+		return fail("systemctl --user status ollama", "cannot read ollama image digest: %v", err)
+	}
+	digest = strings.TrimSpace(digest)
+	if digest != compat.OllamaImageDigest {
+		return fail("install docs/ollama.container, then systemctl --user daemon-reload && systemctl --user restart ollama",
+			"ollama image %s, need %s", digest, compat.OllamaImageDigest)
+	}
 	var v struct {
 		Version string `json:"version"`
 	}
 	if json.Unmarshal(body, &v) != nil || v.Version == "" {
 		return warn("", "answered on :11434 but version is unreadable")
 	}
-	return ok("%s on :11434", v.Version)
+	return ok("%s on :11434 (%s)", v.Version, digest)
 }
 
 // tool describes how to find and judge a CLI dependency.

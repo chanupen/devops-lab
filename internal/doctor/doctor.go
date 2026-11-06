@@ -71,6 +71,9 @@ type System struct {
 	MotoSecrets func(ctx context.Context) (int, error)
 	// GHCR measures ghcr.io blob downloads; nil skips the check.
 	GHCR GHCRProbe
+	// AI reads the ai stack (Ollama through the cluster, Langfuse); nil
+	// skips its checks.
+	AI func(ctx context.Context) (AIState, error)
 }
 
 // Unit is a part of the lab made of containers: a kind cluster or the
@@ -151,6 +154,10 @@ func Checks() []Check {
 		{"gpu vram", aiCheck(checkVRAM)},
 		{"nvidia cdi", aiCheck(checkCDI)},
 		{"ollama", aiCheck(checkOllama)},
+		{"ollama in cluster", aiDeployed(checkOllamaInCluster)},
+		{"ollama model", aiDeployed(checkOllamaModel)},
+		{"langfuse", aiDeployed(checkLangfuse)},
+		{"lan listeners", checkLANListeners},
 		{"go", toolCheck("go")},
 		{"kind", toolCheck("kind")},
 		{"kubectl", toolCheck("kubectl")},

@@ -13,6 +13,11 @@ import (
 	"github.com/chanupen/devops-lab/internal/gitops"
 )
 
+// OllamaImageDigest is the immutable image the local host Quadlet runs.
+// The doctor check verifies the running container against this compatibility
+// pin before the ai stack is considered ready.
+const OllamaImageDigest = "sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429"
+
 // Component is something lab pins that must support the cluster's
 // Kubernetes version. MinK8s and MaxK8s are the range its upstream states
 // for the pinned release; an empty MaxK8s means upstream states no upper
@@ -88,6 +93,15 @@ func TestedNotStated(v string, comps []Component, deployed func(stack string) bo
 //     section says it works with every Kubernetes version the Kubernetes
 //     project or EKS supports (extended support included); docs/install.md
 //     requires 1.20 or later. No upper bound.
+//   - Checked on 2026-11-06 (ai stack, local mode only for now):
+//     Langfuse chart 2.2.3 (app 4.75.0) states no kubeVersion and no
+//     supported range in its README. MinK8s 1.32 is derived, not stated:
+//     its Postgres sub-chart sets a StatefulSet
+//     persistentVolumeClaimRetentionPolicy, GA in 1.32. ClickHouse operator
+//     0.0.8 (chart clickhouse-operator-helm 0.0.8, alpha API
+//     clickhouse.com/v1alpha1): Chart.yaml kubeVersion ">= 1.28.0-0", and the
+//     install docs say "Kubernetes cluster v1.28.0 or later". Ollama 0.40.13
+//     is the host's Quadlet container, outside the cluster.
 //   - kind v0.33.0 pre-builds node images for 1.34.11, 1.35.8, 1.36.4 and
 //     1.37.0 (internal/provider/local NodeImages, digests from the release
 //     notes).
@@ -109,6 +123,15 @@ var Table = []Component{
 	{Name: "Moto", ChartVersion: "5.2.5", AppVersion: "5.2.5", OutsideCluster: true,
 		Source: "runs as the lab-moto Podman container beside the cluster: no Kubernetes range",
 		Modes:  []string{"local"}, Stack: "secrets"},
+	{Name: "Langfuse", ChartVersion: "2.2.3", AppVersion: "4.75.0", MinK8s: "1.32",
+		Source: "langfuse-k8s chart 2.2.3 states no range; 1.32 derived from its Postgres StatefulSet's persistentVolumeClaimRetentionPolicy (GA in 1.32)",
+		Modes:  []string{"local"}, Stack: "ai"},
+	{Name: "ClickHouse operator", ChartVersion: "0.0.8", AppVersion: "v0.0.8", MinK8s: "1.28",
+		Source: "clickhouse-operator-helm 0.0.8 Chart.yaml kubeVersion >= 1.28.0-0; clickhouse.com/docs kubernetes-operator install (v1.28.0 or later)",
+		Modes:  []string{"local"}, Stack: "ai"},
+	{Name: "Ollama", ChartVersion: "0.40.13", AppVersion: "0.40.13", OutsideCluster: true,
+		Source: "the host's Quadlet container (docker.io/ollama/ollama:0.40.13@" + OllamaImageDigest + "), reached through ollama.ai.svc: no Kubernetes range",
+		Modes:  []string{"local"}, Stack: "ai"},
 	{Name: "kind node images", ChartVersion: "v0.33.0", AppVersion: "v0.33.0", MinK8s: "1.34", MaxK8s: "1.37",
 		Source: "kind v0.33.0 release notes, images pre-built for this release", Modes: []string{"local"}, Stack: "cluster"},
 }

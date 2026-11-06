@@ -1,0 +1,13 @@
+# Ollama runs outside the cluster: in local mode as the host's Quadlet
+# service, attached to the kind network at a fixed address. Apps use one
+# name, ollama.ai.svc:11434: a Service without a selector whose
+# EndpointSlice lab writes (Argo CD excludes EndpointSlices), pointing at
+# that address.
+port: 11434
+# address is the Ollama container's IPv4 address on the kind network, set
+# by the ai stack on the app-of-apps (ai.ollamaAddress). Empty (cloud mode
+# for now) renders the Service only.
+address: ""
+# Only pods labelled lab.devops/ollama=true may open connections to Ollama
+# from the ai namespace. kindnet enforces NetworkPolicy (kube-network-policies).
+podLabel: lab.devops/ollama

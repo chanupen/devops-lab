@@ -88,4 +88,7 @@ type ContainerInfo struct {
 	FinishedAt time.Time
 	// HostPorts are the published ports, "5000/tcp" -> ["127.0.0.1:5000"].
 	HostPorts map[string][]string
+	// Networks are the networks it is attached to, with its IPv4 address
+	// on each ("kind" -> "10.89.1.250"); empty while it is stopped.
+	Networks map[string]string
 }

@@ -1,0 +1,120 @@
+{{- if .Values.stacks.ai }}
+# ai: the host's Ollama as ollama.ai.svc (local mode; lab writes its
+# EndpointSlice), and Langfuse for LLM traces: the ClickHouse operator,
+# Langfuse's credentials through ESO, Langfuse itself, and its route.
+# Mode differences live in gitops/overlays/<mode>/ai; cloud AI is an
+# intentional stub that lab refuses to apply.
+{{- $repo := .Values.repo }}
+{{- $mode := .Values.mode }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "ollama" "ai" "0") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ required "repo.url is required" $repo.url }}
+    targetRevision: {{ $repo.revision }}
+    path: gitops/stacks/ai/ollama
+    helm:
+      valuesObject:
+        address: {{ .Values.ai.ollamaAddress | default "" | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "clickhouse-operator" "ai" "0") | nindent 2 }}
+spec:
+  project: default
+  sources:
+    - repoURL: {{ include "lab.ociRepo" (list $ "ghcr.io/clickhouse") }}
+      chart: clickhouse-operator-helm
+      targetRevision: 0.0.8
+      helm:
+        releaseName: clickhouse-operator
+        valueFiles:
+          - $values/gitops/stacks/ai/clickhouse-operator/values.yaml
+    - repoURL: {{ $repo.url }}
+      targetRevision: {{ $repo.revision }}
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # the operator's CRDs exceed the client-side apply limit
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "langfuse-secrets" "ai" "1") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ $repo.url }}
+    targetRevision: {{ $repo.revision }}
+    path: gitops/stacks/ai/secrets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "langfuse" "ai" "2") | nindent 2 }}
+spec:
+  project: default
+  sources:
+    # Langfuse publishes its chart in a Helm repository only (no OCI), so
+    # it does not go through the chart mirror.
+    - repoURL: https://langfuse.github.io/langfuse-k8s
+      chart: langfuse
+      targetRevision: 2.2.3
+      helm:
+        releaseName: langfuse
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/gitops/stacks/ai/langfuse/values.yaml
+          - $values/gitops/overlays/{{ $mode }}/ai/langfuse/values.yaml
+    - repoURL: {{ $repo.url }}
+      targetRevision: {{ $repo.revision }}
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true # ClickHouseCluster comes from the operator's CRDs
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  {{- include "lab.appMeta" (list . "ai-routes" "ai" "3") | nindent 2 }}
+spec:
+  project: default
+  source:
+    repoURL: {{ $repo.url }}
+    targetRevision: {{ $repo.revision }}
+    path: gitops/overlays/{{ $mode }}/ai/routes
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai
+  syncPolicy:
+    {{- include "lab.syncPolicy" . | nindent 4 }}
+{{- end }}

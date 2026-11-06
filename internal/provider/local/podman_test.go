@@ -318,3 +318,17 @@ func TestPodmanHostPorts(t *testing.T) {
 		})
 	}
 }
+
+// Container reads each network's IPv4 address and the published ports.
+func TestContainerNetworks(t *testing.T) {
+	p, _, _ := fakePodman(t, map[string]route{"GET /containers/ollama/json": {200,
+		`{"State":{"Running":true},"NetworkSettings":{"Networks":{"kind":{"IPAddress":"10.89.1.250"}},` +
+			`"Ports":{"11434/tcp":[{"HostIp":"127.0.0.1","HostPort":"11434"}]}}}`}})
+	c, err := p.Container(context.Background(), "ollama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Networks["kind"] != "10.89.1.250" || len(c.HostPorts["11434/tcp"]) != 1 || c.HostPorts["11434/tcp"][0] != "127.0.0.1:11434" {
+		t.Errorf("Container = %+v", c)
+	}
+}

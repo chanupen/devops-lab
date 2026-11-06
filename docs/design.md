@@ -52,7 +52,7 @@ Both modes provide the same capabilities; only the provider behind each one chan
 | Secrets | External Secrets Operator + Secrets Manager emulated by Moto | External Secrets Operator + AWS Secrets Manager via EKS Pod Identity |
 | Ingress and DNS | Gateway API (Envoy Gateway) on `127.0.0.1:8080/8443` of the Fedora box only; apps are `https://<app>.localtest.me:8443`, reached from the Mac through `ssh -N fedora-lab` | Gateway API + AWS Load Balancer Controller, Route 53 sub-zone (optional) |
 | Object storage | Moto S3 (or MinIO) | S3 |
-| Load and AI | Ollama on the G14 GPU, small models | GPU spot node via Karpenter, only when a lab asks for it |
+| Load and AI | Ollama on the G14 GPU, small models and Langfuse traces | AI is a stub; GPU spot support is a follow-up |
 | Cost | Zero | Pay per hour; TTL and budget enforced (see guardrails) |
 | Typical spin-up | About 2 to 4 minutes | About 15 to 20 minutes (EKS control plane) |
 
@@ -70,16 +70,16 @@ Moto speaks the Secrets Manager API that ESO's AWS provider uses, so the provide
 
 ### Memory budget on the Fedora box
 
-The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (about 4.6 GiB measured), because those are the stacks the local provider runs today; `standard` keeps the lab near 12 GiB and becomes the default once its stacks exist. Profile figures are estimates; the measured row comes from the phase 1 gate.
+The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (about 4.6 GiB measured); `standard` keeps the lab near 12 GiB and becomes the default once its remaining stacks exist. Profile figures are estimates unless marked as measured.
 
-| Profile | Stacks | Estimated RAM |
+| Profile | Stacks | RAM |
 | --- | --- | --- |
 | minimal | registry (Zot), cluster, gitops, core, sample-app | About 4 GiB |
 | minimal + obs (default) | minimal + obs, through `extraStacks: [obs]` in `lab.yaml` | 4.6 GiB median over three runs (4.3 to 4.8 GiB), `podman stats` on the `lab-*` containers right after every app was Synced and Healthy |
 | minimal + obs + policy | the default plus `policy` (Kyverno and the baseline Pod Security policies) | 0.8 GiB more than the default (5.0 to 5.9 GiB, `podman stats` on the `lab-*` containers, median of three); Kyverno's own four pods use about 210 MiB, the rest is the API server and etcd carrying its CRDs, webhooks and reports |
 | the default + secrets + sample-db | the default plus `secrets` (ESO's controller, webhook and cert controller, and the `lab-moto` container) and `sample-db` (Postgres and its app), for lab 4 | about 0.2 GiB more: ESO about 99 MiB and Moto about 66 MiB; Postgres about 28 MiB and the app about 5 MiB, idle (`kubectl top pods` working set and `podman stats` on `lab-moto`, 2026-11-04) |
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
-| full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | About 16 to 19 GiB; close heavy desktop apps |
+| full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | 7.47 GiB median of three `podman stats` runs for the **currently deployable full profile**, plus retained sample-db, on 2026-11-07. The plan skips CI, chaos and scaling because they are unsupported; this is not a measurement of those stacks. The three consecutive `kubectl top pods -n ai` readings each totaled 1,664 MiB, included in the node container totals, not added. Ollama was idle with no model loaded. |
 
 Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
 
@@ -218,9 +218,49 @@ Chart values live in `gitops/stacks/<stack>/` and each mode's differences in `gi
 | policy | Kyverno 1.19 (chart 3.9.2, one replica per controller, policy exceptions on) and the Pod Security Standards "baseline" policies in Audit mode: they report, never block. Labs add Enforce policies scoped to their own namespaces. Not in the minimal profile: `extraStacks: [obs, policy]` or `lab up --stacks policy` | gitops | Admission control, policy as code |
 | scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
 | chaos | Chaos Mesh | obs | Fault injection for drills |
-| ai | Ollama locally (G14 GPU), small model on a GPU spot node in cloud; Langfuse | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
+| ai | Local host Ollama and Langfuse; cloud is an intentional stub | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
 | sample-app | podinfo as a frontend calling a backend, pulled through the Zot cache, at `podinfo.localtest.me`; ServiceMonitors only when obs is present. The DB-backed app for the drills is the sample-db stack | core, registry | Target for every lab and drill |
 | sample-db | Postgres 18 and a small Go app (`apps/sample-db`) that reads its database credentials from a mounted Secret file (no env vars, no subPath), reloads them when the file changes and reconnects; `/healthz`, `/readyz`, Prometheus metrics (DB errors, reconnects, credential reloads, request latency for an SLO); HTTPS on 8443 with a certificate from a cert-manager CA of its own, reloaded on renewal; a small client that calls it twice a second. The credentials come from Secrets Manager through ESO: a superuser (`lab/sample-db/admin`, never rotated) and the app's login (`lab/sample-db/app`, `app_v1`, a member of the NOLOGIN group role `app`). lab builds the image from the repo through Podman's API, pushes it to the lab registry and sets it by digest (`lab-zot:5000/lab/sample-db@sha256:...`), so the cluster needs no registry credentials. Postgres ships its own `pg_hba.conf`: `scram-sha-256` for every TCP connection, trust only on the local Unix socket (the init script, admin `kubectl exec`); the image's default also trusts 127.0.0.1 | core (cert-manager for its TLS), secrets, registry | Secret rotation without restarts, the app the drills break |
+
+### AI stack (local-only)
+
+The `ai` stack is available only in local mode. Ollama remains a rootless
+Podman Quadlet on the host so the GTX 1650 is not shared with a second
+in-cluster runtime. `lab` writes the `ollama.ai.svc` EndpointSlice after
+checking the running container's fixed kind-network address; the selectorless
+Service and its NetworkPolicy stay in Git. The policy permits only labelled
+pods in the `ai` namespace to reach the Ollama address. This is a known
+boundary: NetworkPolicy is namespaced, so pods in other namespaces can still
+reach unauthenticated Ollama. The kindnet controller also reconciles new pods
+asynchronously, leaving a window before policy enforcement. Ollama stays
+published on loopback only.
+
+The reference unit is [`docs/ollama.container`](ollama.container). Install it
+as `~/.config/containers/systemd/ollama.container`, choose an unused address
+on the kind network, then run `systemctl --user daemon-reload` and
+`systemctl --user start ollama`. Its required settings are
+`Network=kind:ip=…`, `NetworkAlias=lab-ollama`, and
+`PublishPort=127.0.0.1:11434:11434`; it pins Ollama 0.40.13 by digest and
+uses the NVIDIA CDI device. `lab doctor` verifies the API, the running image
+digest, GPU/CDI readiness, the reference model, and the in-cluster endpoint.
+
+Langfuse records traces and evals with a pinned chart pulled from its Helm
+repository; it is the one non-OCI internet chart pull. The alpha
+`clickhouse.com/v1alpha1` ClickHouse operator provides the storage cluster.
+Langfuse credentials are generated into Moto Secrets Manager and synchronized
+through ESO; raw events use the local Moto S3 bucket. The smoke Job exercises
+Ollama and records a trace in Langfuse.
+
+Cloud AI is intentionally a stub: planning skips it and the checked-in cloud
+overlay exists only to preserve rendering invariants. GPU spot support is a
+follow-up. On 2026-11-07, [an independent price listing](https://aws-pricing.com/g4dn.xlarge.html)
+showed `g4dn.xlarge` in `ap-south-1` at USD 0.2425/hour Spot and
+USD 0.579/hour on-demand; Spot prices change and vary by zone. The follow-up
+should verify live AWS Spot history and enforce a cap of USD 0.30/hour for at
+most one GPU node, alongside the existing TTL; other infrastructure costs extra.
+The Langfuse Kubernetes 1.32 minimum is derived rather than vendor-stated:
+its Postgres sub-chart uses StatefulSet PVC retention, which became GA in
+Kubernetes 1.32.
 
 ### Labs
 
@@ -510,16 +550,24 @@ podman run --rm --device nvidia.com/gpu=all \
 
 From toolkit v1.18 the `nvidia-cdi-refresh` service regenerates the CDI spec after driver updates and reboots, so kernel updates need no manual step. Pin the CUDA test image tag to one that exists when you run it.
 
-### 5. Run Ollama under Podman
+### 5. Run Ollama as a pinned Quadlet
+
+Copy [`docs/ollama.container`](ollama.container) to
+`~/.config/containers/systemd/ollama.container`. It pins
+`docker.io/ollama/ollama:0.40.13` by digest, uses
+`AddDevice=nvidia.com/gpu=all`, attaches to kind with
+`Network=kind:ip=…` and `NetworkAlias=lab-ollama`, and publishes only
+`127.0.0.1:11434`. Select an unused address in the kind subnet, then:
 
 ```bash
-podman run -d --name ollama --device nvidia.com/gpu=all \
-  -p 11434:11434 -v ollama:/root/.ollama docker.io/ollama/ollama
+systemctl --user daemon-reload
+systemctl --user start ollama
 podman exec -it ollama ollama run llama3.2:3b         # small model first
 podman exec ollama ollama ps                          # PROCESSOR column should say GPU
 ```
 
-`lab` manages this container as a Quadlet unit (systemd user service), so it starts with the user session. Pods in kind reach it through a Service pointing at the host's address on port 11434.
+`lab` never edits this user-managed unit. Pods in kind reach it through
+`ollama.ai.svc`, which points at the Quadlet's kind-network address.
 
 ### What `lab doctor` checks
 
@@ -527,7 +575,7 @@ podman exec ollama ollama ps                          # PROCESSOR column should 
 - `nvidia-smi` succeeds and reports free VRAM; model size is capped to fit it.
 - `nvidia-ctk cdi list` shows `nvidia.com/gpu=all`.
 - SELinux boolean `container_use_devices` is on.
-- The ollama container answers on port 11434.
+- The Ollama container answers on port 11434 and runs the compatibility-pinned image digest.
 
 On the G14's hybrid graphics, keep the default hybrid mode so the NVIDIA GPU powers down when idle; Ollama wakes it on demand.
 

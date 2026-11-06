@@ -48,7 +48,7 @@ const (
 )
 
 // appStacks are the stacks rendered by the bootstrap chart.
-var appStacks = []string{"core", "obs", "policy", "secrets", "sample-app", "sample-db"}
+var appStacks = []string{"core", "obs", "policy", "secrets", "ai", "sample-app", "sample-db"}
 
 // stackNamespaces are created by a stack's apps (CreateNamespace) and are not
 // removed by Argo CD, so destroying the stack deletes them.
@@ -57,9 +57,13 @@ var stackNamespaces = map[string][]string{
 	"obs":        {ObsNamespace},
 	"policy":     {"kyverno"},
 	"secrets":    {"external-secrets"},
+	"ai":         {AINamespace},
 	"sample-db":  {"sample-db"},
 	"sample-app": {"podinfo"},
 }
+
+// AINamespace holds the ai stack: the ollama Service and Langfuse.
+const AINamespace = "ai"
 
 // ObsNamespace holds the obs stack, including the generated Grafana Secret.
 const ObsNamespace = "monitoring"

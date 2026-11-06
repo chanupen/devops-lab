@@ -303,8 +303,8 @@ func TestBootstrapChartLocalMirror(t *testing.T) {
 			t.Errorf("%s = %v", name, o["stringData"])
 		}
 	}
-	if n != 8 {
-		t.Errorf("%d OCI repository secrets, want 8", n)
+	if n != 9 {
+		t.Errorf("%d OCI repository secrets, want 9", n)
 	}
 }
 

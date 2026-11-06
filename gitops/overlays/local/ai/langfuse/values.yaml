@@ -1,0 +1,9 @@
+# Local mode: Langfuse's raw events go to Moto's S3 (lab-moto on the kind
+# network). lab up creates the bucket, and again after Moto restarts (it
+# keeps no state; events already processed live in ClickHouse). The keys
+# are Moto's dummy ones: Moto checks none. Never real AWS keys.
+s3:
+  endpoint: http://lab-moto:5000
+  forcePathStyle: true
+  accessKeyId: {value: lab-dummy}
+  secretAccessKey: {value: lab-dummy-not-a-secret}

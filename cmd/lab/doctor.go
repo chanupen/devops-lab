@@ -50,6 +50,7 @@ func newDoctorCmd() *cobra.Command {
 				sys.Units = doctorUnits
 				sys.LabRegistry = doctorLabRegistry
 				sys.MotoSecrets = local.NewMotoSecrets(local.MotoEndpointHost).Count
+				sys.AI = doctorAI
 				opts.K8sVersion = config.K8sVersion
 				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
 					opts.K8sVersion = cfg.K8sVersion
@@ -115,6 +116,23 @@ func clusterVersion(ctx context.Context) (version, why string) {
 		return "", err.Error()
 	}
 	return v, ""
+}
+
+// doctorAI reads the ai stack for lab doctor: the host's Ollama, the
+// EndpointSlice behind ollama.ai.svc, Ollama and Langfuse through the
+// cluster, and the stack's Argo CD apps.
+func doctorAI(ctx context.Context) (doctor.AIState, error) {
+	path, err := state.DefaultPath()
+	if err != nil {
+		return doctor.AIState{}, err
+	}
+	st, err := local.HostAIStatus(ctx, filepath.Join(filepath.Dir(path), "kubeconfig"))
+	if err != nil {
+		return doctor.AIState{}, err
+	}
+	return doctor.AIState{Address: st.Address, AddressErr: st.AddressErr, Slice: st.Slice, SliceErr: st.SliceErr,
+		Version: st.Version, Models: st.Models, InClusterErr: st.InClusterErr, LangfuseVersion: st.LangfuseVersion,
+		LangfuseErr: st.LangfuseErr, Apps: st.Apps, AppsNotReady: st.AppsNotReady}, nil
 }
 
 // doctorLabRegistry checks the lab registry for lab doctor. The mirror

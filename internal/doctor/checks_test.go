@@ -178,7 +178,18 @@ func TestChecks(t *testing.T) {
 		}}, Options{}, OK, ""},
 		{"cdi no all", checkCDI, fake{cmds: map[string]string{"nvidia-ctk cdi list": "nvidia.com/gpu=0"}}, Options{}, Fail, "not listed"},
 
-		{"ollama up", checkOllama, fake{http: func() (int, []byte, error) { return 200, []byte(`{"version":"0.40.13"}`), nil }}, Options{}, OK, "0.40.13"},
+		{"ollama up", checkOllama, fake{cmds: map[string]string{
+			"podman inspect ollama --format {{.ImageDigest}}": "sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429",
+		}, http: func() (int, []byte, error) { return 200, []byte(`{"version":"0.40.13"}`), nil }}, Options{}, OK, "0.40.13"},
+		{"ollama unpinned image", checkOllama, fake{cmds: map[string]string{
+			"podman inspect ollama --format {{.ImageDigest}}": "sha256:wrong",
+		}, http: func() (int, []byte, error) { return 200, []byte(`{"version":"0.40.13"}`), nil }}, Options{}, Fail, "sha256:wrong"},
+		{"ollama unreadable version still checks image", checkOllama, fake{cmds: map[string]string{
+			"podman inspect ollama --format {{.ImageDigest}}": "sha256:wrong",
+		}, http: func() (int, []byte, error) { return 200, []byte(`{}`), nil }}, Options{}, Fail, "sha256:wrong"},
+		{"ollama image unreadable", checkOllama, fake{errs: map[string]error{
+			"podman inspect ollama --format {{.ImageDigest}}": errors.New("no such container"),
+		}, http: func() (int, []byte, error) { return 200, []byte(`{"version":"0.40.13"}`), nil }}, Options{}, Fail, "cannot read ollama image digest"},
 		{"ollama down", checkOllama, fake{}, Options{}, Fail, "refused"},
 		{"ollama 500", checkOllama, fake{http: func() (int, []byte, error) { return 500, nil, nil }}, Options{}, Fail, "HTTP 500"},
 

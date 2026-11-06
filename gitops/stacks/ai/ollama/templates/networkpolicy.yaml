@@ -1,0 +1,22 @@
+{{- with .Values.address }}
+# Pods in the ai namespace without lab.devops/ollama=true may reach
+# anything but Ollama. Labelled pods are not selected, so they keep the
+# default (all egress). NetworkPolicy is namespaced: pods in other
+# namespaces are not limited by this policy (see docs/design.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama-labelled-pods-only
+spec:
+  podSelector:
+    matchExpressions:
+      - key: {{ $.Values.podLabel }}
+        operator: NotIn
+        values: ["true"]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [{{ printf "%s/32" . }}]
+{{- end }}

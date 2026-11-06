@@ -9,16 +9,21 @@ repo:
 charts:
   ociMirror: ""
 stacks:
+  ai: false
   core: false
   obs: false
   policy: false
   secrets: false
+  sample-app: false
   sample-db: false
 # Set by the sample-db stack when it builds the app (lab up): its image by
 # digest in the lab registry.
 sampleDB:
   image: ""
-  sample-app: false
+# Set by the ai stack (lab up, local mode): the Ollama container's address
+# on the kind network, for ollama.ai.svc's NetworkPolicy.
+ai:
+  ollamaAddress: ""
 # Container resources for the core charts (metrics-server, cert-manager),
 # whose values live in the templates. Empty keeps the charts' defaults.
 # Set per mode in gitops/overlays/<mode>/bootstrap/values.yaml.

@@ -1,0 +1,15 @@
+# ollama.ai.svc: no selector. Its EndpointSlice (ollama-host) is written by
+# lab, because Argo CD does not manage EndpointSlices.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels:
+    app.kubernetes.io/name: ollama
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: {{ .Values.port }}
+      protocol: TCP

@@ -17,7 +17,7 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 - Fedora 45 on ASUS Zephyrus G14 (`asuszephyrus`): runs all workloads. 22 GiB RAM, 8 GiB swap.
   - GPU: GeForce GTX 1650 Mobile (TU117, Turing), 4 GB VRAM, next to an AMD iGPU. Driver `akmod-nvidia` (RPM Fusion), working.
   - Rootless Podman gets the GPU through CDI: `--device nvidia.com/gpu=all`. SELinux boolean `container_use_devices` is on.
-  - Ollama runs as a Quadlet user service: `~/.config/containers/systemd/ollama.container`, port 11434 (localhost only, no auth). Models must fit about 3.6 GiB VRAM (1B–3B, 4-bit).
+  - Ollama runs as a pinned 0.40.13-by-digest Quadlet user service: `~/.config/containers/systemd/ollama.container` (reference: `docs/ollama.container`), on the kind network with `NetworkAlias=lab-ollama` and port 11434 published on localhost only. Models must fit about 3.6 GiB VRAM (1B–3B, 4-bit).
 - MacBook Pro (Intel, `macbookprosys`): client only. Reaches the TUI with `ssh -t fedora lab`, and lab apps (`https://<app>.localtest.me:8443`) through `ssh -N fedora-lab`, which forwards 8080/8443 to Fedora's 127.0.0.1. The Gateway never listens on the LAN.
 
 ## Architecture
@@ -34,9 +34,9 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 
 ## Stacks
 
-core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (Ollama, Langfuse) · sample-app.
+core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app.
 
-Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (~16–19 GiB). The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured), because those are the stacks the local provider runs today; `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
+Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (7.47 GiB median of three `podman stats` runs for the deployable full profile plus retained sample-db, with Ollama idle). AI pods used 1,664 MiB by `kubectl top`, included in the node totals. The full plan skips unsupported CI, chaos and scaling; those stacks were not measured. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 
 ## TUI rules
 
@@ -124,7 +124,7 @@ If a phase slips, cut TUI screens before labs.
 
 ## `lab doctor` checks (phase 0)
 
-Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
+Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 and its running image digest matches the compat pin · when ai is deployed: `ollama.ai.svc`, `llama3.2:3b`, Langfuse and its Argo CD apps are healthy · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
 
 ## Conventions
 

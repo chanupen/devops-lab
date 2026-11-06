@@ -1,0 +1,15 @@
+# ClickHouse operator 0.0.8 (alpha, clickhouse.com/v1alpha1): Langfuse v4's
+# chart makes its ClickHouse and Keeper through it. It runs in the ai
+# namespace and watches only that one. Its webhook certificate comes from
+# cert-manager (core).
+manager:
+  image:
+    digest: sha256:80ff894a42fbc34fc40016776a5ba340b126b2ff408011a0af375d18c0dc8e44 # v0.0.8
+  resources:
+    requests: {cpu: 10m, memory: 48Mi}
+    limits: {memory: 128Mi}
+controller:
+  watchNamespaces: [ai]
+crd:
+  enabled: true
+  keep: false # lab down --stacks ai removes the CRDs with the stack

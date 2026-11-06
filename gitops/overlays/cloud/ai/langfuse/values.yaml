@@ -1,0 +1,13 @@
+# Cloud AI is intentionally a stub. lab refuses the ai stack until the
+# follow-up adds a GPU node and real S3.
+# What is here keeps the render test's cloud rules: every claim on lab-gp3,
+# no Moto. S3 will be a lab-tagged bucket reached with EKS Pod Identity.
+postgresql:
+  storage: {className: lab-gp3}
+redis:
+  dataStorage: {className: lab-gp3}
+clickhouse:
+  cluster:
+    storage: {className: lab-gp3}
+  keeper:
+    storage: {className: lab-gp3}
