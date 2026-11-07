@@ -65,11 +65,11 @@ func TestFixtureRuleDiagnosis(t *testing.T) {
 			if len(note.Cause) > 0 {
 				candidate = note.Cause[0].Text
 			}
-			clear := map[string]string{
+			clearCase := map[string]string{
 				"bad-deploy": "bad-release", "oom": "memory-limit",
 				"dns": "coredns-scaled-down", "node-loss": "worker-stopped",
 			}
-			if want, ok := clear[fixture.ID]; ok && (len(note.Cause) != 1 || note.Cause[0].CauseID != want) {
+			if want, ok := clearCase[fixture.ID]; ok && (len(note.Cause) != 1 || note.Cause[0].CauseID != want) {
 				t.Fatalf("candidate = %+v, want cause ID %q", note.Cause, want)
 			}
 			if (fixture.ID == "secret-drift" || fixture.ID == "slow-db") && !isAbstention(note.Cause) {
