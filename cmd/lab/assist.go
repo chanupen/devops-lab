@@ -109,6 +109,22 @@ func runAssistLiveEval(cmd *cobra.Command, f labFlags, drill string) (runErr err
 			runErr = errors.Join(runErr, fmt.Errorf("restore live drill: %w", err))
 		}
 	}()
+	alertCtx, cancel := context.WithTimeout(cmd.Context(), 7*time.Minute)
+	defer cancel()
+	for {
+		run, err := m.CheckAlert(alertCtx)
+		if err != nil {
+			return err
+		}
+		if !run.AlertFired.IsZero() {
+			break
+		}
+		select {
+		case <-alertCtx.Done():
+			return fmt.Errorf("wait for drill alert: %w", alertCtx.Err())
+		case <-time.After(5 * time.Second):
+		}
+	}
 	input := newAssistInputCmd("drill")
 	input.SetOut(cmd.OutOrStdout())
 	input.SetErr(cmd.ErrOrStderr())
