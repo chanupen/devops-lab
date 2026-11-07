@@ -280,10 +280,52 @@ GitOps ownership, TUI behaviour and cleanup guarantees.
 E2E labs and drills have separate opt-in commands in their READMEs; they
 mutate a lab and are not part of the unit suite.
 
-There is no v1.0.0 release yet. Tagged binary publication and SHA256SUMS are
-the next separate release PR. A live walkthrough has not been recorded;
+There is no v1.0.0 release yet. The [release workflow](.github/workflows/release.yml)
+builds linux/amd64 and darwin/amd64 on `v*` tags, after lint and race tests.
+It verifies SHA256SUMS, retains repository and linked-module notices, and
+publishes a GitHub release using only GITHUB_TOKEN. A release commit must be
+reachable from `main`; a draft is made public only after all assets upload.
+A live walkthrough has not been recorded;
 the preview above is deliberately a golden fixture, not an invented demo.
 See [build status](prompts/README.md).
+
+### Verify downloaded binaries
+
+Download the binary for your platform and `SHA256SUMS` from the **same
+GitHub release**. Check before running or installing it.
+
+Linux:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+chmod u+x lab-linux-amd64
+./lab-linux-amd64 version
+```
+
+Intel macOS:
+
+```sh
+grep '  lab-darwin-amd64$' SHA256SUMS | shasum -a 256 --check
+chmod u+x lab-darwin-amd64
+./lab-darwin-amd64 version
+```
+
+Stop if verification fails. A checksum detects corruption; it is not an
+independent signature if the binary and checksum source are both compromised.
+The release also includes `LICENSE` and `THIRD_PARTY_NOTICES.txt`; retain them.
+Source installation with `make install` remains available as described above.
+
+For a branch-only workflow probe, dispatch the workflow without creating a tag:
+
+```sh
+gh workflow run release.yml --ref ci/release-pipeline
+```
+
+Replace the branch name with the branch to test. It runs the same
+checks/build/checksum steps and uploads the `lab-release` Actions artifact,
+with the commit SHA as the binary version, but **never runs the
+release-publishing job**. Only a push of a `v*` tag can publish.
+Do not use a `v*` tag as a test or push v1.0.0 before release approval.
 
 Repository code and documentation are [MIT-licensed](LICENSE), copyright
 2026 chanupen. Third-party software and model terms remain separate.
