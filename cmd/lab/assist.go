@@ -66,11 +66,14 @@ func newAssistEvalCmd() *cobra.Command {
 					continue
 				}
 				for _, hybrid := range []bool{false, true} {
-					_, summary, err := assist.Evaluate(ctx, fixtures, assist.HTTPModel{
+					results, summary, err := assist.Evaluate(ctx, fixtures, assist.HTTPModel{
 						URL: "http://127.0.0.1:11434", Name: name,
 					}, name, hybrid, runs)
 					if err != nil {
 						return fmt.Errorf("evaluate %s (hybrid=%t): %w", name, hybrid, err)
+					}
+					if err := writeAssistEvalCases(cmd.OutOrStdout(), results); err != nil {
+						return err
 					}
 					summaries = append(summaries, summary...)
 				}
@@ -96,6 +99,44 @@ func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%.1f%%\t%s\t%s\t%d\n",
 			summary.Model, mode, summary.CauseCorrect*100, summary.EvidenceSupport*100,
 			summary.MeanDuration.Round(time.Millisecond), summary.DurationVariance.Round(time.Millisecond), summary.Runs)
+	}
+	return tw.Flush()
+}
+
+func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "\nCASE\tMODEL\tMODE\tRUNS\tTOTAL WALL TIME\tCAUSE CORRECT\tEVIDENCE SUPPORT")
+	type row struct {
+		caseID, model, mode string
+		runs                int
+		wall                time.Duration
+		correct, support    float64
+	}
+	rows := make([]row, 0, len(results))
+	index := map[string]int{}
+	for _, result := range results {
+		mode := "model-only"
+		if result.Hybrid {
+			mode = "rules-first"
+		}
+		key := result.Case + "\x00" + result.Model + "\x00" + mode
+		i, ok := index[key]
+		if !ok {
+			i = len(rows)
+			index[key] = i
+			rows = append(rows, row{caseID: result.Case, model: result.Model, mode: mode})
+		}
+		rows[i].runs++
+		rows[i].wall += result.Duration
+		if result.CauseCorrect {
+			rows[i].correct++
+		}
+		rows[i].support += result.EvidenceSupport
+	}
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%.1f%%\t%.1f%%\n",
+			row.caseID, row.model, row.mode, row.runs, row.wall.Round(time.Millisecond),
+			row.correct/float64(row.runs)*100, row.support/float64(row.runs)*100)
 	}
 	return tw.Flush()
 }
