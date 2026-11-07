@@ -16,7 +16,7 @@ func TestAssistToolRBAC(t *testing.T) {
 		rules                 []rbacv1.PolicyRule
 	}{
 		{"ClusterRole", "lab-assist-pods-events", "", []rbacv1.PolicyRule{{
-			APIGroups: []string{""}, Resources: []string{"pods", "events"}, Verbs: []string{"get", "list"},
+			APIGroups: []string{""}, Resources: []string{"pods", "events", "nodes"}, Verbs: []string{"get", "list"},
 		}}},
 		{"Role", "lab-assist-history", "argocd", []rbacv1.PolicyRule{{
 			APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get"},
@@ -76,6 +76,7 @@ func TestAssistToolRBAC(t *testing.T) {
 			}{
 				{"demo", "", "pods", "example", "get", true},
 				{"demo", "", "events", "", "list", true},
+				{"", "", "nodes", "", "list", true},
 				{"demo", "", "pods", "example", "delete", false},
 				{"demo", "", "pods/exec", "example", "create", false},
 				{"demo", "", "secrets", "example", "get", false},

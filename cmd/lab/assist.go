@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,18 +21,202 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/chanupen/devops-lab/internal/assist"
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/kube"
 )
 
 func newAssistCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "assist", Short: "Gather read-only evidence and draft an incident note"}
-	cmd.AddCommand(newAssistInputCmd("alert"), newAssistInputCmd("drill"))
+	cmd.AddCommand(newAssistInputCmd("alert"), newAssistInputCmd("drill"), newAssistEvalCmd())
 	return cmd
+}
+
+func newAssistEvalCmd() *cobra.Command {
+	var f labFlags
+	var fixtureDir, models, live string
+	var runs int
+	cmd := &cobra.Command{
+		Use:   "eval",
+		Short: "Measure local incident-note models against recorded drill evidence",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if live != "" {
+				return runAssistLiveEval(cmd, f, live)
+			}
+			cfgPath, err := f.configPath()
+			if err != nil {
+				return err
+			}
+			if cfgPath == "" {
+				return errors.New("no lab.yaml in this directory or ~/.lab; pass --config")
+			}
+			repo, err := repoRoot(cfgPath)
+			if err != nil {
+				return err
+			}
+			if fixtureDir == "" {
+				fixtureDir = filepath.Join(repo, "internal", "assist", "testdata", "eval")
+			}
+			fixtures, err := assist.LoadEvalFixtures(fixtureDir)
+			if err != nil {
+				return fmt.Errorf("load eval fixtures: %w", err)
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(len(fixtures)*runs*2)*assist.RunTimeout)
+			defer cancel()
+			var summaries []assist.EvalSummary
+			for _, name := range strings.Split(models, ",") {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				for _, hybrid := range []bool{false, true} {
+					results, summary, err := assist.Evaluate(ctx, fixtures, assist.HTTPModel{
+						URL: "http://127.0.0.1:11434", Name: name,
+					}, name, hybrid, runs, func(result assist.EvalResult) error {
+						return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+					})
+					if err != nil {
+						return fmt.Errorf("evaluate %s (hybrid=%t): %w", name, hybrid, err)
+					}
+					if err := writeAssistEvalCases(cmd.OutOrStdout(), results); err != nil {
+						return err
+					}
+					summaries = append(summaries, summary...)
+				}
+			}
+			return writeAssistEval(cmd.OutOrStdout(), summaries)
+		},
+	}
+	f.register(cmd)
+	withLabLock(cmd)
+	cmd.Flags().StringVar(&fixtureDir, "fixtures", "", "directory of recorded evaluation fixtures")
+	cmd.Flags().StringVar(&models, "models", "llama3.2:3b,qwen2.5:3b", "comma-separated local Ollama models")
+	cmd.Flags().IntVar(&runs, "runs", 3, "runs per case and mode (minimum 3)")
+	cmd.Flags().StringVar(&live, "live", "", "run one named drill through its safe start/abort lifecycle")
+	return cmd
+}
+
+func runAssistLiveEval(cmd *cobra.Command, f labFlags, drill string) (runErr error) {
+	m, err := drillsManager(f)
+	if err != nil {
+		return err
+	}
+	if _, err := m.Start(cmd.Context(), drill, false, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
+	defer func() {
+		restoreCtx, cancel := context.WithTimeout(context.Background(), drills.ScriptTimeout)
+		defer cancel()
+		if _, err := m.Abort(restoreCtx, cmd.ErrOrStderr()); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("restore live drill: %w", err))
+		}
+	}()
+	alertCtx, cancel := context.WithTimeout(cmd.Context(), 7*time.Minute)
+	defer cancel()
+	for {
+		run, err := m.CheckAlert(alertCtx)
+		if err != nil {
+			return err
+		}
+		if !run.AlertFired.IsZero() {
+			break
+		}
+		select {
+		case <-alertCtx.Done():
+			return fmt.Errorf("wait for drill alert: %w", alertCtx.Err())
+		case <-time.After(5 * time.Second):
+		}
+	}
+	input := newAssistInputCmd("drill")
+	input.SetOut(cmd.OutOrStdout())
+	input.SetErr(cmd.ErrOrStderr())
+	args := []string{drill, "--rules-first"}
+	if cfgPath, err := f.configPath(); err == nil && cfgPath != "" {
+		args = append(args, "--config", cfgPath)
+	}
+	if f.statePath != "" {
+		args = append(args, "--state", f.statePath)
+	}
+	input.SetArgs(args)
+	return input.ExecuteContext(cmd.Context())
+}
+
+func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "MODEL\tMODE\tCAUSE CORRECT\tABSTENTIONS\tEVIDENCE SUPPORT\tMEAN TIME\tTIME STDDEV\tRUNS")
+	for _, summary := range summaries {
+		mode := "model-only"
+		if summary.Hybrid {
+			mode = "rules-first"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%d/%d\t%.1f%%\t%s\t%s\t%d\n",
+			summary.Model, mode, summary.CauseCorrect*100,
+			summary.AbstainCorrect, summary.AbstainExpected, summary.EvidenceSupport*100,
+			summary.MeanDuration.Round(time.Millisecond), summary.DurationVariance.Round(time.Millisecond), summary.Runs)
+	}
+	return tw.Flush()
+}
+
+func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "\nCASE\tMODEL\tMODE\tRUNS\tTOTAL WALL TIME\tCAUSE CORRECT\tABSTENTION\tEVIDENCE SUPPORT")
+	type row struct {
+		caseID, model, mode string
+		runs                int
+		wall                time.Duration
+		correct, support    float64
+		causeScored         int
+		abstainExpected     bool
+		abstainCorrect      int
+	}
+	rows := make([]row, 0, len(results))
+	index := map[string]int{}
+	for _, result := range results {
+		mode := "model-only"
+		if result.Hybrid {
+			mode = "rules-first"
+		}
+		key := result.Case + "\x00" + result.Model + "\x00" + mode
+		i, ok := index[key]
+		if !ok {
+			i = len(rows)
+			index[key] = i
+			rows = append(rows, row{caseID: result.Case, model: result.Model, mode: mode})
+		}
+		rows[i].runs++
+		rows[i].wall += result.Duration
+		if result.CauseScored {
+			rows[i].causeScored++
+		}
+		if result.CauseCorrect {
+			rows[i].correct++
+		}
+		rows[i].support += result.EvidenceSupport
+		rows[i].abstainExpected = result.AbstainExpected
+		if result.AbstainCorrect {
+			rows[i].abstainCorrect++
+		}
+	}
+	for _, row := range rows {
+		abstention := "—"
+		if row.abstainExpected {
+			abstention = fmt.Sprintf("%d/%d", row.abstainCorrect, row.runs)
+		}
+		cause := "not scored"
+		if row.causeScored > 0 {
+			cause = fmt.Sprintf("%.1f%%", row.correct/float64(row.causeScored)*100)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%.1f%%\n",
+			row.caseID, row.model, row.mode, row.runs, row.wall.Round(time.Millisecond),
+			cause, abstention, row.support/float64(row.runs)*100)
+	}
+	return tw.Flush()
 }
 
 func newAssistInputCmd(kind string) *cobra.Command {
 	var f labFlags
 	var hosted bool
+	var rulesFirst bool
 	var hostedURL, hostedModel, caFile, namespace string
 	cmd := &cobra.Command{
 		Use:   kind + " <name>",
@@ -111,7 +298,7 @@ func newAssistInputCmd(kind string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			note, runErr := (assist.Runner{Tools: tools, Model: model, Tracer: tracer,
+			note, runErr := (assist.Runner{Tools: tools, Model: model, Tracer: tracer, RulesFirst: rulesFirst,
 				Sensitive: []string{tracer.PublicKey, tracer.SecretKey, model.Key}}).Run(ctx, alert)
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
@@ -123,6 +310,7 @@ func newAssistInputCmd(kind string) *cobra.Command {
 	}
 	f.register(cmd)
 	cmd.Flags().BoolVar(&hosted, "hosted", false, "send selected evidence to a hosted model")
+	cmd.Flags().BoolVar(&rulesFirst, "rules-first", false, "retain a deterministic cause supported by the evidence")
 	cmd.Flags().StringVar(&hostedURL, "hosted-url", "", "hosted OpenAI-compatible HTTPS API base URL")
 	cmd.Flags().StringVar(&hostedModel, "hosted-model", "", "hosted model name")
 	cmd.Flags().StringVar(&caFile, "langfuse-ca", "", "PEM CA certificate for the local Langfuse Gateway")

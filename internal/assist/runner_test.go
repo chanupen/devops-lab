@@ -58,7 +58,7 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 6 {
+	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 7 {
 		t.Fatalf("note = %+v", note)
 	}
 	b, _ := json.Marshal(model.inputs)
@@ -67,7 +67,7 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 			t.Fatalf("secret %q reached model: %s", secret, b)
 		}
 	}
-	if tracer.evidence != 6 || tracer.calls != 0 || tracer.incomplete {
+	if tracer.evidence != 7 || tracer.calls != 0 || tracer.incomplete {
 		t.Fatalf("trace = %+v", tracer)
 	}
 }
@@ -178,6 +178,22 @@ func TestRedactPreservesTimestamps(t *testing.T) {
 	}
 }
 
+func TestRedactPreservesImageReferences(t *testing.T) {
+	for _, image := range []string{
+		"lab-zot:5000/lab/podinfo:6.15.1",
+		"cert-manager:1",
+		"ghcr.io/example/app@sha256:" + strings.Repeat("a", 64),
+	} {
+		input, _ := json.Marshal(map[string]string{"image": image})
+		if got := Redact(string(input)); !strings.Contains(got, image) {
+			t.Errorf("image lost: %s", got)
+		}
+	}
+	if got := Redact(`{"image":"PASSWORD=inline-secret","env":[{"value":"env-secret"}]}`); strings.Contains(got, "inline-secret") || strings.Contains(got, "env-secret") {
+		t.Fatalf("invalid image or env leaked: %s", got)
+	}
+}
+
 func TestFocusPodEvidence(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -203,6 +219,105 @@ func TestFocusPodEvidence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLivePodSignalsFitEvidenceBound(t *testing.T) {
+	input := `{"name":"frontend-123","namespace":"demo","app":"frontend","node":"worker","containers":[{"name":"app","image":"lab-zot:5000/lab/podinfo:6.15.1","resources":{"limits":{"memory":"64Mi"}}}],"containerStatuses":[{"name":"app","image":"lab-zot:5000/lab/podinfo:6.15.1","restartCount":6,"lastState":{"terminated":{"reason":"Error","exitCode":1,"containerID":"` + strings.Repeat("x", 300) + `"}},"state":{"waiting":{"reason":"CrashLoopBackOff","message":"` + strings.Repeat("x", 700) + `"}}}]}`
+	got := focusPodEvidence(Redact(input))
+	if len(got) > evidenceLimit || !json.Valid([]byte(got)) {
+		t.Fatalf("focused pod exceeds the bound: %s", got)
+	}
+	for _, want := range []string{"lab-zot:5000/lab/podinfo:6.15.1", "CrashLoopBackOff", `"restartCount":6`, `"exitCode":1`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("signal %q missing in %s", want, got)
+		}
+	}
+}
+
+func TestFindingsPreserveHistoryAndNodeConditions(t *testing.T) {
+	got := Redact(deterministicFindings([]Evidence{
+		{ID: "E6", Source: "argocd_history", Data: `[{"revision":"new-release"}]`},
+		{ID: "E7", Source: "nodes", Data: `{"conditions":[{"reason":"KubeletNotReady"}]}`},
+	}))
+	for _, want := range []string{"new-release", "KubeletNotReady", "E6", "E7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in findings: %s", want, got)
+		}
+	}
+}
+
+func TestRuleCandidateChecksLaterObservations(t *testing.T) {
+	candidate := ruleCandidate([]Evidence{
+		{ID: "E2", Source: "pods", Data: `{"restartCount":0}`},
+		{ID: "E8", Source: "pods", Data: `{"reason":"OOMKilled","exitCode":137}`},
+	})
+	if candidate == nil || candidate.CauseID != "memory-limit" ||
+		len(candidate.Evidence) != 1 || candidate.Evidence[0] != "E8" {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestReleaseRuleRequiresCorroboration(t *testing.T) {
+	at := time.Date(2026, 11, 7, 9, 10, 0, 0, time.UTC)
+	pod := `{"containerStatuses":[{"restartCount":6,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}`
+	for _, tt := range []struct {
+		name, history, events string
+		want                  bool
+	}{
+		{"crash only", "", "", false},
+		{"recent revision", `[{"id":1,"revision":"old"},{"id":2,"revision":"new","deployedAt":"2026-11-07T09:05:00Z"}]`, "", true},
+		{"recent image override", `[{"id":1,"revision":"6.15.0"},{"id":2,"revision":"6.15.0","image":"lab-zot:5000/lab/podinfo:6.15.1","deployedAt":"2026-11-07T09:05:00Z"}]`, "", true},
+		{"unchanged revision", `[{"id":1,"revision":"same"},{"id":2,"revision":"same","deployedAt":"2026-11-07T09:05:00Z"}]`, "", false},
+		{"old revision", `[{"id":1,"revision":"old"},{"id":2,"revision":"new","deployedAt":"2026-11-07T08:05:00Z"}]`, "", false},
+		{"image update event", "", `{"items":[{"message":"container exited after image update"}]}`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := []Evidence{
+				{ID: "E2", Source: "pods", At: at, Data: pod},
+				{ID: "E3", Source: "events", At: at, Data: tt.events},
+				{ID: "E6", Source: "argocd_history", At: at, Data: tt.history},
+			}
+			candidate := ruleCandidate(evidence)
+			if (candidate != nil) != tt.want || (candidate != nil && (candidate.CauseID != "bad-release" || len(candidate.Evidence) != 2)) {
+				t.Fatalf("candidate = %+v", candidate)
+			}
+		})
+	}
+}
+
+type laterPodTools struct{ pods int }
+
+func (t *laterPodTools) Call(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
+	if name == "pods" {
+		t.pods++
+		if t.pods > 1 {
+			return json.RawMessage(`{"reason":"OOMKilled","exitCode":137}`), nil
+		}
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+func TestRunnerUsesCauseFromExtraToolCall(t *testing.T) {
+	call := Decision{}
+	call.Tool = &struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"arguments"`
+	}{"pods", json.RawMessage(`{"namespace":"demo"}`)}
+	model := &fakeModel{decisions: []Decision{call, {Note: &Note{
+		WhatFired: []Claim{{Text: "fired", Evidence: []string{"E1"}}},
+		Cause:     []Claim{{Text: "The root cause is not established."}},
+		Confirm:   []Claim{{Text: "inspect"}},
+		Fix:       []Claim{{Text: "investigate"}},
+	}}}}
+	note, err := (Runner{Tools: &laterPodTools{}, Model: model, Tracer: &fakeTracer{}, RulesFirst: true}).
+		Run(context.Background(), Alert{Name: "Example", Labels: map[string]string{"namespace": "demo", "app": "api"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(note.Cause) != 1 || note.Cause[0].CauseID != "memory-limit" ||
+		len(note.Cause[0].Evidence) != 1 || note.Cause[0].Evidence[0] != "E8" {
+		t.Fatalf("cause = %+v", note.Cause)
 	}
 }
 

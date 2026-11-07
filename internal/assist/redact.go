@@ -33,6 +33,12 @@ func redactValue(value any, helm bool) any {
 				} else {
 					v[k] = redactValue(item, false)
 				}
+			case "image":
+				image, ok := item.(string)
+				if ok && regexp.MustCompile(`^(?:[a-z0-9.-]+(?::[0-9]+)?/)?[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`).MatchString(image) {
+					continue
+				}
+				v[k] = redactValue(item, helm)
 			default:
 				v[k] = redactValue(item, helm || key == "helm")
 			}

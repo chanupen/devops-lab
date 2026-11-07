@@ -98,7 +98,7 @@ func (c *Client) Call(ctx context.Context, name string, raw json.RawMessage) (re
 		}
 	}()
 	switch name {
-	case "events", "pods", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
+	case "events", "pods", "nodes", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -125,6 +125,11 @@ func (c *Client) Call(ctx context.Context, name string, raw json.RawMessage) (re
 			return nil, errors.New("pods requires a valid namespace and optional pod")
 		}
 		return c.pods(ctx, a.Namespace, a.Pod)
+	case "nodes":
+		if !only(a) {
+			return nil, errors.New("nodes takes no arguments")
+		}
+		return c.nodes(ctx)
 	case "pod_describe":
 		if !only(a, "namespace", "pod") || !validNamespace(a.Namespace) || !validName(a.Pod) {
 			return nil, errors.New("pod_describe requires a valid namespace and pod")
@@ -205,6 +210,7 @@ func timeRange(start, end string) (string, string, error) {
 
 type podSummary struct {
 	Name                  string                   `json:"name"`
+	App                   string                   `json:"app,omitempty"`
 	Namespace             string                   `json:"namespace"`
 	Node                  string                   `json:"node,omitempty"`
 	Phase                 corev1.PodPhase          `json:"phase"`
@@ -216,6 +222,7 @@ type podSummary struct {
 
 type containerSummary struct {
 	Name      string                      `json:"name"`
+	Image     string                      `json:"image"`
 	Resources corev1.ResourceRequirements `json:"resources"`
 }
 
@@ -225,10 +232,39 @@ func summarizePod(p corev1.Pod) podSummary {
 		Conditions: p.Status.Conditions, InitContainerStatuses: p.Status.InitContainerStatuses,
 		ContainerStatuses: p.Status.ContainerStatuses,
 	}
+	for _, label := range []string{"argocd.argoproj.io/instance", "app.kubernetes.io/instance", "app.kubernetes.io/name"} {
+		if app := p.Labels[label]; validName(app) {
+			out.App = app
+			break
+		}
+	}
 	for _, c := range p.Spec.Containers {
-		out.Containers = append(out.Containers, containerSummary{Name: c.Name, Resources: c.Resources})
+		out.Containers = append(out.Containers, containerSummary{Name: c.Name, Image: c.Image, Resources: c.Resources})
 	}
 	return out
+}
+
+func (c *Client) nodes(ctx context.Context) (json.RawMessage, error) {
+	body, err := c.get(ctx, "/api/v1/nodes", url.Values{"limit": {strconv.Itoa(maxItems)}})
+	if err != nil {
+		return nil, err
+	}
+	var list corev1.NodeList
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("decode nodes: %w", err)
+	}
+	type nodeSummary struct {
+		Name       string                 `json:"name"`
+		Conditions []corev1.NodeCondition `json:"conditions"`
+	}
+	items := make([]nodeSummary, 0, len(list.Items))
+	for _, node := range list.Items {
+		items = append(items, nodeSummary{Name: node.Name, Conditions: node.Status.Conditions})
+	}
+	return json.Marshal(struct {
+		Items     []nodeSummary `json:"items"`
+		Truncated bool          `json:"truncated"`
+	}{items, list.Continue != ""})
 }
 
 func (c *Client) pods(ctx context.Context, ns, pod string) (json.RawMessage, error) {
@@ -296,24 +332,59 @@ func (c *Client) events(ctx context.Context, ns, pod string) (json.RawMessage, e
 	}{items, list.Continue != ""})
 }
 
+type applicationRevision struct {
+	ID         int64       `json:"id"`
+	Revision   string      `json:"revision"`
+	DeployedAt metav1.Time `json:"deployedAt"`
+	Image      string      `json:"image,omitempty"`
+}
+
 func (c *Client) history(ctx context.Context, app string) (json.RawMessage, error) {
 	body, err := c.get(ctx, "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/"+app, nil)
 	if err != nil {
 		return nil, err
 	}
+	type revision struct {
+		applicationRevision
+		Source struct {
+			Helm struct {
+				Parameters []struct{ Name, Value string } `json:"parameters"`
+			} `json:"helm"`
+		} `json:"source,omitempty"`
+	}
 	var obj struct {
 		Status struct {
-			History []struct {
-				ID         int64       `json:"id"`
-				Revision   string      `json:"revision"`
-				DeployedAt metav1.Time `json:"deployedAt"`
-			} `json:"history"`
+			History []revision `json:"history"`
 		} `json:"status"`
 	}
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, fmt.Errorf("decode application: %w", err)
 	}
-	return json.Marshal(obj.Status.History)
+	revisions := obj.Status.History
+	if len(revisions) > 2 {
+		revisions = revisions[len(revisions)-2:]
+	}
+	history := make([]applicationRevision, 0, len(revisions))
+	for _, entry := range revisions {
+		var repository, tag string
+		for _, parameter := range entry.Source.Helm.Parameters {
+			switch parameter.Name {
+			case "image.repository":
+				repository = parameter.Value
+			case "image.tag":
+				tag = parameter.Value
+			}
+		}
+		entry.Image = repository
+		if tag != "" {
+			if repository != "" {
+				entry.Image += ":"
+			}
+			entry.Image += tag
+		}
+		history = append(history, entry.applicationRevision)
+	}
+	return json.Marshal(history)
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {

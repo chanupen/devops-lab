@@ -38,6 +38,7 @@ type Claim struct {
 	Text        string   `json:"text"`
 	Evidence    []string `json:"evidence"`
 	Unsupported bool     `json:"unsupported"`
+	CauseID     string   `json:"cause_id,omitempty"`
 }
 
 // Note is the incident note. Commands are suggestions, never executed.
@@ -85,6 +86,9 @@ type Runner struct {
 	Model  Model
 	Tracer Tracer
 	Now    func() time.Time
+	// RulesFirst adds a deterministic candidate from direct observations.
+	// The model still writes the note, but cannot discard a supported cause.
+	RulesFirst bool
 	// Sensitive values are removed even if they appear in upstream output.
 	Sensitive []string
 }
@@ -136,8 +140,11 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			}
 		}
 		data = Redact(data)
-		if source == "pods" {
+		switch source {
+		case "pods":
 			data = focusPodEvidence(data)
+		case "events":
+			data = focusEventEvidence(data)
 		}
 		if len(data) > evidenceLimit {
 			data = data[:evidenceLimit] + " [truncated]"
@@ -165,9 +172,14 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		return note, errors.New("invalid redacted alert")
 	}
 	add("alert", string(alertJSON), r.now(), false)
+	app := safeAlert.Labels["app"]
 	for _, call := range recipe(alert, started) {
 		if ctx.Err() != nil {
 			return note, ctx.Err()
+		}
+		if call.name == "argocd_history" && validName(app) {
+			call.err = ""
+			call.args, _ = json.Marshal(map[string]string{"app": app})
 		}
 		if call.err != "" {
 			add(call.name, call.err, r.now(), true)
@@ -178,7 +190,18 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		if err != nil {
 			add(call.name, "collection failed: "+safeError(err), callStarted, true)
 		} else {
+			if call.name == "pods" && !validName(app) {
+				app = podApplication(data, safeAlert.Labels["pod"])
+			}
 			add(call.name, string(data), callStarted, false)
+		}
+	}
+	add("findings", deterministicFindings(note.Evidence), r.now(), false)
+	var candidate *Claim
+	if r.RulesFirst {
+		candidate = ruleCandidate(note.Evidence)
+		if candidate != nil {
+			add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
 		}
 	}
 	for {
@@ -202,18 +225,23 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 					Evidence: []string{"E1"},
 				}}
 			}
+			if candidate != nil {
+				result.Cause = []Claim{*candidate}
+			}
 			if err := validateNote(&result, r.Sensitive); err != nil {
 				return note, err
 			}
+
 			note = result
 			return note, nil
 		}
+
 		if calls >= ExtraCallLimit {
 			return note, errors.New("additional tool-call budget exhausted")
 		}
 		calls++
 		switch decision.Tool.Name {
-		case "events", "pods", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
+		case "events", "pods", "nodes", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
 		default:
 			return note, errors.New("model requested an unknown tool")
 		}
@@ -224,7 +252,131 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		} else {
 			add(decision.Tool.Name, string(data), callStarted, false)
 		}
+		if r.RulesFirst && candidate == nil {
+			candidate = ruleCandidate(note.Evidence)
+			if candidate != nil {
+				add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
+			}
+		}
 	}
+}
+
+// deterministicFindings makes the diagnostic fields needed for root-cause
+// decisions explicit and stable before the model sees the bundle.
+func deterministicFindings(evidence []Evidence) string {
+	var findings []map[string]string
+	for _, item := range evidence {
+		switch item.Source {
+		case "pods", "argocd_history", "nodes":
+			findings = append(findings, map[string]string{
+				"evidence_id": item.ID, "source": item.Source, "data": item.Data,
+			})
+		}
+	}
+	if len(findings) == 0 {
+		return "no deterministic pod, Argo CD, or node findings were available"
+	}
+	b, _ := json.Marshal(findings)
+	return string(b)
+}
+
+func ruleCandidate(evidence []Evidence) *Claim {
+	find := func(source string, terms ...string) *Claim {
+		for _, item := range evidence {
+			if item.Source != source {
+				continue
+			}
+			data := strings.ToLower(item.Data)
+			matched := true
+			for _, term := range terms {
+				if !strings.Contains(data, strings.ToLower(term)) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return &Claim{Evidence: []string{item.ID}}
+			}
+		}
+		return nil
+	}
+	for _, rule := range []struct {
+		cause, source string
+		terms         []string
+		text          string
+	}{
+		{"memory-limit", "pods", []string{"oomkilled", "exitcode\":137"}, "The container was OOMKilled with exit code 137; inspect memory limits and node pressure."},
+		{"coredns-scaled-down", "events", []string{"coredns replicas 0"}, "CoreDNS has been scaled to zero replicas."},
+		{"worker-stopped", "nodes", []string{"kubeletnotready"}, "The worker reports KubeletNotReady."},
+		{"issuer-ca-secret", "loki_logs", []string{"issuer", "missing ca secret"}, "The issuer references a missing CA Secret."},
+	} {
+		if candidate := find(rule.source, rule.terms...); candidate != nil {
+			candidate.CauseID = rule.cause
+			candidate.Text = rule.text
+			return candidate
+		}
+	}
+	var observed time.Time
+	for _, item := range evidence {
+		if item.At.After(observed) {
+			observed = item.At
+		}
+	}
+	for _, item := range evidence {
+		if item.Source != "pods" {
+			continue
+		}
+		var pod podSummary
+		if json.Unmarshal([]byte(item.Data), &pod) != nil {
+			continue
+		}
+		crashing := false
+		for _, status := range pod.ContainerStatuses {
+			if status.RestartCount > 0 && status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+				crashing = true
+			}
+		}
+		if !crashing {
+			continue
+		}
+		change := find("events", "after image update", "exited")
+		if change == nil {
+			change = find("events", "after image update", "failed")
+		}
+		if change == nil {
+			for _, history := range evidence {
+				if history.Source != "argocd_history" {
+					continue
+				}
+				var revisions []applicationRevision
+				if json.Unmarshal([]byte(history.Data), &revisions) != nil || len(revisions) < 2 {
+					continue
+				}
+				previous, latest := revisions[len(revisions)-2], revisions[len(revisions)-1]
+				age := observed.Sub(latest.DeployedAt.Time)
+				if latest.ID > previous.ID && age >= 0 && age <= 15*time.Minute &&
+					(latest.Revision != previous.Revision || latest.Image != previous.Image) {
+					change = &Claim{Evidence: []string{history.ID}}
+					break
+				}
+			}
+		}
+		if change != nil {
+			return &Claim{
+				CauseID: "bad-release", Text: "The container is in CrashLoopBackOff with restarts after a recent release or image update.",
+				Evidence: append([]string{item.ID}, change.Evidence...),
+			}
+		}
+	}
+	return nil
+}
+
+func podApplication(data json.RawMessage, name string) string {
+	var pod podSummary
+	if json.Unmarshal(data, &pod) == nil && (name == "" || pod.Name == name) && validName(pod.App) {
+		return pod.App
+	}
+	return ""
 }
 
 func focusPodEvidence(data string) string {
@@ -245,9 +397,23 @@ func focusPodEvidence(data string) string {
 			}
 			for key := range status {
 				switch key {
-				case "name", "ready", "restartCount", "lastState", "state":
+				case "name", "image", "ready", "restartCount", "lastState", "state":
 				default:
 					delete(status, key)
+				}
+			}
+			if _, exists := pod["containers"]; exists {
+				delete(status, "image")
+			}
+			for _, key := range []string{"state", "lastState"} {
+				state, _ := status[key].(map[string]any)
+				for _, raw := range state {
+					detail, _ := raw.(map[string]any)
+					for field := range detail {
+						if field != "reason" && field != "exitCode" {
+							delete(detail, field)
+						}
+					}
 				}
 			}
 		}
@@ -265,6 +431,29 @@ func focusPodEvidence(data string) string {
 	if err != nil {
 		return data
 	}
+	return string(b)
+}
+
+func focusEventEvidence(data string) string {
+	var events struct {
+		Items []map[string]any `json:"items"`
+	}
+	if json.Unmarshal([]byte(data), &events) != nil {
+		return data
+	}
+	sort.SliceStable(events.Items, func(i, j int) bool {
+		return events.Items[i]["type"] == "Warning" && events.Items[j]["type"] != "Warning"
+	})
+	for _, event := range events.Items {
+		for key := range event {
+			switch key {
+			case "reason", "message", "type", "count", "lastSeen":
+			default:
+				delete(event, key)
+			}
+		}
+	}
+	b, _ := json.Marshal(events)
 	return string(b)
 }
 
@@ -305,6 +494,9 @@ func recipe(alert Alert, now time.Time) []recipeCall {
 		calls = append(calls, recipeCall{name: "argocd_history", err: "application label missing or invalid"})
 	} else {
 		appendCall("argocd_history", map[string]string{"app": app})
+	}
+	if alert.Name == "KubeNodeNotReady" {
+		appendCall("nodes", map[string]string{})
 	}
 	return calls
 }

@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -34,14 +35,25 @@ func TestAssistantReceiverRender(t *testing.T) {
 		}
 	}
 	foundMatcher := false
+	configs := map[string]string{}
 	for _, o := range local {
 		if o.Obj["kind"] == "Alertmanager" &&
 			field(o.Obj, "spec", "alertmanagerConfigMatcherStrategy", "type") == "None" {
 			foundMatcher = true
 		}
+		if o.Obj["kind"] == "AlertmanagerConfig" {
+			configs[fmt.Sprint(field(o.Obj, "metadata", "namespace"))+"/"+fmt.Sprint(field(o.Obj, "metadata", "name"))] = toYAML(o.Obj)
+		}
 	}
 	if !foundMatcher {
 		t.Error("local Alertmanager does not route across namespaces")
+	}
+	// matcherStrategy belongs to Alertmanager, not to configurations. Keep
+	// every rendered configuration byte-for-byte free of that global setting.
+	for name, config := range configs {
+		if strings.Contains(config, "matcherStrategy") {
+			t.Errorf("AlertmanagerConfig %s unexpectedly changes matcher strategy", name)
+		}
 	}
 	for _, o := range renderMode(t, "cloud") {
 		if o.App == "assist-receiver" {

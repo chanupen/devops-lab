@@ -31,6 +31,9 @@ func allowedPath(u *url.URL) bool {
 		return false
 	}
 	parts := strings.Split(u.Path, "/")
+	if u.Path == "/api/v1/nodes" {
+		return exactQuery(q, "limit") && q.Get("limit") == "100"
+	}
 	if len(parts) >= 6 && parts[0] == "" && parts[1] == "api" &&
 		parts[2] == "v1" && parts[3] == "namespaces" && validNamespace(parts[4]) {
 		ns := parts[4]
