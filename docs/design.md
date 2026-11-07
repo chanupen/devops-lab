@@ -503,7 +503,7 @@ miss short peaks. In live bad-deploy and OOM drills the model abstained on
 root cause; the runner supplied a pod confirmation command. A citation ID
 alone does not establish that a claim is supported.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI
-   (implemented; model-state and cached first-frame gates, no live drill run).
+   (draft #41; model-state and cached first-frame gates, no live drill run).
 4. `lab assist eval`, the seven drills and seeded known-mistake cases
    (implemented in #40; training fixtures measure plumbing, not generalisation).
 
