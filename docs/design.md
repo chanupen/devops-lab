@@ -843,8 +843,11 @@ patches, and the working tree without repository gitleaks allowlists.
 Identifying examples are generalized at the tip; history is not rewritten.
 [licences.md](licences.md) inventories the selected Go module graphs, charts,
 images and model terms. A clean secret scan is not proof of public readiness.
-Repository licence selection and the listed redistribution decisions remain
-maintainer gates. README/demo and release-pipeline work have not started.
+The repository is [MIT-licensed](../LICENSE), copyright 2026 chanupen.
+The maintainer accepted historical host names on 7 Nov 2026: hostnames only,
+no secrets and no history rewrite. Third-party redistribution reviews remain
+gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
+README/demo and release-pipeline work have not started.
 
 ## Risks and open questions
 

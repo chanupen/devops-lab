@@ -2,8 +2,9 @@
 
 Inventory checked 7 Nov 2026 against `main` at `f29cb38`. This is an inventory,
 not legal advice or permission to redistribute every artifact under one licence.
-The repository has no `LICENSE`; MIT is proposed, awaiting maintainer approval.
-Third-party licences remain separate whichever repository licence is selected.
+The repository's code and documentation are licensed under [MIT](../LICENSE),
+copyright 2026 chanupen, as approved on 7 Nov 2026.
+Third-party software, images and model weights retain their separate terms.
 
 ## Scope and release obligations
 
@@ -75,7 +76,7 @@ from version ranges. A disabled dependency still needs review before enabling.
 | Loki | grafana-agent-operator 0.5.2 (disabled); rollout-operator 0.50.0 (disabled); rollout crds 0.1.0 | [Apache-2.0 chart repository](https://github.com/grafana/helm-charts/blob/grafana-agent-operator-0.5.2/LICENSE) |
 
 The repository's own charts (`gitops/bootstrap`, `sample-db`, `ai/ollama`,
-`ai/assist`, all version 0.1.0) await the repository licence decision.
+`ai/assist`, all version 0.1.0) are covered by [MIT](../LICENSE).
 
 ## Software behind image pins
 
@@ -108,7 +109,7 @@ repository references. The primary-software licences are:
 | Python 3.13.18 helper image | [PSF-2.0 and bundled Python notices](https://github.com/python/cpython/blob/v3.13.18/LICENSE), plus Alpine packages |
 | Alpine 3.18.0 / 3.24.3, distroless static-debian12 | Package-specific licences, not one project-wide SPDX grant; [distroless Apache-2.0 build code](https://github.com/GoogleContainerTools/distroless/blob/main/LICENSE) does not replace Debian package copyrights |
 | CUDA 12.6.3-base-ubi9 (documented GPU check), Ollama's bundled GPU libraries | NVIDIA CUDA terms and base-image package licences; not covered by Ollama's MIT licence |
-| Locally built sample-db / assist-receiver | Repository licence pending, plus their Go dependency and base-image notices |
+| Locally built sample-db / assist-receiver | MIT repository code, plus their Go dependency and base-image notices |
 
 ### kind node images and built-in addons
 
@@ -143,10 +144,13 @@ notices; the image as a whole is not Apache-2.0-only.
 | --- | --- | --- |
 | Ollama host runtime | `docker.io/ollama/ollama:0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429` | [MIT](https://github.com/ollama/ollama/blob/v0.40.13/LICENSE); model and GPU libraries separately licensed |
 | Llama 3.2 3B model | `llama3.2:3b` (mutable model tag, not a weight digest) | [Llama 3.2 Community License](https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE) and acceptable-use terms, not MIT/Apache-2.0 |
-| Qwen2.5 3B comparison in #40 | `qwen2.5:3b`, not the default or bundled | [Qwen Research License](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE), non-commercial research/evaluation only; not Apache-2.0 |
+| Qwen2.5 3B comparison in #40 | `qwen2.5:3b`, eval comparison only; never a default or bundled | [Qwen Research License](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE), non-commercial research/evaluation only; not Apache-2.0 |
 | AWS Terraform provider | 6.71.0 in all three `.terraform.lock.hcl` files | [MPL-2.0](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/LICENSE) |
 | OpenTofu / Terraform executable | User-installed, not pinned or shipped by this repository | OpenTofu MPL-2.0; Terraform modern releases have BUSL-1.1 terms; terraform-exec's MPL-2.0 does not licence the executable |
 | gitleaks used for this audit | 8.30.1, session-local tool only | [MIT](https://github.com/gitleaks/gitleaks/blob/v8.30.1/LICENSE) |
+
+Qwen2.5 3B is used only as a non-commercial research eval comparison.
+It must never become a default assistant model.
 
 ### Pinned CI tooling
 

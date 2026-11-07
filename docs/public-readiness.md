@@ -68,9 +68,10 @@ attributions are not private employer data and were not stripped.
 
 These are documentation-only substitutions. No SSH configuration, cloud
 ownership tag, provider code, cluster state or live workload was changed.
-Both old host names and the byline **remain in history**. Decide whether that
-historical disclosure is acceptable before making the repository public;
-this PR does not rewrite history.
+Both old host names and the byline **remain in history**. On 7 Nov 2026 the
+maintainer accepted retaining historical host names: hostnames only, no
+secrets and no history rewrite. This decision does not waive secret checks
+or third-party redistribution terms. Original authorship is unchanged.
 
 ### Retained matches
 
@@ -97,12 +98,11 @@ project licences from the other software packaged in container images.
 
 Before publication or release:
 
-1. **Choose the repository licence.** There is no `LICENSE`. MIT was suggested
-   and the choice was requested, but no response was available. No licence was
-   assigned without approval. Add the selected licence and appropriate
-   copyright holder before distributing this repository as licensed software.
-2. **Accept or address the historical identifying text.** The tip is generic;
-   the historical names and original commit authors are unchanged.
+1. **Repository licence: decided.** The maintainer approved [MIT](../LICENSE),
+   copyright 2026 chanupen, on 7 Nov 2026. Third-party licences remain separate.
+2. **Historical host names: accepted.** Hostnames stay in history; no secrets
+   may be retained and no history rewrite is authorized. Host examples are
+   generic at the tip. Original authorship remains unchanged.
 3. **Review redistribution terms.** MPL-covered Go code needs source/notices;
    Grafana/Loki and Redis have copyleft or source-available terms; Langfuse
    includes commercial EE portions; model weights have their own agreements.
