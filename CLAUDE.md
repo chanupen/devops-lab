@@ -14,11 +14,11 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 
 ## Hosts
 
-- Fedora 45 on ASUS Zephyrus G14 (`asuszephyrus`): runs all workloads. 22 GiB RAM, 8 GiB swap.
+- Fedora 45 on ASUS Zephyrus G14 (`lab-host`, example SSH hostname): runs all workloads. 22 GiB RAM, 8 GiB swap.
   - GPU: GeForce GTX 1650 Mobile (TU117, Turing), 4 GB VRAM, next to an AMD iGPU. Driver `akmod-nvidia` (RPM Fusion), working.
   - Rootless Podman gets the GPU through CDI: `--device nvidia.com/gpu=all`. SELinux boolean `container_use_devices` is on.
   - Ollama runs as a pinned 0.40.13-by-digest Quadlet user service: `~/.config/containers/systemd/ollama.container` (reference: `docs/ollama.container`), on the kind network with `NetworkAlias=lab-ollama` and port 11434 published on localhost only. Models must fit about 3.6 GiB VRAM (1B–3B, 4-bit).
-- MacBook Pro (Intel, `macbookprosys`): client only. Reaches the TUI with `ssh -t fedora lab`, and lab apps (`https://<app>.localtest.me:8443`) through `ssh -N fedora-lab`, which forwards 8080/8443 to Fedora's 127.0.0.1. The Gateway never listens on the LAN.
+- MacBook Pro (Intel, `lab-client`, example hostname): client only. Reaches the TUI with `ssh -t fedora lab`, and lab apps (`https://<app>.localtest.me:8443`) through `ssh -N fedora-lab`, which forwards 8080/8443 to Fedora's 127.0.0.1. The Gateway never listens on the LAN.
 
 ## Architecture
 
