@@ -18,8 +18,19 @@ apps. Colours are stripped by the test; status symbols remain.
 See [the source fixture](internal/tui/testdata/home_up.golden) and
 [preview provenance and capture instructions](docs/tui-preview.md).
 
-`lab` opens the TUI. `1`-`5` switch screens, `:` opens the command palette,
-`U` brings up the profile, and `K` opens k9s. Each action logs its CLI command.
+`lab` opens the TUI. Its **five implemented screens** use these keys:
+
+| Key | Screen |
+| --- | --- |
+| `1` | Home |
+| `2` | Stacks |
+| `3` | Labs |
+| `4` | Drills |
+| `5` | Ops log |
+
+`6` is reserved for a future Cost screen; it does not open a screen today.
+`:` opens the command palette, `U` brings up the profile, and `K` opens k9s.
+Each action logs its CLI command.
 Mutating operations share one lock; another TUI opens read-only. Views remain
 non-blocking. The first frame comes from cached state, with a 100 ms gate.
 Logs retain 5,000 lines and redraw at most 20 times a second.
@@ -110,6 +121,11 @@ part of an ordinary lab session.
 | Infrastructure | Spot nodes, no NAT gateway, no default load balancer, short log retention, gp3 storage |
 | Access | `lab tunnel` forwards the Gateway to loopback; no LAN exposure |
 | Cleanup | `lab down` releases external resources, destroys in reverse order, sweeps and checks real leftovers |
+
+The default is **2h**, not 4h: `lab.yaml` sets `cloud.ttl: 2h`,
+[`config.DefaultTTL`](internal/config/config.go) is two hours, and the AWS
+provider consumes that configured duration through `Options.TTL`.
+Override it with `cloud.ttl` or `lab up --mode cloud --ttl`; the 8h cap remains.
 
 EKS control planes, nodes, volumes, registry and baseline services can cost
 money. Review current prices before approval. Budgets and TTL are safeguards,

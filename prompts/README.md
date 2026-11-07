@@ -30,11 +30,11 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Done (#29, passing session #32) |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
 | `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Done (gate passed 6 Nov 2026; [design](../docs/design.md#build-roadmap)) |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42 ready (MIT approved, historical host names retained without secrets or rewrite); [README/docs](../README.md) in a separate draft; live demo and release pipeline not started |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42 merged (MIT approved, historical host names retained without secrets or rewrite); [README/docs](../README.md) in #43; live demo and release pipeline not started |
 
 ## To continue from today
 
-1. Review the ready public-readiness audit (#42) and the separate draft README/docs.
+1. Review the README/docs (#43); the public-readiness audit (#42) is merged.
 2. Continue `15-phase5-ai-release.md` with the tag-triggered binary/checksum workflow as its own draft PR, after approval.
 3. Record a live walkthrough only with approval to mutate the lab; verify restoration. Do not tag v1.0.0 until the maintainer approves the release.
 
