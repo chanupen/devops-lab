@@ -16,7 +16,7 @@ func TestEvaluateRequiresThreeRuns(t *testing.T) {
 		Confirm:   []Claim{{Text: "inspect", Evidence: []string{"E1"}}},
 		Fix:       []Claim{{Text: "investigate"}},
 	}}}}
-	if _, _, err := Evaluate(context.Background(), []EvalFixture{fixture}, model, "fixture", false, 2); err == nil {
+	if _, _, err := Evaluate(context.Background(), []EvalFixture{fixture}, model, "fixture", false, 2, nil); err == nil {
 		t.Fatal("expected minimum-runs error")
 	}
 }
@@ -31,9 +31,90 @@ func TestSummarizeEval(t *testing.T) {
 	}
 }
 
+func TestEvaluateRetainsModelCauseBeforeRuleOverride(t *testing.T) {
+	fixtures, err := LoadEvalFixtures(filepath.Join("testdata", "eval"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		if fixture.ID != "oom" {
+			continue
+		}
+		results, _, err := Evaluate(context.Background(), []EvalFixture{fixture}, fixtureModel{}, "fixture", true, 3, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, result := range results {
+			if !isAbstention(result.ModelCause) || !result.RuleFired ||
+				result.Candidate.CauseID != "memory-limit" || !result.CauseCorrect {
+				t.Fatalf("diagnostic result = %+v", result)
+			}
+		}
+	}
+}
+
+func TestEvaluateErrorsRemainInDenominator(t *testing.T) {
+	fixture := EvalFixture{ID: "one", Alert: Alert{Name: "Example"}, Expected: "memory-limit"}
+	results, summary, err := Evaluate(context.Background(), []EvalFixture{fixture}, &fakeModel{}, "fixture", false, 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary[0].CauseScored != 3 || summary[0].CauseCorrect != 0 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	for _, result := range results {
+		if result.Error == "" || !result.CauseScored {
+			t.Fatalf("failed result = %+v", result)
+		}
+	}
+}
+
 func TestAbstentionAllowsCitedUncertainty(t *testing.T) {
 	if !isAbstention([]Claim{{Text: "The root cause is not established.", Evidence: []string{"E1"}}}) {
 		t.Fatal("cited uncertainty should count as an abstention")
+	}
+}
+
+func TestCauseGrading(t *testing.T) {
+	for _, tt := range []struct {
+		name, text, id, expected string
+		want                     bool
+	}{
+		{"causal phrase", "The issuer references a missing CA Secret.", "", "issuer-ca-secret", true},
+		{"limit diagnosis", "The memory limit was too low.", "", "memory-limit", true},
+		{"symptom only", "The container was OOM killed.", "", "memory-limit", false},
+		{"confirmation only", "Inspect memory limits and node pressure.", "", "memory-limit", false},
+		{"negated release", "It is not a bad release.", "", "bad-release", false},
+		{"conflicting ID", "The bad-release was responsible.", "worker-stopped", "bad-release", false},
+		{"uncertainty wording", "Further investigation is required.", "", "not established", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := causeMatches([]Claim{{Text: tt.text, CauseID: tt.id}}, tt.expected); got != tt.want {
+				t.Fatalf("cause match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAbstentionDoesNotHideAnAssertedOOM(t *testing.T) {
+	for _, text := range []string{
+		"The container was OOM killed. Further investigation is required.",
+		"The memory limit was too low. Further investigation is required.",
+	} {
+		if isAbstention([]Claim{{Text: text}}) {
+			t.Fatalf("asserted diagnosis must not be counted as abstention: %s", text)
+		}
+	}
+}
+
+func TestKnownMistakesAreScoredAsAbstentions(t *testing.T) {
+	fixture := EvalFixture{ID: "known", Alert: Alert{Name: "Example"}, Expected: "not established"}
+	_, summaries, err := Evaluate(context.Background(), []EvalFixture{fixture}, fixtureModel{}, "fixture", false, 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summaries[0].CauseScored != 0 || summaries[0].AbstainExpected != 3 || summaries[0].AbstainCorrect != 3 {
+		t.Fatalf("summary = %+v", summaries)
 	}
 }
 
@@ -68,6 +149,7 @@ func TestFixtureRuleDiagnosis(t *testing.T) {
 			clearCase := map[string]string{
 				"bad-deploy": "bad-release", "oom": "memory-limit",
 				"dns": "coredns-scaled-down", "node-loss": "worker-stopped",
+				"cert-expiry": "issuer-ca-secret",
 			}
 			if want, ok := clearCase[fixture.ID]; ok && (len(note.Cause) != 1 || note.Cause[0].CauseID != want) {
 				t.Fatalf("candidate = %+v, want cause ID %q", note.Cause, want)

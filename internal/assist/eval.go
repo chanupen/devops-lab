@@ -28,6 +28,14 @@ type EvalResult struct {
 	Case            string        `json:"case"`
 	Model           string        `json:"model"`
 	Hybrid          bool          `json:"hybrid"`
+	Findings        string        `json:"findings"`
+	Evidence        []Evidence    `json:"evidence"`
+	RuleFired       bool          `json:"rule_fired"`
+	Candidate       *Claim        `json:"candidate,omitempty"`
+	ModelCause      []Claim       `json:"model_cause"`
+	FinalCause      []Claim       `json:"final_cause"`
+	ExpectedCause   string        `json:"expected_cause"`
+	Comparison      string        `json:"comparison"`
 	CauseCorrect    bool          `json:"cause_correct"`
 	Abstained       bool          `json:"abstained"`
 	CauseScored     bool          `json:"cause_scored"`
@@ -104,9 +112,24 @@ func (evalTracer) Trace(context.Context, time.Time, time.Time, []ToolObservation
 	return "eval", nil
 }
 
+type evalModel struct {
+	Model
+	evidence []Evidence
+	cause    []Claim
+}
+
+func (m *evalModel) Decide(ctx context.Context, alert Alert, evidence []Evidence) (Decision, error) {
+	m.evidence = append([]Evidence(nil), evidence...)
+	decision, err := m.Model.Decide(ctx, alert, evidence)
+	if decision.Note != nil {
+		m.cause = append([]Claim(nil), decision.Note.Cause...)
+	}
+	return decision, err
+}
+
 // Evaluate runs each fixture at least three times and reports the metrics
 // used for comparisons: cause accuracy, supported claims, and elapsed time.
-func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelName string, hybrid bool, runs int) ([]EvalResult, []EvalSummary, error) {
+func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelName string, hybrid bool, runs int, report func(EvalResult) error) ([]EvalResult, []EvalSummary, error) {
 	if runs < 3 {
 		return nil, nil, errors.New("evaluation requires at least 3 runs per case")
 	}
@@ -114,38 +137,113 @@ func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelNam
 	for _, fixture := range fixtures {
 		for range runs {
 			started := time.Now()
-			note, err := (Runner{Tools: FixtureTools(fixture.Tools), Model: model, Tracer: evalTracer{}, RulesFirst: hybrid}).Run(ctx, fixture.Alert)
-			result := EvalResult{Case: fixture.ID, Model: modelName, Hybrid: hybrid, Duration: time.Since(started)}
+			recorded := &evalModel{Model: model}
+			note, err := (Runner{Tools: FixtureTools(fixture.Tools), Model: recorded, Tracer: evalTracer{}, RulesFirst: hybrid}).Run(ctx, fixture.Alert)
+			expectAbstention := fixture.Abstain || fixture.Expected == "not established"
+			result := EvalResult{
+				Case: fixture.ID, Model: modelName, Hybrid: hybrid, Duration: time.Since(started),
+				ModelCause: recorded.cause, FinalCause: note.Cause, ExpectedCause: fixture.Expected,
+				Evidence:    recorded.evidence,
+				CauseScored: !expectAbstention, AbstainExpected: expectAbstention,
+			}
+			for _, item := range recorded.evidence {
+				if item.Source == "findings" {
+					result.Findings = item.Data
+				}
+			}
+			if hybrid {
+				result.Candidate = ruleCandidate(recorded.evidence)
+				result.RuleFired = result.Candidate != nil
+			}
 			if err != nil {
 				result.Error = err.Error()
+				result.Comparison = "run failed"
 			} else {
 				result.Abstained = isAbstention(note.Cause)
-				result.AbstainExpected = fixture.Abstain
-				result.AbstainCorrect = fixture.Abstain && result.Abstained
-				result.CauseScored = !fixture.Abstain
+				result.AbstainCorrect = expectAbstention && result.Abstained
 				if result.CauseScored {
-					result.CauseCorrect = causeMatches(note.Cause, fixture.Expected)
+					result.CauseCorrect, result.Comparison = compareCause(note.Cause, fixture.Expected)
+				} else {
+					result.Comparison = "excluded from cause accuracy; expected abstention scored separately"
 				}
 				result.EvidenceSupport = supportedClaims(note)
 			}
 			results = append(results, result)
+			if report != nil {
+				if err := report(result); err != nil {
+					return results, nil, err
+				}
+			}
 		}
 	}
 	return results, SummarizeEval(results), nil
 }
 
 func causeMatches(claims []Claim, expected string) bool {
+	matched, _ := compareCause(claims, expected)
+	return matched
+}
+
+func compareCause(claims []Claim, expected string) (bool, string) {
+	if expected == "not established" {
+		return isAbstention(claims), "explicit uncertainty rather than an asserted cause"
+	}
+	phrases := map[string][]string{
+		"memory-limit":        {"memory limit is too low", "memory limit was too low", "insufficient memory limit", "exceeded its memory limit", "exceeded the memory limit"},
+		"bad-release":         {"bad release", "faulty release", "bad deployment", "faulty image"},
+		"issuer-ca-secret":    {"missing ca secret", "ca secret is missing", "ca secret not found"},
+		"coredns-scaled-down": {"coredns has been scaled to zero", "coredns is scaled to zero", "coredns replicas 0"},
+		"worker-stopped":      {"worker was stopped", "worker is stopped", "worker node is stopped", "stopped worker"},
+	}
 	for _, claim := range claims {
-		if claim.CauseID == expected || strings.Contains(strings.ToLower(claim.Text), strings.ToLower(expected)) {
+		if claim.CauseID != "" {
+			if claim.CauseID == expected {
+				return true, "exact cause ID"
+			}
+			continue
+		}
+		text := strings.ToLower(claim.Text)
+		matches := func(phrase string) bool {
+			return strings.Contains(text, phrase) &&
+				!strings.Contains(text, "not "+phrase) &&
+				!strings.Contains(text, "not a "+phrase) &&
+				!strings.Contains(text, "no "+phrase)
+		}
+		if matches(strings.ToLower(expected)) {
+			return true, "literal expected label in final cause text"
+		}
+		for _, phrase := range phrases[expected] {
+			if matches(phrase) {
+				return true, "accepted causal phrase: " + phrase
+			}
+		}
+	}
+	return false, "no matching cause ID, label, or accepted causal phrase"
+}
+
+func isAbstention(claims []Claim) bool {
+	if len(claims) != 1 || claims[0].CauseID != "" {
+		return false
+	}
+	text := strings.ToLower(claims[0].Text)
+	if strings.Contains(text, "the container was oom") {
+		return false
+	}
+	for _, expected := range []string{"memory-limit", "bad-release", "issuer-ca-secret", "coredns-scaled-down", "worker-stopped"} {
+		if matched, _ := compareCause(claims, expected); matched {
+			return false
+		}
+	}
+	for _, phrase := range []string{
+		"not established", "not determined", "insufficient evidence",
+		"cannot establish the cause", "not sufficient to establish",
+		"further investigation is required",
+	} {
+		if strings.Contains(text, phrase) {
 			return true
 		}
 	}
 	return false
-}
-
-func isAbstention(claims []Claim) bool {
-	return len(claims) == 1 && claims[0].CauseID == "" &&
-		strings.Contains(strings.ToLower(claims[0].Text), "not established")
 }
 
 func supportedClaims(note Note) float64 {

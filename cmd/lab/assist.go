@@ -72,7 +72,9 @@ func newAssistEvalCmd() *cobra.Command {
 				for _, hybrid := range []bool{false, true} {
 					results, summary, err := assist.Evaluate(ctx, fixtures, assist.HTTPModel{
 						URL: "http://127.0.0.1:11434", Name: name,
-					}, name, hybrid, runs)
+					}, name, hybrid, runs, func(result assist.EvalResult) error {
+						return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+					})
 					if err != nil {
 						return fmt.Errorf("evaluate %s (hybrid=%t): %w", name, hybrid, err)
 					}
@@ -128,7 +130,7 @@ func runAssistLiveEval(cmd *cobra.Command, f labFlags, drill string) (runErr err
 	input := newAssistInputCmd("drill")
 	input.SetOut(cmd.OutOrStdout())
 	input.SetErr(cmd.ErrOrStderr())
-	args := []string{drill}
+	args := []string{drill, "--rules-first"}
 	if cfgPath, err := f.configPath(); err == nil && cfgPath != "" {
 		args = append(args, "--config", cfgPath)
 	}
@@ -163,6 +165,7 @@ func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 		runs                int
 		wall                time.Duration
 		correct, support    float64
+		causeScored         int
 		abstainExpected     bool
 		abstainCorrect      int
 	}
@@ -182,6 +185,9 @@ func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 		}
 		rows[i].runs++
 		rows[i].wall += result.Duration
+		if result.CauseScored {
+			rows[i].causeScored++
+		}
 		if result.CauseCorrect {
 			rows[i].correct++
 		}
@@ -196,9 +202,13 @@ func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 		if row.abstainExpected {
 			abstention = fmt.Sprintf("%d/%d", row.abstainCorrect, row.runs)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%.1f%%\t%s\t%.1f%%\n",
+		cause := "not scored"
+		if row.causeScored > 0 {
+			cause = fmt.Sprintf("%.1f%%", row.correct/float64(row.causeScored)*100)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%.1f%%\n",
 			row.caseID, row.model, row.mode, row.runs, row.wall.Round(time.Millisecond),
-			row.correct/float64(row.runs)*100, abstention, row.support/float64(row.runs)*100)
+			cause, abstention, row.support/float64(row.runs)*100)
 	}
 	return tw.Flush()
 }
@@ -206,6 +216,7 @@ func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 func newAssistInputCmd(kind string) *cobra.Command {
 	var f labFlags
 	var hosted bool
+	var rulesFirst bool
 	var hostedURL, hostedModel, caFile, namespace string
 	cmd := &cobra.Command{
 		Use:   kind + " <name>",
@@ -287,7 +298,7 @@ func newAssistInputCmd(kind string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			note, runErr := (assist.Runner{Tools: tools, Model: model, Tracer: tracer,
+			note, runErr := (assist.Runner{Tools: tools, Model: model, Tracer: tracer, RulesFirst: rulesFirst,
 				Sensitive: []string{tracer.PublicKey, tracer.SecretKey, model.Key}}).Run(ctx, alert)
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
@@ -299,6 +310,7 @@ func newAssistInputCmd(kind string) *cobra.Command {
 	}
 	f.register(cmd)
 	cmd.Flags().BoolVar(&hosted, "hosted", false, "send selected evidence to a hosted model")
+	cmd.Flags().BoolVar(&rulesFirst, "rules-first", false, "retain a deterministic cause supported by the evidence")
 	cmd.Flags().StringVar(&hostedURL, "hosted-url", "", "hosted OpenAI-compatible HTTPS API base URL")
 	cmd.Flags().StringVar(&hostedModel, "hosted-model", "", "hosted model name")
 	cmd.Flags().StringVar(&caFile, "langfuse-ca", "", "PEM CA certificate for the local Langfuse Gateway")

@@ -206,6 +206,64 @@ func TestFocusPodEvidence(t *testing.T) {
 	}
 }
 
+func TestFindingsPreserveHistoryAndNodeConditions(t *testing.T) {
+	got := Redact(deterministicFindings([]Evidence{
+		{ID: "E6", Source: "argocd_history", Data: `[{"revision":"new-release"}]`},
+		{ID: "E7", Source: "nodes", Data: `{"conditions":[{"reason":"KubeletNotReady"}]}`},
+	}))
+	for _, want := range []string{"new-release", "KubeletNotReady", "E6", "E7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in findings: %s", want, got)
+		}
+	}
+}
+
+func TestRuleCandidateChecksLaterObservations(t *testing.T) {
+	candidate := ruleCandidate([]Evidence{
+		{ID: "E2", Source: "pods", Data: `{"restartCount":0}`},
+		{ID: "E8", Source: "pods", Data: `{"reason":"OOMKilled","exitCode":137}`},
+	})
+	if candidate == nil || candidate.CauseID != "memory-limit" ||
+		len(candidate.Evidence) != 1 || candidate.Evidence[0] != "E8" {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+type laterPodTools struct{ pods int }
+
+func (t *laterPodTools) Call(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
+	if name == "pods" {
+		t.pods++
+		if t.pods > 1 {
+			return json.RawMessage(`{"reason":"OOMKilled","exitCode":137}`), nil
+		}
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+func TestRunnerUsesCauseFromExtraToolCall(t *testing.T) {
+	call := Decision{}
+	call.Tool = &struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"arguments"`
+	}{"pods", json.RawMessage(`{"namespace":"demo"}`)}
+	model := &fakeModel{decisions: []Decision{call, {Note: &Note{
+		WhatFired: []Claim{{Text: "fired", Evidence: []string{"E1"}}},
+		Cause:     []Claim{{Text: "The root cause is not established."}},
+		Confirm:   []Claim{{Text: "inspect"}},
+		Fix:       []Claim{{Text: "investigate"}},
+	}}}}
+	note, err := (Runner{Tools: &laterPodTools{}, Model: model, Tracer: &fakeTracer{}, RulesFirst: true}).
+		Run(context.Background(), Alert{Name: "Example", Labels: map[string]string{"namespace": "demo", "app": "api"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(note.Cause) != 1 || note.Cause[0].CauseID != "memory-limit" ||
+		len(note.Cause[0].Evidence) != 1 || note.Cause[0].Evidence[0] != "E8" {
+		t.Fatalf("cause = %+v", note.Cause)
+	}
+}
+
 func TestRunnerRemovesTraceKeys(t *testing.T) {
 	tools := &fakeTools{data: `{"message":"secret-fixture"}`}
 	model := &fakeModel{decisions: []Decision{{Note: &Note{

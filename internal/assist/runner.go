@@ -241,27 +241,32 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		} else {
 			add(decision.Tool.Name, string(data), callStarted, false)
 		}
+		if r.RulesFirst && candidate == nil {
+			candidate = ruleCandidate(note.Evidence)
+			if candidate != nil {
+				add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
+			}
+		}
 	}
 }
 
 // deterministicFindings makes the diagnostic fields needed for root-cause
 // decisions explicit and stable before the model sees the bundle.
 func deterministicFindings(evidence []Evidence) string {
-	var findings []string
+	var findings []map[string]string
 	for _, item := range evidence {
 		switch item.Source {
-		case "pods":
-			findings = append(findings, "pod status (termination reason, exit code, restart count, image): "+item.Data)
-		case "argocd_history":
-			findings = append(findings, "Argo CD history: "+item.Data)
-		case "nodes":
-			findings = append(findings, "node conditions: "+item.Data)
+		case "pods", "argocd_history", "nodes":
+			findings = append(findings, map[string]string{
+				"evidence_id": item.ID, "source": item.Source, "data": item.Data,
+			})
 		}
 	}
 	if len(findings) == 0 {
 		return "no deterministic pod, Argo CD, or node findings were available"
 	}
-	return strings.Join(findings, "\n")
+	b, _ := json.Marshal(findings)
+	return string(b)
 }
 
 func ruleCandidate(evidence []Evidence) *Claim {
@@ -271,27 +276,33 @@ func ruleCandidate(evidence []Evidence) *Claim {
 				continue
 			}
 			data := strings.ToLower(item.Data)
+			matched := true
 			for _, term := range terms {
 				if !strings.Contains(data, strings.ToLower(term)) {
-					return nil
+					matched = false
+					break
 				}
 			}
-			return &Claim{Evidence: []string{item.ID}}
+			if matched {
+				return &Claim{Evidence: []string{item.ID}}
+			}
 		}
 		return nil
 	}
 	for _, rule := range []struct {
 		cause, source string
 		terms         []string
+		text          string
 	}{
-		{"memory-limit", "pods", []string{"oomkilled", "exitcode\":137"}},
-		{"bad-release", "pods", []string{"crashloopbackoff", "6.15.1"}},
-		{"coredns-scaled-down", "events", []string{"coredns replicas 0"}},
-		{"worker-stopped", "nodes", []string{"kubeletnotready"}},
+		{"memory-limit", "pods", []string{"oomkilled", "exitcode\":137"}, "The container was OOMKilled with exit code 137; inspect memory limits and node pressure."},
+		{"bad-release", "pods", []string{"crashloopbackoff", "6.15.1"}, "The container is in CrashLoopBackOff with image version 6.15.1."},
+		{"coredns-scaled-down", "events", []string{"coredns replicas 0"}, "CoreDNS has been scaled to zero replicas."},
+		{"worker-stopped", "nodes", []string{"kubeletnotready"}, "The worker reports KubeletNotReady."},
+		{"issuer-ca-secret", "loki_logs", []string{"issuer", "missing ca secret"}, "The issuer references a missing CA Secret."},
 	} {
 		if candidate := find(rule.source, rule.terms...); candidate != nil {
 			candidate.CauseID = rule.cause
-			candidate.Text = "Deterministic rule candidate is " + rule.cause + "."
+			candidate.Text = rule.text
 			return candidate
 		}
 	}

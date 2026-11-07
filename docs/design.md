@@ -337,12 +337,31 @@ fix.
 fixtures plus seeded abstention and unsupported-evidence mistakes at
 temperature 0 and seed 42. It executes each case at least three times and
 reports cause correctness, cited-claim support, mean duration and duration
-standard deviation for model-only and rules-first modes. The rules-first
+standard deviation for model-only and rules-first modes. Each run emits a
+JSON diagnostic with the sanitized findings and observations, rule candidate,
+raw model cause, final cause, ground truth and grading decision before the
+per-case tables. Failed runs stay in the scoring denominator. Expected
+abstentions (including slow-db, secret-drift and the seeded uncertainty cases)
+are reported separately, not counted as incorrect causal diagnoses.
+The grader accepts canonical cause IDs and a bounded set of explicit causal
+phrases; an OOM symptom or a suggestion to inspect memory limits alone does
+not establish that a configured limit was too low. Explicit uncertainty
+wording is graded as abstention rather than requiring one literal sentence.
+The rules-first
 mode adds a deterministic candidate only for directly observed patterns; the
-model still writes the explanation and action sections. Fixtures record the
+model still writes the action sections. Supported candidates are retained
+even when the model abstains, with citations to the original observations.
+Structured findings preserve Argo CD history and node conditions through
+redaction. A missing issuer CA Secret is diagnosed only from an explicit
+log observation, not from a certificate-expiry alert alone.
+Fixtures record the
 safe tool responses, so comparisons do not inject faults. Live evaluation,
 when used, must start every drill through `drills.Manager` and always abort
-it through that same safety path before moving to the next case.
+it through that same safety path before moving to the next case. It uses the
+shared runner's rules-first mode (`lab assist alert|drill --rules-first`).
+Fixture and live evaluations hold the same lab lock; models run sequentially
+so comparison jobs and mutating lab commands cannot overlap. The lab's GitOps
+revision does not change.
 
 The tools live in `internal/assist`. The `ai/assist-tools` ServiceAccount,
 installed with the Ollama GitOps app, has get/list on pods and events, get on
