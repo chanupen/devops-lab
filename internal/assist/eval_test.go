@@ -31,6 +31,12 @@ func TestSummarizeEval(t *testing.T) {
 	}
 }
 
+func TestAbstentionAllowsCitedUncertainty(t *testing.T) {
+	if !isAbstention([]Claim{{Text: "The root cause is not established.", Evidence: []string{"E1"}}}) {
+		t.Fatal("cited uncertainty should count as an abstention")
+	}
+}
+
 type fixtureModel struct{}
 
 func (fixtureModel) Decide(_ context.Context, _ Alert, _ []Evidence) (Decision, error) {

@@ -141,14 +141,15 @@ func runAssistLiveEval(cmd *cobra.Command, f labFlags, drill string) (runErr err
 
 func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "MODEL\tMODE\tCAUSE CORRECT\tEVIDENCE SUPPORT\tMEAN TIME\tTIME STDDEV\tRUNS")
+	_, _ = fmt.Fprintln(tw, "MODEL\tMODE\tCAUSE CORRECT\tABSTENTIONS\tEVIDENCE SUPPORT\tMEAN TIME\tTIME STDDEV\tRUNS")
 	for _, summary := range summaries {
 		mode := "model-only"
 		if summary.Hybrid {
 			mode = "rules-first"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%.1f%%\t%s\t%s\t%d\n",
-			summary.Model, mode, summary.CauseCorrect*100, summary.EvidenceSupport*100,
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%d/%d\t%.1f%%\t%s\t%s\t%d\n",
+			summary.Model, mode, summary.CauseCorrect*100,
+			summary.AbstainCorrect, summary.AbstainExpected, summary.EvidenceSupport*100,
 			summary.MeanDuration.Round(time.Millisecond), summary.DurationVariance.Round(time.Millisecond), summary.Runs)
 	}
 	return tw.Flush()
@@ -156,12 +157,14 @@ func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
 
 func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "\nCASE\tMODEL\tMODE\tRUNS\tTOTAL WALL TIME\tCAUSE CORRECT\tEVIDENCE SUPPORT")
+	_, _ = fmt.Fprintln(tw, "\nCASE\tMODEL\tMODE\tRUNS\tTOTAL WALL TIME\tCAUSE CORRECT\tABSTENTION\tEVIDENCE SUPPORT")
 	type row struct {
 		caseID, model, mode string
 		runs                int
 		wall                time.Duration
 		correct, support    float64
+		abstainExpected     bool
+		abstainCorrect      int
 	}
 	rows := make([]row, 0, len(results))
 	index := map[string]int{}
@@ -183,11 +186,19 @@ func writeAssistEvalCases(w io.Writer, results []assist.EvalResult) error {
 			rows[i].correct++
 		}
 		rows[i].support += result.EvidenceSupport
+		rows[i].abstainExpected = result.AbstainExpected
+		if result.AbstainCorrect {
+			rows[i].abstainCorrect++
+		}
 	}
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%.1f%%\t%.1f%%\n",
+		abstention := "—"
+		if row.abstainExpected {
+			abstention = fmt.Sprintf("%d/%d", row.abstainCorrect, row.runs)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%.1f%%\t%s\t%.1f%%\n",
 			row.caseID, row.model, row.mode, row.runs, row.wall.Round(time.Millisecond),
-			row.correct/float64(row.runs)*100, row.support/float64(row.runs)*100)
+			row.correct/float64(row.runs)*100, abstention, row.support/float64(row.runs)*100)
 	}
 	return tw.Flush()
 }

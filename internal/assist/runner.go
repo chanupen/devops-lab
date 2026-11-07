@@ -38,6 +38,7 @@ type Claim struct {
 	Text        string   `json:"text"`
 	Evidence    []string `json:"evidence"`
 	Unsupported bool     `json:"unsupported"`
+	CauseID     string   `json:"cause_id,omitempty"`
 }
 
 // Note is the incident note. Commands are suggestions, never executed.
@@ -264,24 +265,34 @@ func deterministicFindings(evidence []Evidence) string {
 }
 
 func ruleCandidate(evidence []Evidence) *Claim {
-	for _, rule := range []struct {
-		cause string
-		words []string
-	}{
-		{"memory-limit", []string{"oomkilled", "exitcode\":137"}},
-		{"issuer-ca-secret", []string{"ca secret", "issuer"}},
-		{"coredns-scaled-down", []string{"coredns", "replicas\":0"}},
-		{"worker-stopped", []string{"notready", "node conditions"}},
-		{"secret-deleted", []string{"deleteddate"}},
-		{"netem-delay", []string{"netem", "qdisc"}},
-		{"bad-release", []string{"6.15.1", "image pull"}},
-	} {
+	find := func(source string, terms ...string) *Claim {
 		for _, item := range evidence {
-			for _, word := range rule.words {
-				if strings.Contains(strings.ToLower(item.Data), strings.ToLower(word)) {
-					return &Claim{Text: "Candidate cause: " + rule.cause, Evidence: []string{item.ID}}
+			if item.Source != source {
+				continue
+			}
+			data := strings.ToLower(item.Data)
+			for _, term := range terms {
+				if !strings.Contains(data, strings.ToLower(term)) {
+					return nil
 				}
 			}
+			return &Claim{Evidence: []string{item.ID}}
+		}
+		return nil
+	}
+	for _, rule := range []struct {
+		cause, source string
+		terms         []string
+	}{
+		{"memory-limit", "pods", []string{"oomkilled", "exitcode\":137"}},
+		{"bad-release", "pods", []string{"crashloopbackoff", "6.15.1"}},
+		{"coredns-scaled-down", "events", []string{"coredns replicas 0"}},
+		{"worker-stopped", "nodes", []string{"kubeletnotready"}},
+	} {
+		if candidate := find(rule.source, rule.terms...); candidate != nil {
+			candidate.CauseID = rule.cause
+			candidate.Text = "Deterministic rule candidate is " + rule.cause + "."
+			return candidate
 		}
 	}
 	return nil

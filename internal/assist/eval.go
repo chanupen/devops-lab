@@ -19,6 +19,7 @@ type EvalFixture struct {
 	ID       string                     `json:"id"`
 	Alert    Alert                      `json:"alert"`
 	Expected string                     `json:"expected_cause"`
+	Abstain  bool                       `json:"expect_abstention,omitempty"`
 	Tools    map[string]json.RawMessage `json:"tools"`
 }
 
@@ -28,6 +29,10 @@ type EvalResult struct {
 	Model           string        `json:"model"`
 	Hybrid          bool          `json:"hybrid"`
 	CauseCorrect    bool          `json:"cause_correct"`
+	Abstained       bool          `json:"abstained"`
+	CauseScored     bool          `json:"cause_scored"`
+	AbstainExpected bool          `json:"abstain_expected"`
+	AbstainCorrect  bool          `json:"abstain_correct"`
 	EvidenceSupport float64       `json:"evidence_support"`
 	Duration        time.Duration `json:"duration"`
 	Error           string        `json:"error,omitempty"`
@@ -39,6 +44,10 @@ type EvalSummary struct {
 	Model            string        `json:"model"`
 	Hybrid           bool          `json:"hybrid"`
 	Runs             int           `json:"runs"`
+	CauseScored      int           `json:"cause_scored"`
+	Abstentions      int           `json:"abstentions"`
+	AbstainExpected  int           `json:"abstain_expected"`
+	AbstainCorrect   int           `json:"abstain_correct"`
 	CauseCorrect     float64       `json:"cause_correct"`
 	EvidenceSupport  float64       `json:"evidence_support"`
 	MeanDuration     time.Duration `json:"mean_duration"`
@@ -110,7 +119,13 @@ func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelNam
 			if err != nil {
 				result.Error = err.Error()
 			} else {
-				result.CauseCorrect = causeMatches(note.Cause, fixture.Expected)
+				result.Abstained = isAbstention(note.Cause)
+				result.AbstainExpected = fixture.Abstain
+				result.AbstainCorrect = fixture.Abstain && result.Abstained
+				result.CauseScored = !fixture.Abstain
+				if result.CauseScored {
+					result.CauseCorrect = causeMatches(note.Cause, fixture.Expected)
+				}
 				result.EvidenceSupport = supportedClaims(note)
 			}
 			results = append(results, result)
@@ -121,11 +136,16 @@ func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelNam
 
 func causeMatches(claims []Claim, expected string) bool {
 	for _, claim := range claims {
-		if strings.Contains(strings.ToLower(claim.Text), strings.ToLower(expected)) {
+		if claim.CauseID == expected || strings.Contains(strings.ToLower(claim.Text), strings.ToLower(expected)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isAbstention(claims []Claim) bool {
+	return len(claims) == 1 && claims[0].CauseID == "" &&
+		strings.Contains(strings.ToLower(claims[0].Text), "not established")
 }
 
 func supportedClaims(note Note) float64 {
@@ -179,8 +199,20 @@ func SummarizeEval(results []EvalResult) []EvalSummary {
 			totals[key] = item
 		}
 		item.Runs++
+		if result.CauseScored {
+			item.CauseScored++
+		}
 		if result.CauseCorrect {
 			item.CauseCorrect++
+		}
+		if result.Abstained {
+			item.Abstentions++
+		}
+		if result.AbstainExpected {
+			item.AbstainExpected++
+		}
+		if result.AbstainCorrect {
+			item.AbstainCorrect++
 		}
 		item.EvidenceSupport += result.EvidenceSupport
 		item.durations = append(item.durations, float64(result.Duration))
@@ -188,7 +220,9 @@ func SummarizeEval(results []EvalResult) []EvalSummary {
 	out := make([]EvalSummary, 0, len(totals))
 	for _, item := range totals {
 		n := float64(item.Runs)
-		item.CauseCorrect /= n
+		if item.CauseScored > 0 {
+			item.CauseCorrect /= float64(item.CauseScored)
+		}
 		item.EvidenceSupport /= n
 		var mean float64
 		for _, duration := range item.durations {
