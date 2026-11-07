@@ -14,7 +14,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 ## Order and status
 
-| File | Phase | Builds | Status (6 Nov 2026) |
+| File | Phase | Builds | Status (7 Nov 2026) |
 | --- | --- | --- | --- |
 | `01-phase0-foundations.md` | 0 | Repo skeleton, Cobra CLI, `lab doctor` | Done (#1, #4) |
 | `02-phase1-local-core.md` | 1 | Engine, state, local provider, gitops, core, obs, sample-app | Done (#2–#7) |
@@ -30,7 +30,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Open: PR #29, needs one passing cloud session |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
 | `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Next |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | Not started |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook done; eval done (#40); assistant TUI pane in this draft PR; release work remains |
 
 ## To continue from today
 

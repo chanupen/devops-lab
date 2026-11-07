@@ -85,26 +85,26 @@ func TestDrillKeys(t *testing.T) {
 	if strings.Join(f.calls, ",") != "start dns" {
 		t.Fatalf("calls = %v", f.calls)
 	}
-	m = pressDrill(t, m, "a")
+	m = pressDrill(t, m, "A")
 	if !strings.Contains(m.flash, "no drill is running") {
 		t.Errorf("ack without a drill: %q", m.flash)
 	}
 
 	m.d.st.ActiveDrill = &state.DrillRun{Drill: "dns", Phase: state.DrillRunning, Started: t0, Deadline: t0.Add(30 * time.Minute)}
 	m.opts.Now = func() time.Time { return t0.Add(time.Minute) }
-	m = pressDrill(t, m, "a")
+	m = pressDrill(t, m, "A")
 	if m.drills.pick == nil || len(f.calls) != 1 {
-		t.Fatalf("a opens the cause list: %+v %v", m.drills.pick, f.calls)
+		t.Fatalf("A opens the cause list: %+v %v", m.drills.pick, f.calls)
 	}
 	m = pressDrill(t, m, "2", "enter")
 	if !strings.Contains(m.flash, "not the cause: netpol") {
 		t.Errorf("wrong cause: %q", m.flash)
 	}
-	m = pressDrill(t, m, "a", "esc")
+	m = pressDrill(t, m, "A", "esc")
 	if m.drills.pick != nil || len(f.calls) != 2 {
 		t.Errorf("esc closes the list without an ack: %v", f.calls)
 	}
-	m = pressDrill(t, m, "a", "enter", "h", "v")
+	m = pressDrill(t, m, "A", "enter", "h", "v")
 	if got := strings.Join(f.calls, ","); got != "start dns,ack netpol,ack coredns-down,hint,verify" {
 		t.Fatalf("calls = %v", got)
 	}

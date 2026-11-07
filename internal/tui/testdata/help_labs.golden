@@ -14,6 +14,7 @@
   U           Bring the whole profile up (lab up)                                                   
   :           Command palette: up, down, status, doctor, plan                                       
   K           Open k9s on the lab cluster; quit it to come back                                     
+  a           Assistant: choose a firing alert; on Drills, investigate the running drill            
   ?           This help                                                                             
   q  ctrl+c   Quit                                                                                  
                                                                                                     
@@ -23,7 +24,6 @@
   Every action shows its CLI command in the ops strip.                                              
                                                                                                     
   State: ● healthy  ◐ progressing  ○ off  ✕ failed                                                  
-                                                                                                    
                                                                                                     
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      

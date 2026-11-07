@@ -17,12 +17,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/chanupen/devops-lab/internal/assist"
 	"github.com/chanupen/devops-lab/internal/drills"
-	"github.com/chanupen/devops-lab/internal/kube"
 )
 
 func newAssistCmd() *cobra.Command {
@@ -218,6 +215,7 @@ func newAssistInputCmd(kind string) *cobra.Command {
 	var hosted bool
 	var rulesFirst bool
 	var hostedURL, hostedModel, caFile, namespace string
+	var selectors []string
 	cmd := &cobra.Command{
 		Use:   kind + " <name>",
 		Short: "Investigate a local " + kind,
@@ -231,43 +229,10 @@ func newAssistInputCmd(kind string) *cobra.Command {
 				return errors.New("assist is available only in local mode")
 			}
 			kubeconfig := filepath.Join(filepath.Dir(store.Path()), "kubeconfig")
-			operator, err := kube.RESTConfig(kubeconfig)
-			if err != nil {
-				return err
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), assist.RunTimeout)
 			defer cancel()
 			setupCtx, setupCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer setupCancel()
-			toolConfig, err := assist.MintIdentity(setupCtx, operator, assist.ToolServiceAccount)
-			if err != nil {
-				return err
-			}
-			tools, err := assist.NewClient(toolConfig)
-			if err != nil {
-				return err
-			}
-			traceConfig, err := assist.MintIdentity(setupCtx, operator, assist.TraceServiceAccount)
-			if err != nil {
-				return err
-			}
-			traceClient, err := kubernetes.NewForConfig(traceConfig)
-			if err != nil {
-				return err
-			}
-			keys, err := traceClient.CoreV1().Secrets("ai").Get(setupCtx, "langfuse-credentials", metav1.GetOptions{})
-			if err != nil {
-				return fmt.Errorf("read Langfuse keys: %w", err)
-			}
-			tracer := assist.OTLPTracer{
-				URL: "https://langfuse.localtest.me:8443", PublicKey: string(keys.Data["public-key"]), SecretKey: string(keys.Data["secret-key"]),
-			}
-			if caFile != "" {
-				tracer.Client, err = langfuseClient(caFile)
-				if err != nil {
-					return err
-				}
-			}
 			model := assist.HTTPModel{URL: "http://127.0.0.1:11434", Name: "llama3.2:3b"}
 			if hosted {
 				if hostedURL == "" || hostedModel == "" || os.Getenv("LAB_HOSTED_API_KEY") == "" {
@@ -279,7 +244,10 @@ func newAssistInputCmd(kind string) *cobra.Command {
 				return errors.New("hosted options require --hosted")
 			}
 			alertName := args[0]
-			var labels map[string]string
+			labels, err := alertSelectors(selectors)
+			if err != nil {
+				return err
+			}
 			if kind == "drill" {
 				m, err := drillsManager(f)
 				if err != nil {
@@ -292,14 +260,23 @@ func newAssistInputCmd(kind string) *cobra.Command {
 				if !ok || run.Drill != args[0] {
 					return errors.New("the named drill is not running")
 				}
-				alertName, labels = drill.Alert.Name, drill.Alert.Labels
+				alertName = drill.Alert.Name
+				for k, v := range drill.Alert.Labels {
+					if selected, ok := labels[k]; ok && selected != v {
+						return fmt.Errorf("label %s conflicts with the drill's alert", k)
+					}
+					labels[k] = v
+				}
 			}
-			alert, err := findAlert(setupCtx, tools, alertName, namespace, labels)
+			runner, err := newAssistRunner(setupCtx, kubeconfig, caFile, model, rulesFirst, nil)
 			if err != nil {
 				return err
 			}
-			note, runErr := (assist.Runner{Tools: tools, Model: model, Tracer: tracer, RulesFirst: rulesFirst,
-				Sensitive: []string{tracer.PublicKey, tracer.SecretKey, model.Key}}).Run(ctx, alert)
+			alert, err := findAlert(setupCtx, runner.Tools, alertName, namespace, labels)
+			if err != nil {
+				return err
+			}
+			note, runErr := runner.Run(ctx, alert)
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(note); err != nil {
@@ -315,14 +292,64 @@ func newAssistInputCmd(kind string) *cobra.Command {
 	cmd.Flags().StringVar(&hostedModel, "hosted-model", "", "hosted model name")
 	cmd.Flags().StringVar(&caFile, "langfuse-ca", "", "PEM CA certificate for the local Langfuse Gateway")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "select an alert in this namespace")
+	cmd.Flags().StringArrayVar(&selectors, "label", nil, "select an exact firing-alert label (key=value; repeatable)")
 	return cmd
 }
 
 func findAlert(ctx context.Context, tools assist.Tools, name, namespace string, labels map[string]string) (assist.Alert, error) {
-	raw, _ := json.Marshal(map[string]string{"query": `ALERTS{alertstate="firing",alertname=` + strconv.Quote(name) + `}`})
-	b, err := tools.Call(ctx, "prometheus_query", raw)
+	alerts, err := firingAlerts(ctx, tools, name)
 	if err != nil {
 		return assist.Alert{}, err
+	}
+	var matches []assist.Alert
+	for _, alert := range alerts {
+		if namespace != "" && alert.Labels["namespace"] != namespace {
+			continue
+		}
+		match := true
+		for k, v := range labels {
+			if alert.Labels[k] != v {
+				match = false
+				break
+			}
+		}
+		if match {
+			matches = append(matches, alert)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) == 0 {
+		return assist.Alert{}, fmt.Errorf("no firing alert %q", name)
+	}
+	return assist.Alert{}, fmt.Errorf("multiple firing alerts %q; select a namespace or --label", name)
+}
+
+func alertSelectors(selectors []string) (map[string]string, error) {
+	labels := make(map[string]string, len(selectors))
+	for _, selector := range selectors {
+		k, v, ok := strings.Cut(selector, "=")
+		if !ok || k == "" {
+			return nil, errors.New("--label requires key=value")
+		}
+		if previous, ok := labels[k]; ok && previous != v {
+			return nil, fmt.Errorf("conflicting --label values for %s", k)
+		}
+		labels[k] = v
+	}
+	return labels, nil
+}
+
+func firingAlerts(ctx context.Context, tools assist.Tools, name string) ([]assist.Alert, error) {
+	query := `ALERTS{alertstate="firing"}`
+	if name != "" {
+		query = `ALERTS{alertstate="firing",alertname=` + strconv.Quote(name) + `}`
+	}
+	raw, _ := json.Marshal(map[string]string{"query": query})
+	b, err := tools.Call(ctx, "prometheus_query", raw)
+	if err != nil {
+		return nil, err
 	}
 	var result struct {
 		Status string `json:"status"`
@@ -333,31 +360,20 @@ func findAlert(ctx context.Context, tools assist.Tools, name, namespace string, 
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(b, &result); err != nil || result.Status != "success" {
-		return assist.Alert{}, errors.New("cannot decode firing alerts")
+		return nil, errors.New("cannot decode firing alerts")
 	}
-	var matches []map[string]string
+	var alerts []assist.Alert
 	for _, entry := range result.Data.Result {
-		if namespace != "" && entry.Metric["namespace"] != namespace {
+		alertName := name
+		if alertName == "" {
+			alertName = entry.Metric["alertname"]
+		}
+		if alertName == "" {
 			continue
 		}
-		match := true
-		for k, v := range labels {
-			if entry.Metric[k] != v {
-				match = false
-				break
-			}
-		}
-		if match {
-			matches = append(matches, entry.Metric)
-		}
+		alerts = append(alerts, assist.Alert{Name: alertName, Status: "firing", Labels: entry.Metric})
 	}
-	if len(matches) == 1 {
-		return assist.Alert{Name: name, Status: "firing", Labels: matches[0]}, nil
-	}
-	if len(matches) == 0 {
-		return assist.Alert{}, fmt.Errorf("no firing alert %q", name)
-	}
-	return assist.Alert{}, fmt.Errorf("multiple firing alerts %q; select a namespace", name)
+	return alerts, nil
 }
 
 func langfuseClient(path string) (*http.Client, error) {

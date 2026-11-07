@@ -53,15 +53,21 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 		Fix:       []Claim{{Text: "investigate", Evidence: []string{"E2"}}},
 	}}}}
 	tracer := &fakeTracer{}
-	note, err := (Runner{Tools: tools, Model: model, Tracer: tracer}).Run(context.Background(),
+	var progress []Progress
+	note, err := (Runner{Tools: tools, Model: model, Tracer: tracer,
+		Progress: func(p Progress) { progress = append(progress, p) }}).Run(context.Background(),
 		Alert{Name: "Example", Status: "firing", Labels: map[string]string{"namespace": "demo", "app": "frontend"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 7 {
 		t.Fatalf("note = %+v", note)
 	}
-	b, _ := json.Marshal(model.inputs)
+	b, _ := json.Marshal(struct {
+		Inputs   [][]Evidence
+		Progress []Progress
+	}{model.inputs, progress})
 	for _, secret := range []string{"inline-secret", "helm-secret", "log-secret"} {
 		if strings.Contains(string(b), secret) {
 			t.Fatalf("secret %q reached model: %s", secret, b)
@@ -70,6 +76,51 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 	if tracer.evidence != 7 || tracer.calls != 0 || tracer.incomplete {
 		t.Fatalf("trace = %+v", tracer)
 	}
+}
+
+func TestRunnerProgressAndCandidate(t *testing.T) {
+	fixtures, err := LoadEvalFixtures("testdata/eval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		if fixture.ID != "oom" {
+			continue
+		}
+		model := &fakeModel{decisions: []Decision{{Note: &Note{
+			Candidate: &Claim{Text: "model invented a rule"},
+			WhatFired: []Claim{{Text: "Alert fired", Evidence: []string{"E1"}}},
+			Cause:     []Claim{{Text: "not established"}},
+			Confirm:   []Claim{{Text: "Inspect the pod", Evidence: []string{"E2"}}},
+			Fix:       []Claim{{Text: "Review the limit", Evidence: []string{"E2"}}},
+		}}}}
+		var updates []Progress
+		note, err := (Runner{Tools: FixtureTools(fixture.Tools), Model: model, Tracer: &fakeTracer{}, RulesFirst: true,
+			Progress: func(p Progress) { updates = append(updates, p) }}).Run(context.Background(), fixture.Alert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if note.Candidate == nil || note.Candidate.CauseID != "memory-limit" || note.Abstained() {
+			t.Fatalf("candidate = %+v", note.Candidate)
+		}
+		evidence, candidate, reasoning, tracing := 0, false, false, false
+		for _, p := range updates {
+			if p.Evidence != nil {
+				evidence++
+				if len(p.Evidence.Data) > evidenceLimit+len(" [truncated]") {
+					t.Fatal("progress escaped evidence bounds")
+				}
+			}
+			candidate = candidate || p.Candidate != nil && p.Candidate.CauseID == "memory-limit"
+			reasoning = reasoning || p.Stage == "reasoning"
+			tracing = tracing || p.Stage == "tracing"
+		}
+		if evidence != len(note.Evidence) || !candidate || !reasoning || !tracing {
+			t.Fatalf("incomplete progress: %d evidence, candidate %t, reasoning %t, tracing %t", evidence, candidate, reasoning, tracing)
+		}
+		return
+	}
+	t.Fatal("OOM fixture missing")
 }
 
 func TestRunnerRejectsUnknownEvidence(t *testing.T) {
