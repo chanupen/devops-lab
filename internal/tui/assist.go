@@ -388,7 +388,7 @@ func (p assistPane) render(height int) string {
 	}
 	var b strings.Builder
 	b.WriteString(bold.Render(" "+title) + "\n")
-	b.WriteString(warn.Render(" hypothesis, needs human review") + " · " + p.stage + "\n")
+	b.WriteString(warn.Render(" "+assist.HypothesisLabel) + " · " + p.stage + "\n")
 	if p.picking && p.state == assistIdle {
 		top := max(0, p.cursor-viewerRows(height)+1)
 		for i := top; i < min(len(p.alerts), top+viewerRows(height)); i++ {

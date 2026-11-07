@@ -26,7 +26,7 @@ lab drills history            # every run, its acks, and the best times per dril
 lab drills history --reset    # delete the history (--reset <id>: one drill's), after a prompt
 ```
 
-The TUI shows the same on screen 4, with the running timer in the header: `enter` starts the selected drill, `R` a random one, `a` lists the causes and acks the one you pick, `v` verifies, `h` shows a hint and `x` aborts.
+The TUI shows the same on screen 4, with the running timer in the header: `enter` starts the selected drill, `R` a random one, `a` opens the assistant, `A` lists the causes and acks the one you pick, `v` verifies, `h` shows a hint and `x` aborts. Esc cancels the assistant, not the drill.
 
 Each run records when it started, when its alert first fired (from Alertmanager, if the drill names one), every ack with the cause it named, when verify passed, and the hints and verify runs it took. From those come three times: **time to alert**, **time to detect** (the right ack) and **time to recover** (verify), all from the moment the fault was in. History lives in `~/.lab/state.json`.
 

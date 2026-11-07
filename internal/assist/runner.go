@@ -13,9 +13,10 @@ import (
 
 // Limits on a single assistant run.
 const (
-	RunTimeout     = 180 * time.Second
-	ExtraCallLimit = 8
-	evidenceLimit  = 600
+	RunTimeout      = 180 * time.Second
+	ExtraCallLimit  = 8
+	evidenceLimit   = 600
+	HypothesisLabel = "hypothesis, needs human review"
 )
 
 // Alert is the safe input shared by the CLI and the webhook.
@@ -43,6 +44,7 @@ type Claim struct {
 
 // Note is the incident note. Commands are suggestions, never executed.
 type Note struct {
+	Review     string     `json:"review"`
 	WhatFired  []Claim    `json:"what_fired"`
 	Evidence   []Evidence `json:"evidence"`
 	Cause      []Claim    `json:"likely_cause"`
@@ -128,6 +130,7 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
 	defer cancel()
 	defer func() {
+		note.Review = HypothesisLabel
 		if runErr != nil {
 			note.Incomplete = true
 			note.Error = "assistant run incomplete: " + runErr.Error()

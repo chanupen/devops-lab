@@ -435,7 +435,10 @@ the pane cannot execute them. Abstention uses the evaluation harness's same
 cause classification.
 
 The note separates what fired, evidence, likely cause, commands to confirm,
-and a proposed fix. Every factual claim and recommendation cites evidence IDs;
+and a proposed fix. The shared runner stamps every note's `review` field as
+`hypothesis, needs human review`, including CLI JSON and incomplete notes;
+model output cannot promote it to a verified diagnosis.
+Every factual claim and recommendation cites evidence IDs;
 anything without supporting evidence is explicitly marked **unsupported**.
 The runner rejects unknown IDs and marks uncited claims unsupported; a valid
 ID alone does not prove that the cited evidence supports a claim, so the

@@ -47,6 +47,7 @@ func (f *fakeTracer) Trace(_ context.Context, _, _ time.Time, evidence []ToolObs
 func TestRunnerEvidenceAndCitations(t *testing.T) {
 	tools := &fakeTools{data: `{"env":[{"name":"PASSWORD","value":"inline-secret"}],"helm":{"parameters":[{"name":"password","value":"helm-secret"}]},"line":"TOKEN=log-secret"}`}
 	model := &fakeModel{decisions: []Decision{{Note: &Note{
+		Review:    "verified diagnosis; no review needed",
 		WhatFired: []Claim{{Text: "alert fired", Evidence: []string{"E1"}}},
 		Cause:     []Claim{{Text: "unknown"}},
 		Confirm:   []Claim{{Text: "inspect pod", Evidence: []string{"E2"}}},
@@ -61,7 +62,7 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 7 {
+	if note.Review != HypothesisLabel || !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 7 {
 		t.Fatalf("note = %+v", note)
 	}
 	b, _ := json.Marshal(struct {
