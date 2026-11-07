@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/chanupen/devops-lab/internal/assist"
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/kube"
 )
 
@@ -32,13 +33,16 @@ func newAssistCmd() *cobra.Command {
 
 func newAssistEvalCmd() *cobra.Command {
 	var f labFlags
-	var fixtureDir, models string
+	var fixtureDir, models, live string
 	var runs int
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Measure local incident-note models against recorded drill evidence",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if live != "" {
+				return runAssistLiveEval(cmd, f, live)
+			}
 			cfgPath, err := f.configPath()
 			if err != nil {
 				return err
@@ -82,10 +86,41 @@ func newAssistEvalCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	withLabLock(cmd)
 	cmd.Flags().StringVar(&fixtureDir, "fixtures", "", "directory of recorded evaluation fixtures")
 	cmd.Flags().StringVar(&models, "models", "llama3.2:3b,qwen2.5:3b", "comma-separated local Ollama models")
 	cmd.Flags().IntVar(&runs, "runs", 3, "runs per case and mode (minimum 3)")
+	cmd.Flags().StringVar(&live, "live", "", "run one named drill through its safe start/abort lifecycle")
 	return cmd
+}
+
+func runAssistLiveEval(cmd *cobra.Command, f labFlags, drill string) (runErr error) {
+	m, err := drillsManager(f)
+	if err != nil {
+		return err
+	}
+	if _, err := m.Start(cmd.Context(), drill, false, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
+	defer func() {
+		restoreCtx, cancel := context.WithTimeout(context.Background(), drills.ScriptTimeout)
+		defer cancel()
+		if _, err := m.Abort(restoreCtx, cmd.ErrOrStderr()); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("restore live drill: %w", err))
+		}
+	}()
+	input := newAssistInputCmd("drill")
+	input.SetOut(cmd.OutOrStdout())
+	input.SetErr(cmd.ErrOrStderr())
+	args := []string{drill}
+	if cfgPath, err := f.configPath(); err == nil && cfgPath != "" {
+		args = append(args, "--config", cfgPath)
+	}
+	if f.statePath != "" {
+		args = append(args, "--state", f.statePath)
+	}
+	input.SetArgs(args)
+	return input.ExecuteContext(cmd.Context())
 }
 
 func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
