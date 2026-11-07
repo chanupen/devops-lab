@@ -80,6 +80,7 @@ func LoadEvalFixtures(dir string) ([]EvalFixture, error) {
 // the fixture. The runner still applies all output bounds and redaction.
 type FixtureTools map[string]json.RawMessage
 
+// Call implements Tools with one recorded response per tool name.
 func (t FixtureTools) Call(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
 	b, ok := t[name]
 	if !ok {
@@ -196,7 +197,8 @@ func SummarizeEval(results []EvalResult) []EvalSummary {
 		mean /= n
 		var variance float64
 		for _, duration := range item.durations {
-			variance += math.Pow(duration-mean, 2)
+			delta := duration - mean
+			variance += delta * delta
 		}
 		item.MeanDuration = time.Duration(mean)
 		item.DurationVariance = time.Duration(math.Sqrt(variance / n))
