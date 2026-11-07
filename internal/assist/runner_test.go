@@ -178,6 +178,22 @@ func TestRedactPreservesTimestamps(t *testing.T) {
 	}
 }
 
+func TestRedactPreservesImageReferences(t *testing.T) {
+	for _, image := range []string{
+		"lab-zot:5000/lab/podinfo:6.15.1",
+		"cert-manager:1",
+		"ghcr.io/example/app@sha256:" + strings.Repeat("a", 64),
+	} {
+		input, _ := json.Marshal(map[string]string{"image": image})
+		if got := Redact(string(input)); !strings.Contains(got, image) {
+			t.Errorf("image lost: %s", got)
+		}
+	}
+	if got := Redact(`{"image":"PASSWORD=inline-secret","env":[{"value":"env-secret"}]}`); strings.Contains(got, "inline-secret") || strings.Contains(got, "env-secret") {
+		t.Fatalf("invalid image or env leaked: %s", got)
+	}
+}
+
 func TestFocusPodEvidence(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -206,6 +222,19 @@ func TestFocusPodEvidence(t *testing.T) {
 	}
 }
 
+func TestLivePodSignalsFitEvidenceBound(t *testing.T) {
+	input := `{"name":"frontend-123","namespace":"demo","app":"frontend","node":"worker","containers":[{"name":"app","image":"lab-zot:5000/lab/podinfo:6.15.1","resources":{"limits":{"memory":"64Mi"}}}],"containerStatuses":[{"name":"app","image":"lab-zot:5000/lab/podinfo:6.15.1","restartCount":6,"lastState":{"terminated":{"reason":"Error","exitCode":1,"containerID":"` + strings.Repeat("x", 300) + `"}},"state":{"waiting":{"reason":"CrashLoopBackOff","message":"` + strings.Repeat("x", 700) + `"}}}]}`
+	got := focusPodEvidence(Redact(input))
+	if len(got) > evidenceLimit || !json.Valid([]byte(got)) {
+		t.Fatalf("focused pod exceeds the bound: %s", got)
+	}
+	for _, want := range []string{"lab-zot:5000/lab/podinfo:6.15.1", "CrashLoopBackOff", `"restartCount":6`, `"exitCode":1`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("signal %q missing in %s", want, got)
+		}
+	}
+}
+
 func TestFindingsPreserveHistoryAndNodeConditions(t *testing.T) {
 	got := Redact(deterministicFindings([]Evidence{
 		{ID: "E6", Source: "argocd_history", Data: `[{"revision":"new-release"}]`},
@@ -226,6 +255,34 @@ func TestRuleCandidateChecksLaterObservations(t *testing.T) {
 	if candidate == nil || candidate.CauseID != "memory-limit" ||
 		len(candidate.Evidence) != 1 || candidate.Evidence[0] != "E8" {
 		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestReleaseRuleRequiresCorroboration(t *testing.T) {
+	at := time.Date(2026, 11, 7, 9, 10, 0, 0, time.UTC)
+	pod := `{"containerStatuses":[{"restartCount":6,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}`
+	for _, tt := range []struct {
+		name, history, events string
+		want                  bool
+	}{
+		{"crash only", "", "", false},
+		{"recent revision", `[{"id":1,"revision":"old"},{"id":2,"revision":"new","deployedAt":"2026-11-07T09:05:00Z"}]`, "", true},
+		{"recent image override", `[{"id":1,"revision":"6.15.0"},{"id":2,"revision":"6.15.0","image":"lab-zot:5000/lab/podinfo:6.15.1","deployedAt":"2026-11-07T09:05:00Z"}]`, "", true},
+		{"unchanged revision", `[{"id":1,"revision":"same"},{"id":2,"revision":"same","deployedAt":"2026-11-07T09:05:00Z"}]`, "", false},
+		{"old revision", `[{"id":1,"revision":"old"},{"id":2,"revision":"new","deployedAt":"2026-11-07T08:05:00Z"}]`, "", false},
+		{"image update event", "", `{"items":[{"message":"container exited after image update"}]}`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := []Evidence{
+				{ID: "E2", Source: "pods", At: at, Data: pod},
+				{ID: "E3", Source: "events", At: at, Data: tt.events},
+				{ID: "E6", Source: "argocd_history", At: at, Data: tt.history},
+			}
+			candidate := ruleCandidate(evidence)
+			if (candidate != nil) != tt.want || (candidate != nil && (candidate.CauseID != "bad-release" || len(candidate.Evidence) != 2)) {
+				t.Fatalf("candidate = %+v", candidate)
+			}
+		})
 	}
 }
 

@@ -28,7 +28,7 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	if body == "" {
 		switch {
 		case strings.HasSuffix(req.URL.Path, "/pods/example"):
-			body = `{"metadata":{"name":"example","namespace":"demo"},"spec":{"nodeName":"node1","containers":[{"name":"app","resources":{"limits":{"memory":"64Mi"}},"env":[{"name":"PASSWORD","value":"do-not-return"}]}]},"status":{"phase":"Running"}}`
+			body = `{"metadata":{"name":"example","namespace":"demo","labels":{"app.kubernetes.io/name":"frontend"}},"spec":{"nodeName":"node1","containers":[{"name":"app","resources":{"limits":{"memory":"64Mi"}},"env":[{"name":"PASSWORD","value":"do-not-return"}]}]},"status":{"phase":"Running"}}`
 		case strings.HasSuffix(req.URL.Path, "/pods"):
 			body = `{"metadata":{"continue":"next-page"},"items":[{"metadata":{"name":"example","namespace":"demo"},"status":{"phase":"Running"}}]}`
 		case strings.HasSuffix(req.URL.Path, "/events"):
@@ -90,6 +90,61 @@ func TestAllowedTools(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPodApplicationFromMetadata(t *testing.T) {
+	r := &recorder{body: `{"metadata":{"name":"example","namespace":"demo","labels":{"app.kubernetes.io/name":"frontend"}},"status":{"phase":"Running"}}`}
+	out, err := testClient(r).Call(context.Background(), "pods", json.RawMessage(`{"namespace":"demo","pod":"example"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := podApplication(out, "example"); got != "frontend" {
+		t.Fatalf("app = %q", got)
+	}
+	if got := podApplication(out, "other-pod"); got != "" {
+		t.Fatalf("mismatched pod app = %q", got)
+	}
+}
+
+func TestRunnerCollectsHistoryWithoutAlertAppLabel(t *testing.T) {
+	r := &recorder{}
+	note, err := (Runner{Tools: testClient(r), Model: fixtureModel{}, Tracer: evalTracer{}}).
+		Run(context.Background(), Alert{Name: "Example", Labels: map[string]string{"namespace": "demo", "pod": "example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range r.requests {
+		if req.URL.Path == "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/frontend" {
+			if strings.Contains(evidenceBySource(note.Evidence, "argocd_history"), "missing") {
+				t.Fatal("history lookup still reported a missing label")
+			}
+			return
+		}
+	}
+	t.Fatal("pod metadata did not cause the expected history lookup")
+}
+
+func TestHistoryKeepsRecentImageChangesWithoutOtherParameters(t *testing.T) {
+	r := &recorder{body: `{"status":{"history":[
+		{"id":1,"revision":"old","deployedAt":"2026-11-07T08:00:00Z"},
+		{"id":2,"revision":"6.15.0","deployedAt":"2026-11-07T09:00:00Z"},
+		{"id":3,"revision":"6.15.0","deployedAt":"2026-11-07T09:05:00Z","source":{"helm":{"parameters":[
+			{"name":"image.repository","value":"lab-zot:5000/lab/podinfo"},
+			{"name":"image.tag","value":"6.15.1"},
+			{"name":"password","value":"do-not-return"}
+		]}}}
+	]}}`}
+	out, err := testClient(r).Call(context.Background(), "argocd_history", json.RawMessage(`{"app":"frontend"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var history []applicationRevision
+	if err := json.Unmarshal(out, &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[1].Image != "lab-zot:5000/lab/podinfo:6.15.1" || strings.Contains(string(out), "do-not-return") {
+		t.Fatalf("history = %s", out)
 	}
 }
 

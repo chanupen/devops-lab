@@ -16,11 +16,12 @@ import (
 // EvalFixture is a recorded, safe-to-share evidence bundle with the drill's
 // expected cause. Fixtures make model comparisons repeatable without faults.
 type EvalFixture struct {
-	ID       string                     `json:"id"`
-	Alert    Alert                      `json:"alert"`
-	Expected string                     `json:"expected_cause"`
-	Abstain  bool                       `json:"expect_abstention,omitempty"`
-	Tools    map[string]json.RawMessage `json:"tools"`
+	ID         string                     `json:"id"`
+	Alert      Alert                      `json:"alert"`
+	Expected   string                     `json:"expected_cause"`
+	Abstain    bool                       `json:"expect_abstention,omitempty"`
+	RecordedAt time.Time                  `json:"recorded_at,omitempty"`
+	Tools      map[string]json.RawMessage `json:"tools"`
 }
 
 // EvalResult is one model run against one fixture.
@@ -138,7 +139,11 @@ func Evaluate(ctx context.Context, fixtures []EvalFixture, model Model, modelNam
 		for range runs {
 			started := time.Now()
 			recorded := &evalModel{Model: model}
-			note, err := (Runner{Tools: FixtureTools(fixture.Tools), Model: recorded, Tracer: evalTracer{}, RulesFirst: hybrid}).Run(ctx, fixture.Alert)
+			runner := Runner{Tools: FixtureTools(fixture.Tools), Model: recorded, Tracer: evalTracer{}, RulesFirst: hybrid}
+			if !fixture.RecordedAt.IsZero() {
+				runner.Now = func() time.Time { return fixture.RecordedAt }
+			}
+			note, err := runner.Run(ctx, fixture.Alert)
 			expectAbstention := fixture.Abstain || fixture.Expected == "not established"
 			result := EvalResult{
 				Case: fixture.ID, Model: modelName, Hybrid: hybrid, Duration: time.Since(started),

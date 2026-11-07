@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestEvaluateRequiresThreeRuns(t *testing.T) {
@@ -136,9 +138,13 @@ func TestFixtureRuleDiagnosis(t *testing.T) {
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.ID, func(t *testing.T) {
-			note, err := (Runner{
+			runner := Runner{
 				Tools: FixtureTools(fixture.Tools), Model: fixtureModel{}, Tracer: evalTracer{}, RulesFirst: true,
-			}).Run(context.Background(), fixture.Alert)
+			}
+			if !fixture.RecordedAt.IsZero() {
+				runner.Now = func() time.Time { return fixture.RecordedAt }
+			}
+			note, err := runner.Run(context.Background(), fixture.Alert)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +155,8 @@ func TestFixtureRuleDiagnosis(t *testing.T) {
 			clearCase := map[string]string{
 				"bad-deploy": "bad-release", "oom": "memory-limit",
 				"dns": "coredns-scaled-down", "node-loss": "worker-stopped",
-				"cert-expiry": "issuer-ca-secret",
+				"cert-expiry":     "issuer-ca-secret",
+				"live-bad-deploy": "bad-release",
 			}
 			if want, ok := clearCase[fixture.ID]; ok && (len(note.Cause) != 1 || note.Cause[0].CauseID != want) {
 				t.Fatalf("candidate = %+v, want cause ID %q", note.Cause, want)
@@ -160,6 +167,33 @@ func TestFixtureRuleDiagnosis(t *testing.T) {
 			t.Logf("expected=%q candidate=%q findings=%q", fixture.Expected, candidate, evidenceBySource(note.Evidence, "findings"))
 		})
 	}
+}
+
+func TestLiveReleaseFixtureReplay(t *testing.T) {
+	fixtures, err := LoadEvalFixtures(filepath.Join("testdata", "eval"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		if fixture.ID != "live-bad-deploy" {
+			continue
+		}
+		results, _, err := Evaluate(context.Background(), []EvalFixture{fixture}, fixtureModel{}, "fixture", true, 3, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, result := range results {
+			if !result.CauseCorrect || result.Candidate == nil || result.Candidate.CauseID != "bad-release" || len(result.Candidate.Evidence) != 2 {
+				t.Fatalf("live fixture diagnosis = %+v", result)
+			}
+			pod := evidenceBySource(result.Evidence, "pods")
+			if len(pod) > evidenceLimit || !json.Valid([]byte(pod)) || !strings.Contains(pod, "lab-zot:5000/lab/podinfo:6.15.1") {
+				t.Fatalf("live pod evidence is unusable: %s", pod)
+			}
+		}
+		return
+	}
+	t.Fatal("recorded live bad-deploy fixture missing")
 }
 
 func evidenceBySource(evidence []Evidence, source string) string {

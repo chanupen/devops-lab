@@ -140,8 +140,11 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			}
 		}
 		data = Redact(data)
-		if source == "pods" {
+		switch source {
+		case "pods":
 			data = focusPodEvidence(data)
+		case "events":
+			data = focusEventEvidence(data)
 		}
 		if len(data) > evidenceLimit {
 			data = data[:evidenceLimit] + " [truncated]"
@@ -169,9 +172,14 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		return note, errors.New("invalid redacted alert")
 	}
 	add("alert", string(alertJSON), r.now(), false)
+	app := safeAlert.Labels["app"]
 	for _, call := range recipe(alert, started) {
 		if ctx.Err() != nil {
 			return note, ctx.Err()
+		}
+		if call.name == "argocd_history" && validName(app) {
+			call.err = ""
+			call.args, _ = json.Marshal(map[string]string{"app": app})
 		}
 		if call.err != "" {
 			add(call.name, call.err, r.now(), true)
@@ -182,6 +190,9 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		if err != nil {
 			add(call.name, "collection failed: "+safeError(err), callStarted, true)
 		} else {
+			if call.name == "pods" && !validName(app) {
+				app = podApplication(data, safeAlert.Labels["pod"])
+			}
 			add(call.name, string(data), callStarted, false)
 		}
 	}
@@ -295,7 +306,6 @@ func ruleCandidate(evidence []Evidence) *Claim {
 		text          string
 	}{
 		{"memory-limit", "pods", []string{"oomkilled", "exitcode\":137"}, "The container was OOMKilled with exit code 137; inspect memory limits and node pressure."},
-		{"bad-release", "pods", []string{"crashloopbackoff", "6.15.1"}, "The container is in CrashLoopBackOff with image version 6.15.1."},
 		{"coredns-scaled-down", "events", []string{"coredns replicas 0"}, "CoreDNS has been scaled to zero replicas."},
 		{"worker-stopped", "nodes", []string{"kubeletnotready"}, "The worker reports KubeletNotReady."},
 		{"issuer-ca-secret", "loki_logs", []string{"issuer", "missing ca secret"}, "The issuer references a missing CA Secret."},
@@ -306,7 +316,67 @@ func ruleCandidate(evidence []Evidence) *Claim {
 			return candidate
 		}
 	}
+	var observed time.Time
+	for _, item := range evidence {
+		if item.At.After(observed) {
+			observed = item.At
+		}
+	}
+	for _, item := range evidence {
+		if item.Source != "pods" {
+			continue
+		}
+		var pod podSummary
+		if json.Unmarshal([]byte(item.Data), &pod) != nil {
+			continue
+		}
+		crashing := false
+		for _, status := range pod.ContainerStatuses {
+			if status.RestartCount > 0 && status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+				crashing = true
+			}
+		}
+		if !crashing {
+			continue
+		}
+		change := find("events", "after image update", "exited")
+		if change == nil {
+			change = find("events", "after image update", "failed")
+		}
+		if change == nil {
+			for _, history := range evidence {
+				if history.Source != "argocd_history" {
+					continue
+				}
+				var revisions []applicationRevision
+				if json.Unmarshal([]byte(history.Data), &revisions) != nil || len(revisions) < 2 {
+					continue
+				}
+				previous, latest := revisions[len(revisions)-2], revisions[len(revisions)-1]
+				age := observed.Sub(latest.DeployedAt.Time)
+				if latest.ID > previous.ID && age >= 0 && age <= 15*time.Minute &&
+					(latest.Revision != previous.Revision || latest.Image != previous.Image) {
+					change = &Claim{Evidence: []string{history.ID}}
+					break
+				}
+			}
+		}
+		if change != nil {
+			return &Claim{
+				CauseID: "bad-release", Text: "The container is in CrashLoopBackOff with restarts after a recent release or image update.",
+				Evidence: append([]string{item.ID}, change.Evidence...),
+			}
+		}
+	}
 	return nil
+}
+
+func podApplication(data json.RawMessage, name string) string {
+	var pod podSummary
+	if json.Unmarshal(data, &pod) == nil && (name == "" || pod.Name == name) && validName(pod.App) {
+		return pod.App
+	}
+	return ""
 }
 
 func focusPodEvidence(data string) string {
@@ -332,6 +402,20 @@ func focusPodEvidence(data string) string {
 					delete(status, key)
 				}
 			}
+			if _, exists := pod["containers"]; exists {
+				delete(status, "image")
+			}
+			for _, key := range []string{"state", "lastState"} {
+				state, _ := status[key].(map[string]any)
+				for _, raw := range state {
+					detail, _ := raw.(map[string]any)
+					for field := range detail {
+						if field != "reason" && field != "exitCode" {
+							delete(detail, field)
+						}
+					}
+				}
+			}
 		}
 	}
 	if items, ok := object["items"].([]any); ok {
@@ -347,6 +431,29 @@ func focusPodEvidence(data string) string {
 	if err != nil {
 		return data
 	}
+	return string(b)
+}
+
+func focusEventEvidence(data string) string {
+	var events struct {
+		Items []map[string]any `json:"items"`
+	}
+	if json.Unmarshal([]byte(data), &events) != nil {
+		return data
+	}
+	sort.SliceStable(events.Items, func(i, j int) bool {
+		return events.Items[i]["type"] == "Warning" && events.Items[j]["type"] != "Warning"
+	})
+	for _, event := range events.Items {
+		for key := range event {
+			switch key {
+			case "reason", "message", "type", "count", "lastSeen":
+			default:
+				delete(event, key)
+			}
+		}
+	}
+	b, _ := json.Marshal(events)
 	return string(b)
 }
 

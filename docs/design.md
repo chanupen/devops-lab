@@ -305,6 +305,11 @@ Before asking the model, the runner uses alert labels and a fixed, bounded
 collection recipe to gather an evidence bundle: the firing alert, related
 pod status and events, relevant Loki logs and Prometheus samples, and
 matching Argo CD app history where identifiable.
+When an alert lacks an app label, pod metadata's validated Argo CD or standard
+application labels identify the history lookup; the runner never guesses from
+the pod name. History retains the last two deployments and their image
+overrides, not arbitrary Helm parameters. A Helm image override can change a
+deployment revision while the chart revision remains unchanged.
 Missing labels, empty results and errors remain visible in the bundle; the
 runner does not silently substitute guessed context. The model reasons over
 that bundle with evidence citations and may request additional allowlisted
@@ -312,6 +317,10 @@ calls from a separate budget. Both the initial bundle and extra calls share
 the overall deadline and output-size bounds. Pod excerpts prioritize container
 termination and restart status over conditions when container status exists,
 so a long conditions list does not hide the failure reason.
+Container status omits verbose runtime IDs and messages before applying the
+evidence bound; valid image references, including registry ports and tags,
+are not treated as secret assignments. Events prioritize warnings and omit
+redundant object metadata.
 
 The model selects only allowlisted extra operations and supplies validated,
 bounded arguments; it cannot choose URLs or invoke a shell, exec, arbitrary
@@ -354,6 +363,11 @@ even when the model abstains, with citations to the original observations.
 Structured findings preserve Argo CD history and node conditions through
 redaction. A missing issuer CA Secret is diagnosed only from an explicit
 log observation, not from a certificate-expiry alert alone.
+The bad-release candidate requires CrashLoopBackOff with a positive restart
+count plus an image-update failure event or an Argo deployment/image change
+observed within 15 minutes. A tag value or CrashLoopBackOff alone is insufficient.
+Recorded live fixtures can set `recorded_at` to replay time-relative rules
+against their original observation time.
 Fixtures record the
 safe tool responses, so comparisons do not inject faults. Live evaluation,
 when used, must start every drill through `drills.Manager` and always abort

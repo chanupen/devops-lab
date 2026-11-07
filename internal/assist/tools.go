@@ -210,6 +210,7 @@ func timeRange(start, end string) (string, string, error) {
 
 type podSummary struct {
 	Name                  string                   `json:"name"`
+	App                   string                   `json:"app,omitempty"`
 	Namespace             string                   `json:"namespace"`
 	Node                  string                   `json:"node,omitempty"`
 	Phase                 corev1.PodPhase          `json:"phase"`
@@ -230,6 +231,12 @@ func summarizePod(p corev1.Pod) podSummary {
 		Name: p.Name, Namespace: p.Namespace, Node: p.Spec.NodeName, Phase: p.Status.Phase,
 		Conditions: p.Status.Conditions, InitContainerStatuses: p.Status.InitContainerStatuses,
 		ContainerStatuses: p.Status.ContainerStatuses,
+	}
+	for _, label := range []string{"argocd.argoproj.io/instance", "app.kubernetes.io/instance", "app.kubernetes.io/name"} {
+		if app := p.Labels[label]; validName(app) {
+			out.App = app
+			break
+		}
 	}
 	for _, c := range p.Spec.Containers {
 		out.Containers = append(out.Containers, containerSummary{Name: c.Name, Image: c.Image, Resources: c.Resources})
@@ -325,24 +332,59 @@ func (c *Client) events(ctx context.Context, ns, pod string) (json.RawMessage, e
 	}{items, list.Continue != ""})
 }
 
+type applicationRevision struct {
+	ID         int64       `json:"id"`
+	Revision   string      `json:"revision"`
+	DeployedAt metav1.Time `json:"deployedAt"`
+	Image      string      `json:"image,omitempty"`
+}
+
 func (c *Client) history(ctx context.Context, app string) (json.RawMessage, error) {
 	body, err := c.get(ctx, "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/"+app, nil)
 	if err != nil {
 		return nil, err
 	}
+	type revision struct {
+		applicationRevision
+		Source struct {
+			Helm struct {
+				Parameters []struct{ Name, Value string } `json:"parameters"`
+			} `json:"helm"`
+		} `json:"source,omitempty"`
+	}
 	var obj struct {
 		Status struct {
-			History []struct {
-				ID         int64       `json:"id"`
-				Revision   string      `json:"revision"`
-				DeployedAt metav1.Time `json:"deployedAt"`
-			} `json:"history"`
+			History []revision `json:"history"`
 		} `json:"status"`
 	}
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, fmt.Errorf("decode application: %w", err)
 	}
-	return json.Marshal(obj.Status.History)
+	revisions := obj.Status.History
+	if len(revisions) > 2 {
+		revisions = revisions[len(revisions)-2:]
+	}
+	history := make([]applicationRevision, 0, len(revisions))
+	for _, entry := range revisions {
+		var repository, tag string
+		for _, parameter := range entry.Source.Helm.Parameters {
+			switch parameter.Name {
+			case "image.repository":
+				repository = parameter.Value
+			case "image.tag":
+				tag = parameter.Value
+			}
+		}
+		entry.Image = repository
+		if tag != "" {
+			if repository != "" {
+				entry.Image += ":"
+			}
+			entry.Image += tag
+		}
+		history = append(history, entry.applicationRevision)
+	}
+	return json.Marshal(history)
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {

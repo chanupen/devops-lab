@@ -1,0 +1,89 @@
+{
+  "id": "live-bad-deploy",
+  "recorded_at": "2026-11-07T09:32:34.33944023Z",
+  "alert": {
+    "name": "KubePodCrashLooping",
+    "status": "firing",
+    "labels": {
+      "namespace": "podinfo",
+      "pod": "podinfo-frontend-775c778949-sgpzq",
+      "reason": "CrashLoopBackOff"
+    }
+  },
+  "expected_cause": "bad-release",
+  "tools": {
+    "pods": {
+      "app": "podinfo-frontend",
+      "name": "podinfo-frontend-775c778949-sgpzq",
+      "namespace": "podinfo",
+      "node": "lab-worker",
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "podinfo",
+          "ready": false,
+          "restartCount": 5,
+          "lastState": {"terminated": {"exitCode": 1, "reason": "Error"}},
+          "state": {"waiting": {"reason": "CrashLoopBackOff"}}
+        }
+      ],
+      "containers": [
+        {
+          "name": "podinfo",
+          "image": "lab-zot:5000/lab/podinfo:6.15.1",
+          "resources": {
+            "limits": {"memory": "64Mi"},
+            "requests": {"cpu": "5m", "memory": "16Mi"}
+          }
+        }
+      ]
+    },
+    "events": {
+      "items": [
+        {
+          "count": 16,
+          "lastSeen": "2026-11-07T09:31:18Z",
+          "message": "Back-off restarting failed container podinfo in pod podinfo-frontend-775c778949-sgpzq_podinfo(91129954-f639-4271-a3bc-48aba3237fcc)",
+          "reason": "BackOff",
+          "type": "Warning"
+        },
+        {
+          "count": 1,
+          "lastSeen": "2026-11-07T09:28:11Z",
+          "message": "Liveness probe errored and resulted in unknown state: [redacted]",
+          "reason": "Unhealthy",
+          "type": "Warning"
+        }
+      ]
+    },
+    "loki_logs": {"data": {"result": []}},
+    "prometheus_query": {
+      "status": "success",
+      "data": {
+        "result": [
+          {
+            "metric": {
+              "__name__": "ALERTS",
+              "alertname": "KubePodCrashLooping",
+              "alertstate": "firing",
+              "container": "podinfo",
+              "namespace": "podinfo",
+              "pod": "podinfo-frontend-775c778949-sgpzq",
+              "reason": "CrashLoopBackOff"
+            },
+            "value": [1794043954.311, "1"]
+          }
+        ]
+      }
+    },
+    "argocd_history": [
+      {"id": 41, "revision": "6.15.0", "deployedAt": "2026-11-07T09:09:53Z"},
+      {
+        "id": 42,
+        "revision": "6.15.0",
+        "image": "lab-zot:5000/lab/podinfo:6.15.1",
+        "deployedAt": "2026-11-07T09:26:41Z"
+      }
+    ]
+  }
+}
