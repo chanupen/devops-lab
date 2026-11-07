@@ -847,7 +847,15 @@ The repository is [MIT-licensed](../LICENSE), copyright 2026 chanupen.
 The maintainer accepted historical host names on 7 Nov 2026: hostnames only,
 no secrets and no history rewrite. Third-party redistribution reviews remain
 gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
-README/demo and release-pipeline work have not started.
+The root [README](../README.md) documents local installation, cloud cost
+rules, the lab/drill catalogues and the assistant's recorded fixture results.
+Its 14-node Mermaid diagram shows the shared engine and read-only runner.
+The [TUI preview](tui-preview.md) comes from the renderer's checked-in
+100-column, 30-row golden fixture, not a live screenshot. The rules-first
+100% is on fixtures written against; both 3B model-only recordings scored 0%
+on diagnosable drills. These are harness measurements, not generalisation.
+A live walkthrough remains unrecorded; no drills are run for this docs PR.
+Tagged binaries and checksums remain a separate, unstarted release PR.
 
 ## Risks and open questions
 

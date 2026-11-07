@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="580" viewBox="0 0 940 580">
+  <title>Home screen golden test output, not a live lab screenshot</title>
+  <desc>Monochrome transcription of internal/tui/testdata/home_up.golden, 100 columns and 30 rows.</desc>
+  <rect width="940" height="580" fill="#111827"/>
+  <g fill="#e5e7eb" font-family="DejaVu Sans Mono, monospace" font-size="14" xml:space="preserve">
+    <text x="18" y="28"> lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —</text>
+    <text x="18" y="46"> 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops</text>
+    <text x="18" y="64">──────────────────────────────────────────────────────┬─────────────────────────────────────────────</text>
+    <text x="18" y="82"> Lab                                                  │ Last operations</text>
+    <text x="18" y="100">                                                      │  ● Oct 31 02:31  lab up  core apply  41s</text>
+    <text x="18" y="118">  mode       local (minimal + obs profile)            │  ● Oct 31 02:30  lab up  core apply  41s</text>
+    <text x="18" y="136">  config     /home/user/devops-lab/lab.yaml           │  ● Oct 31 02:29  lab up  core apply  41s</text>
+    <text x="18" y="154">  revision   main                                     │  ● Oct 31 02:28  lab up  core apply  41s</text>
+    <text x="18" y="172">  nodes      ● 3/3 Ready                              │  ● Oct 31 02:27  lab up  core apply  41s</text>
+    <text x="18" y="190">  apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed │</text>
+    <text x="18" y="208">  stacks     ● 4 healthy  ◐ 1 progressing  ✕ 1 failed │ App URLs</text>
+    <text x="18" y="226">                                                      │  https://grafana.localtest.me:8443</text>
+    <text x="18" y="244">                                                      │  https://podinfo.localtest.me:8443</text>
+    <text x="18" y="262">                                                      │  on the Mac: ssh -N fedora-lab</text>
+    <text x="18" y="280">                                                      │</text>
+    <text x="18" y="298">                                                      │</text>
+    <text x="18" y="316">                                                      │</text>
+    <text x="18" y="334">                                                      │</text>
+    <text x="18" y="352">                                                      │</text>
+    <text x="18" y="370">                                                      │</text>
+    <text x="18" y="388">                                                      │</text>
+    <text x="18" y="406">                                                      │</text>
+    <text x="18" y="424">                                                      │</text>
+    <text x="18" y="442">                                                      │</text>
+    <text x="18" y="460">                                                      │</text>
+    <text x="18" y="478">                                                      │</text>
+    <text x="18" y="496">                                                      │</text>
+    <text x="18" y="514">──────────────────────────────────────────────────────┴─────────────────────────────────────────────</text>
+    <text x="18" y="532"> ops ▸ ● Oct 31 02:31  lab up  core apply  41s</text>
+    <text x="18" y="550"> a firing alerts  1 home  2 stacks  3 labs  4 drills  5 ops  U up  : palette  K k9s  ? help  q quit</text>
+  </g>
+</svg>
