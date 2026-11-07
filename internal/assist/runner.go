@@ -85,6 +85,9 @@ type Runner struct {
 	Model  Model
 	Tracer Tracer
 	Now    func() time.Time
+	// RulesFirst adds a deterministic candidate from direct observations.
+	// The model still writes the note, but cannot discard a supported cause.
+	RulesFirst bool
 	// Sensitive values are removed even if they appear in upstream output.
 	Sensitive []string
 }
@@ -181,6 +184,14 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			add(call.name, string(data), callStarted, false)
 		}
 	}
+	add("findings", deterministicFindings(note.Evidence), r.now(), false)
+	var candidate *Claim
+	if r.RulesFirst {
+		candidate = ruleCandidate(note.Evidence)
+		if candidate != nil {
+			add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			return note, ctx.Err()
@@ -202,18 +213,23 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 					Evidence: []string{"E1"},
 				}}
 			}
+			if candidate != nil {
+				result.Cause = []Claim{*candidate}
+			}
 			if err := validateNote(&result, r.Sensitive); err != nil {
 				return note, err
 			}
+
 			note = result
 			return note, nil
 		}
+
 		if calls >= ExtraCallLimit {
 			return note, errors.New("additional tool-call budget exhausted")
 		}
 		calls++
 		switch decision.Tool.Name {
-		case "events", "pods", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
+		case "events", "pods", "nodes", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
 		default:
 			return note, errors.New("model requested an unknown tool")
 		}
@@ -225,6 +241,50 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			add(decision.Tool.Name, string(data), callStarted, false)
 		}
 	}
+}
+
+// deterministicFindings makes the diagnostic fields needed for root-cause
+// decisions explicit and stable before the model sees the bundle.
+func deterministicFindings(evidence []Evidence) string {
+	var findings []string
+	for _, item := range evidence {
+		switch item.Source {
+		case "pods":
+			findings = append(findings, "pod status (termination reason, exit code, restart count, image): "+item.Data)
+		case "argocd_history":
+			findings = append(findings, "Argo CD history: "+item.Data)
+		case "nodes":
+			findings = append(findings, "node conditions: "+item.Data)
+		}
+	}
+	if len(findings) == 0 {
+		return "no deterministic pod, Argo CD, or node findings were available"
+	}
+	return strings.Join(findings, "\n")
+}
+
+func ruleCandidate(evidence []Evidence) *Claim {
+	for _, rule := range []struct {
+		cause string
+		words []string
+	}{
+		{"memory-limit", []string{"oomkilled", "exitcode\":137"}},
+		{"issuer-ca-secret", []string{"ca secret", "issuer"}},
+		{"coredns-scaled-down", []string{"coredns", "replicas\":0"}},
+		{"worker-stopped", []string{"notready", "node conditions"}},
+		{"secret-deleted", []string{"deleteddate"}},
+		{"netem-delay", []string{"netem", "qdisc"}},
+		{"bad-release", []string{"6.15.1", "image pull"}},
+	} {
+		for _, item := range evidence {
+			for _, word := range rule.words {
+				if strings.Contains(strings.ToLower(item.Data), strings.ToLower(word)) {
+					return &Claim{Text: "Candidate cause: " + rule.cause, Evidence: []string{item.ID}}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func focusPodEvidence(data string) string {
@@ -245,7 +305,7 @@ func focusPodEvidence(data string) string {
 			}
 			for key := range status {
 				switch key {
-				case "name", "ready", "restartCount", "lastState", "state":
+				case "name", "image", "ready", "restartCount", "lastState", "state":
 				default:
 					delete(status, key)
 				}
@@ -305,6 +365,9 @@ func recipe(alert Alert, now time.Time) []recipeCall {
 		calls = append(calls, recipeCall{name: "argocd_history", err: "application label missing or invalid"})
 	} else {
 		appendCall("argocd_history", map[string]string{"app": app})
+	}
+	if alert.Name == "KubeNodeNotReady" {
+		appendCall("nodes", map[string]string{})
 	}
 	return calls
 }

@@ -98,7 +98,7 @@ func (c *Client) Call(ctx context.Context, name string, raw json.RawMessage) (re
 		}
 	}()
 	switch name {
-	case "events", "pods", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
+	case "events", "pods", "nodes", "pod_describe", "loki_logs", "prometheus_query", "argocd_history":
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -125,6 +125,11 @@ func (c *Client) Call(ctx context.Context, name string, raw json.RawMessage) (re
 			return nil, errors.New("pods requires a valid namespace and optional pod")
 		}
 		return c.pods(ctx, a.Namespace, a.Pod)
+	case "nodes":
+		if !only(a) {
+			return nil, errors.New("nodes takes no arguments")
+		}
+		return c.nodes(ctx)
 	case "pod_describe":
 		if !only(a, "namespace", "pod") || !validNamespace(a.Namespace) || !validName(a.Pod) {
 			return nil, errors.New("pod_describe requires a valid namespace and pod")
@@ -216,6 +221,7 @@ type podSummary struct {
 
 type containerSummary struct {
 	Name      string                      `json:"name"`
+	Image     string                      `json:"image"`
 	Resources corev1.ResourceRequirements `json:"resources"`
 }
 
@@ -226,9 +232,32 @@ func summarizePod(p corev1.Pod) podSummary {
 		ContainerStatuses: p.Status.ContainerStatuses,
 	}
 	for _, c := range p.Spec.Containers {
-		out.Containers = append(out.Containers, containerSummary{Name: c.Name, Resources: c.Resources})
+		out.Containers = append(out.Containers, containerSummary{Name: c.Name, Image: c.Image, Resources: c.Resources})
 	}
 	return out
+}
+
+func (c *Client) nodes(ctx context.Context) (json.RawMessage, error) {
+	body, err := c.get(ctx, "/api/v1/nodes", url.Values{"limit": {strconv.Itoa(maxItems)}})
+	if err != nil {
+		return nil, err
+	}
+	var list corev1.NodeList
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("decode nodes: %w", err)
+	}
+	type nodeSummary struct {
+		Name       string                 `json:"name"`
+		Conditions []corev1.NodeCondition `json:"conditions"`
+	}
+	items := make([]nodeSummary, 0, len(list.Items))
+	for _, node := range list.Items {
+		items = append(items, nodeSummary{Name: node.Name, Conditions: node.Status.Conditions})
+	}
+	return json.Marshal(struct {
+		Items     []nodeSummary `json:"items"`
+		Truncated bool          `json:"truncated"`
+	}{items, list.Continue != ""})
 }
 
 func (c *Client) pods(ctx context.Context, ns, pod string) (json.RawMessage, error) {

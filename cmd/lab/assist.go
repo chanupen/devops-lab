@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,8 +26,78 @@ import (
 
 func newAssistCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "assist", Short: "Gather read-only evidence and draft an incident note"}
-	cmd.AddCommand(newAssistInputCmd("alert"), newAssistInputCmd("drill"))
+	cmd.AddCommand(newAssistInputCmd("alert"), newAssistInputCmd("drill"), newAssistEvalCmd())
 	return cmd
+}
+
+func newAssistEvalCmd() *cobra.Command {
+	var f labFlags
+	var fixtureDir, models string
+	var runs int
+	cmd := &cobra.Command{
+		Use:   "eval",
+		Short: "Measure local incident-note models against recorded drill evidence",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfgPath, err := f.configPath()
+			if err != nil {
+				return err
+			}
+			if cfgPath == "" {
+				return errors.New("no lab.yaml in this directory or ~/.lab; pass --config")
+			}
+			repo, err := repoRoot(cfgPath)
+			if err != nil {
+				return err
+			}
+			if fixtureDir == "" {
+				fixtureDir = filepath.Join(repo, "internal", "assist", "testdata", "eval")
+			}
+			fixtures, err := assist.LoadEvalFixtures(fixtureDir)
+			if err != nil {
+				return fmt.Errorf("load eval fixtures: %w", err)
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(len(fixtures)*runs*2)*assist.RunTimeout)
+			defer cancel()
+			var summaries []assist.EvalSummary
+			for _, name := range strings.Split(models, ",") {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				for _, hybrid := range []bool{false, true} {
+					_, summary, err := assist.Evaluate(ctx, fixtures, assist.HTTPModel{
+						URL: "http://127.0.0.1:11434", Name: name,
+					}, name, hybrid, runs)
+					if err != nil {
+						return fmt.Errorf("evaluate %s (hybrid=%t): %w", name, hybrid, err)
+					}
+					summaries = append(summaries, summary...)
+				}
+			}
+			return writeAssistEval(cmd.OutOrStdout(), summaries)
+		},
+	}
+	f.register(cmd)
+	cmd.Flags().StringVar(&fixtureDir, "fixtures", "", "directory of recorded evaluation fixtures")
+	cmd.Flags().StringVar(&models, "models", "llama3.2:3b,qwen2.5:3b", "comma-separated local Ollama models")
+	cmd.Flags().IntVar(&runs, "runs", 3, "runs per case and mode (minimum 3)")
+	return cmd
+}
+
+func writeAssistEval(w io.Writer, summaries []assist.EvalSummary) error {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "MODEL\tMODE\tCAUSE CORRECT\tEVIDENCE SUPPORT\tMEAN TIME\tTIME STDDEV\tRUNS")
+	for _, summary := range summaries {
+		mode := "model-only"
+		if summary.Hybrid {
+			mode = "rules-first"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%.1f%%\t%s\t%s\t%d\n",
+			summary.Model, mode, summary.CauseCorrect*100, summary.EvidenceSupport*100,
+			summary.MeanDuration.Round(time.Millisecond), summary.DurationVariance.Round(time.Millisecond), summary.Runs)
+	}
+	return tw.Flush()
 }
 
 func newAssistInputCmd(kind string) *cobra.Command {

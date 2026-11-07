@@ -58,7 +58,7 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 6 {
+	if !note.Cause[0].Unsupported || note.WhatFired[0].Unsupported || note.TraceID != "trace-id" || len(note.Evidence) != 7 {
 		t.Fatalf("note = %+v", note)
 	}
 	b, _ := json.Marshal(model.inputs)
@@ -67,7 +67,7 @@ func TestRunnerEvidenceAndCitations(t *testing.T) {
 			t.Fatalf("secret %q reached model: %s", secret, b)
 		}
 	}
-	if tracer.evidence != 6 || tracer.calls != 0 || tracer.incomplete {
+	if tracer.evidence != 7 || tracer.calls != 0 || tracer.incomplete {
 		t.Fatalf("trace = %+v", tracer)
 	}
 }
