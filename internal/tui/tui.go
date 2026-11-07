@@ -78,6 +78,9 @@ type Options struct {
 	// turn the drill keys into hints for the CLI.
 	DrillList []drills.Drill
 	Drills    DrillActions
+	Assistant Assistant
+	// AssistFlags reproduce the selected config, state and local tracing CA.
+	AssistFlags []string
 }
 
 // Screens, in tab order. The key is the screen's number in the design;
@@ -184,18 +187,20 @@ func (d *data) mode() string {
 // Model is the root Bubble Tea model. It owns the shared data and hands
 // keys to the current screen's model.
 type Model struct {
-	opts   Options
-	d      data
-	screen int
-	home   homeModel
-	stacks stacksModel
-	labs   labsModel
-	drills drillsModel
-	ops    opsModel
-	help   bool
-	flash  string // shown in the ops strip until the next key
-	width  int
-	height int
+	opts      Options
+	d         data
+	screen    int
+	home      homeModel
+	stacks    stacksModel
+	labs      labsModel
+	drills    drillsModel
+	assistant assistPane
+	assistID  int
+	ops       opsModel
+	help      bool
+	flash     string // shown in the ops strip until the next key
+	width     int
+	height    int
 
 	op       *opState      // the running operation, if any
 	opEvents chan tea.Msg  // its progress and result
@@ -285,7 +290,7 @@ func (m Model) now() time.Time { return m.opts.Now() }
 func Run(ctx context.Context, opts Options) error {
 	m0 := New(opts)
 	defer m0.lease.drop() // the same lease as the final model's
-	final, err := tea.NewProgram(m0, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	final, err := tea.NewProgram(m0, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(int(time.Second/redrawEvery))).Run()
 	if m, ok := final.(Model); ok {
 		m.stop()
 	}
@@ -398,6 +403,7 @@ func (m Model) loadState() tea.Cmd {
 }
 
 func (m *Model) stop() {
+	m.cancelAssistant()
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -409,6 +415,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.assistant.open {
+			m.assistant.reflow(m.width)
+		}
 	case tea.KeyMsg:
 		return m.key(msg)
 	case liveMsg:
@@ -471,6 +480,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.labDone(msg)
 	case drillMsg:
 		return m.drillDone(msg)
+	case assistMsg:
+		return m.assistantUpdate(msg)
+	case assistAlertsMsg:
+		return m.assistantAlerts(msg)
 	case reportMsg:
 		m.flash = ""
 		lines := newRing(logLines)
@@ -543,6 +556,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Overlays take keys first: a question, the palette, a text filter, a
 	// log view, help.
 	switch {
+	case m.assistant.open:
+		return m.assistantKey(msg)
 	case m.confirm != nil:
 		c := m.confirm
 		m.confirm = nil
@@ -600,6 +615,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	case "?":
 		m.help = true
+	case "a":
+		return m.openAssistant()
 	case "6":
 		m.flash = "screen " + k + " comes in a later release"
 	case ":":
@@ -693,6 +710,8 @@ func (m Model) View() string {
 	b.WriteString(fitLine(m.tabs(), w) + "\n")
 	full := ""
 	switch {
+	case m.assistant.open:
+		full = m.assistant.render(bodyH)
 	case m.palette != nil:
 		full = m.palette.render(bodyH)
 	case m.view != nil:
@@ -847,6 +866,9 @@ func (m Model) tabs() string {
 // opsStrip shows the running operation, else a message for the last key,
 // else the latest operation.
 func (m Model) opsStrip() string {
+	if m.assistant.open && m.assistant.command != "" {
+		return " ops ▸ " + m.assistant.state.String() + " $ " + paneLine(m.assistant.command)
+	}
 	if m.confirm != nil {
 		return " " + warn.Render(m.confirm.question) + "  y/N  " + faint.Render("$ "+m.confirm.command())
 	}
@@ -877,6 +899,12 @@ func (m Model) opsStrip() string {
 
 func (m Model) hints() string {
 	switch {
+	case m.assistant.open && m.assistant.picking && m.assistant.state == assistIdle:
+		return "j/k choose firing alert  a/enter investigate  esc close"
+	case m.assistant.open && m.assistant.state == assistRunning:
+		return "j/k scroll  space/b page  esc cancel assistant (not the drill)  ctrl+c quit"
+	case m.assistant.open:
+		return "j/k scroll  space/b page  g/G top/end  esc close"
 	case m.confirm != nil:
 		return "y confirm  any other key cancels"
 	case m.palette != nil:
@@ -896,13 +924,13 @@ func (m Model) hints() string {
 	case m.screen == screenLabs:
 		return "j/k move  enter current step  v verify  h hint  n/p steps  ? help  q quit"
 	case m.screen == screenDrills && m.d.st.ActiveDrill != nil:
-		return "a found it (ack)  v verify  h hint  x abort  ? help  q quit"
+		return "a assistant  A ack  v verify  h hint  x abort  ? help  q quit"
 	case m.screen == screenDrills:
 		return "j/k move  enter start  R random drill  ? help  q quit"
 	case m.d.readOnly != "":
 		return "read-only: views and reports only  1 home  2 stacks  3 labs  4 drills  5 ops  : palette  K k9s  ? help  q quit"
 	default:
-		return "1 home  2 stacks  3 labs  4 drills  5 ops  U up  : palette  K k9s  ? help  q quit"
+		return "a firing alerts  1 home  2 stacks  3 labs  4 drills  5 ops  U up  : palette  K k9s  ? help  q quit"
 	}
 }
 

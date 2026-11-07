@@ -13,9 +13,10 @@ import (
 
 // Limits on a single assistant run.
 const (
-	RunTimeout     = 180 * time.Second
-	ExtraCallLimit = 8
-	evidenceLimit  = 600
+	RunTimeout      = 180 * time.Second
+	ExtraCallLimit  = 8
+	evidenceLimit   = 600
+	HypothesisLabel = "hypothesis, needs human review"
 )
 
 // Alert is the safe input shared by the CLI and the webhook.
@@ -43,14 +44,26 @@ type Claim struct {
 
 // Note is the incident note. Commands are suggestions, never executed.
 type Note struct {
+	Review     string     `json:"review"`
 	WhatFired  []Claim    `json:"what_fired"`
 	Evidence   []Evidence `json:"evidence"`
 	Cause      []Claim    `json:"likely_cause"`
+	Candidate  *Claim     `json:"rule_candidate,omitempty"`
 	Confirm    []Claim    `json:"commands_to_confirm"`
 	Fix        []Claim    `json:"fix"`
 	Incomplete bool       `json:"incomplete"`
 	Error      string     `json:"error,omitempty"`
 	TraceID    string     `json:"trace_id,omitempty"`
+}
+
+// Abstained uses the same cause classification as the evaluation harness.
+func (n Note) Abstained() bool { return isAbstention(n.Cause) }
+
+// Progress contains only sanitized observations and deterministic candidates.
+type Progress struct {
+	Stage     string
+	Evidence  *Evidence
+	Candidate *Claim
 }
 
 // Decision is the model's structured next step.
@@ -91,6 +104,14 @@ type Runner struct {
 	RulesFirst bool
 	// Sensitive values are removed even if they appear in upstream output.
 	Sensitive []string
+	// Progress runs on the runner's goroutine, never on a UI's key loop.
+	Progress func(Progress)
+}
+
+func (r Runner) progress(p Progress) {
+	if r.Progress != nil {
+		r.Progress(p)
+	}
 }
 
 func (r Runner) now() time.Time {
@@ -109,6 +130,7 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
 	defer cancel()
 	defer func() {
+		note.Review = HypothesisLabel
 		if runErr != nil {
 			note.Incomplete = true
 			note.Error = "assistant run incomplete: " + runErr.Error()
@@ -119,6 +141,7 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			note.Error = "assistant run incomplete: Langfuse tracer is unavailable"
 			return
 		}
+		r.progress(Progress{Stage: "tracing"})
 		traceCtx, traceCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer traceCancel()
 		id, err := r.Tracer.Trace(traceCtx, started, r.now(), observations, calls, note.Incomplete)
@@ -156,6 +179,8 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 			EvidenceID: note.Evidence[len(note.Evidence)-1].ID, Source: source,
 			DurationMS: r.now().Sub(started).Milliseconds(), Failed: failed,
 		})
+		item := note.Evidence[len(note.Evidence)-1]
+		r.progress(Progress{Stage: "collecting", Evidence: &item})
 	}
 	alertJSON, err := json.Marshal(alert)
 	if err != nil {
@@ -200,6 +225,8 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 	var candidate *Claim
 	if r.RulesFirst {
 		candidate = ruleCandidate(note.Evidence)
+		note.Candidate = candidate
+		r.progress(Progress{Stage: "rules", Candidate: candidate})
 		if candidate != nil {
 			add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
 		}
@@ -208,6 +235,7 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		if ctx.Err() != nil {
 			return note, ctx.Err()
 		}
+		r.progress(Progress{Stage: "reasoning"})
 		decision, err := r.Model.Decide(ctx, safeAlert, note.Evidence)
 		if err != nil {
 			return note, fmt.Errorf("model failed: %s", safeError(err))
@@ -218,6 +246,7 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		if decision.Note != nil {
 			result := *decision.Note
 			result.Evidence = note.Evidence
+			result.Candidate = candidate
 			result.Error, result.TraceID, result.Incomplete = "", "", false
 			if ns, pod := safeAlert.Labels["namespace"], safeAlert.Labels["pod"]; validNamespace(ns) && validName(pod) {
 				result.Confirm = []Claim{{
@@ -254,6 +283,8 @@ func (r Runner) Run(ctx context.Context, alert Alert) (note Note, runErr error) 
 		}
 		if r.RulesFirst && candidate == nil {
 			candidate = ruleCandidate(note.Evidence)
+			note.Candidate = candidate
+			r.progress(Progress{Stage: "rules", Candidate: candidate})
 			if candidate != nil {
 				add("candidate", candidate.Text+" (evidence: "+strings.Join(candidate.Evidence, ",")+")", r.now(), false)
 			}

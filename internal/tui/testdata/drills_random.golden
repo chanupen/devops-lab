@@ -4,7 +4,7 @@
  Drills                       │ A random drill  (which one shows when it ends)                      
  ● bad-deploy  beginner       │ ◐ running 01:00 · 29:00 left · lab puts everything back at 02:54    
  ○ cert-expiry intermediate   │ ○ the alert: not fired yet                                          
- ● dns         intermediate   │ ○ detect: not yet · a names the cause you found                     
+ ● dns         intermediate   │ ○ detect: not yet · A names the cause you found                     
  ● node-loss   intermediate   │ hints 0/4 · verify runs 0                                           
  ● oom         intermediate   │                                                                     
  ○ secret-drift intermediate  │ The pager goes off: users of the sample app at                      
@@ -27,4 +27,4 @@
                               │                                                                     
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────
  ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                                      
- a found it (ack)  v verify  h hint  x abort  ? help  q quit                                        
+ a assistant  A ack  v verify  h hint  x abort  ? help  q quit                                      

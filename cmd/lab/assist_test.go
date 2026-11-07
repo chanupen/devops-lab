@@ -48,6 +48,24 @@ func TestFindAlert(t *testing.T) {
 			if (err != nil) != tt.wantErr || (err == nil && alert.Labels["pod"] != "a") {
 				t.Fatalf("alert %+v, error %v", alert, err)
 			}
+
 		})
+	}
+}
+
+func TestExactAlertSelectors(t *testing.T) {
+	labels, err := alertSelectors([]string{"namespace=demo", "pod=second", "description=a,b=c"})
+	if err != nil || labels["description"] != "a,b=c" {
+		t.Fatalf("selectors = %v, error %v", labels, err)
+	}
+	tools := alertTools{`{"status":"success","data":{"result":[{"metric":{"namespace":"demo","pod":"first"}},{"metric":{"namespace":"demo","pod":"second"}}]}}`}
+	alert, err := findAlert(context.Background(), tools, "CrashLoop", "", map[string]string{"namespace": "demo", "pod": "second"})
+	if err != nil || alert.Labels["pod"] != "second" {
+		t.Fatalf("selection = %+v, error %v", alert, err)
+	}
+	for _, selectors := range [][]string{{"missing-equals"}, {"=empty"}, {"pod=first", "pod=second"}} {
+		if _, err := alertSelectors(selectors); err == nil {
+			t.Errorf("accepted invalid selectors: %v", selectors)
+		}
 	}
 }

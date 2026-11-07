@@ -25,6 +25,7 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return runTUI(cmd, flags) },
 	}
 	flags.register(root)
+	root.Flags().String("langfuse-ca", "", "PEM CA certificate for the TUI assistant's local Langfuse Gateway")
 	up, down, extend := newUpCmd(newProvider), newDownCmd(newProvider), newExtendCmd(newProvider)
 	withLabLock(up)
 	withLabLock(down)

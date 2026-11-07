@@ -9,6 +9,7 @@ var (
 		{"U", "Bring the whole profile up (lab up)"},
 		{":", "Command palette: up, down, status, doctor, plan"},
 		{"K", "Open k9s on the lab cluster; quit it to come back"},
+		{"a", "Assistant: choose a firing alert; on Drills, investigate the running drill"},
 		{"?", "This help"},
 		{"q  ctrl+c", "Quit"},
 	}
@@ -34,7 +35,7 @@ var (
 			{"j k ↑ ↓", "Move between drills"},
 			{"enter", "Start the selected drill, after a prompt (lab drills start <id>)"},
 			{"R", "Start a random drill, without saying which (lab drills start --random)"},
-			{"a", "Name the cause you found; the right one stops the detect timer (lab drills ack <cause>)"},
+			{"A", "Name the cause you found; the right one stops the detect timer (lab drills ack <cause>)"},
 			{"v", "Verify the fix; a pass stops the recover timer and puts the lab back (lab drills verify)"},
 			{"h", "Show the next hint (lab drills hint)"},
 			{"x", "Abort: put back everything the drill changed, after a prompt (lab drills abort)"},

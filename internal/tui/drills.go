@@ -35,7 +35,7 @@ type DrillActions struct {
 // Cause is one suspect lab drills ack takes.
 type Cause struct{ ID, Text string }
 
-// causePicker is the list a opens: the learner picks the cause they found.
+// causePicker is the list A opens: the learner picks the cause they found.
 type causePicker struct {
 	causes []Cause
 	cursor int
@@ -102,7 +102,7 @@ func (m Model) drillsKey(k string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.askDrill(drillReq{kind: "abort"}, "Abort the drill and put everything back?")
-	case "a":
+	case "A":
 		return m.openCausePicker()
 	case "h", "v":
 		return m.drillAction(k)
@@ -216,7 +216,7 @@ func (m Model) runDrill(r drillReq) (Model, tea.Cmd) {
 	*m.drills.hints, m.drills.last = nil, ""
 	return m, func() tea.Msg {
 		run, err := acts.Start(context.Background(), r.id, r.kind == "random")
-		return drillMsg{command: command, run: run, err: err, note: "drill started: the timer runs (a ack, v verify, h hint)"}
+		return drillMsg{command: command, run: run, err: err, note: "drill started: the timer runs (a assistant, A ack, v verify, h hint)"}
 	}
 }
 
@@ -431,7 +431,7 @@ func (dm drillsModel) runText(d *data, r state.DrillRun, now time.Time, w int) s
 		}
 	}
 	if r.Acked.IsZero() {
-		fmt.Fprintf(&b, " %s detect: not yet · a names the cause you found\n", statusOff.symbol())
+		fmt.Fprintf(&b, " %s detect: not yet · A names the cause you found\n", statusOff.symbol())
 	} else {
 		fmt.Fprintf(&b, " %s detect: %s\n", statusHealthy.symbol(), clock(r.TimeTo(r.Acked)))
 	}

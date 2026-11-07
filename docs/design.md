@@ -158,7 +158,7 @@ One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a
 1. **Home**: mode, cluster health (`○ stopped` with the `podman start` command when a reboot stopped it), running stacks, the image cache, TTL countdown, last five operations. Empty state says which key to press next.
 2. **Stacks**: the module catalog with install state, dependencies, endpoints and versions.
 3. **Labs**: the labs with progress (● done, ◐ current, ○ not started). `enter` opens the current step's text, `v` verifies it, `h` shows its next hint, `n`/`p` move between steps.
-4. **Drills**: break/fix scenarios with your best times. `enter` starts the selected drill and `R` a random one (each after a prompt); `a` lists the causes and acks the one you pick, `v` verifies the fix, `h` shows a hint, `x` aborts. The header shows the running drill and its timer (`drill: oom 04:12/30:00`, `?` for a random one).
+4. **Drills**: break/fix scenarios with your best times. `enter` starts the selected drill and `R` a random one (each after a prompt); `a` opens the assistant for the running drill, `A` lists the causes and acks the one you pick, `v` verifies the fix, `h` shows a hint, `x` aborts. The header shows the running drill and its timer (`drill: oom 04:12/30:00`, `?` for a random one).
 5. **Ops log**: every operation with its full streamed output and the equivalent CLI command.
 6. **Cost** (cloud mode): running resources, hourly rate, spend this session, budget left, TTL.
 
@@ -281,7 +281,7 @@ Alertmanager pods (`app.kubernetes.io/name=alertmanager`) in `monitoring`
 (`kubernetes.io/metadata.name=monitoring`); no other ingress policy may
 broaden access to those pods. It is not authentication:
 kindnet reconciles policies asynchronously and labels are not identities.
-The receiver uses the local model; CLI and webhook use the same Go runner.
+The receiver uses the local model; CLI, webhook and TUI use the same Go runner.
 A drill run gets the alert and live context, not the drill's `cause`, hints,
 solution or fault-injection details. Ambiguous or missing alerts fail with a
 clear message rather than picking one.
@@ -404,8 +404,41 @@ Tool errors, exhausted budgets, timeouts, invalid output and model failures
 produce a clearly incomplete note with the evidence gathered and the error,
 not an invented diagnosis. The operator can investigate manually.
 
+**TUI pane.** `a` on Drills investigates the running drill; it never starts,
+acks, verifies or aborts a drill. Acknowledgement moves to `A`. Elsewhere `a`
+loads a firing-alert picker in the background; j/k select an alert and `a`
+or enter investigates it. Exact `--label key=value` selectors distinguish
+alerts with the same name and namespace in the equivalent CLI command.
+Assistant reads remain available in a read-only TUI.
+
+The pane uses the CLI's restricted tool and trace identities, local model and
+rules-first runner. `lab --langfuse-ca <PEM file>` supplies the local Gateway
+CA when it is not trusted by the host. Config, state, selectors and tracing
+CA are retained in the logged CLI command. No hosted inference is enabled
+from the pane.
+
+Identity setup, alert lookup, evidence collection, model reasoning and tracing
+run off the key loop. Sanitized evidence and rule candidates arrive as batched
+Tea messages at most once per 50 ms. The renderer is also capped at 20 FPS,
+so concurrent watcher and assistant updates cannot exceed the redraw limit.
+Output retains at most 5,000 lines.
+First render still uses cached state only, before any assistant connection.
+Esc cancels the assistant's context immediately, not the drill; another esc
+closes the pane. Quit and cluster reconnection also cancel outstanding work.
+Late results from cancelled or replaced runs cannot overwrite the current pane.
+
+The pane has idle, running, done, abstained, error and cancelled states. It
+always labels output **hypothesis, needs human review**, shows the deterministic
+candidate separately from the note, and displays cited evidence, unsupported
+claims and incomplete-run errors. Confirm commands and fixes are text only;
+the pane cannot execute them. Abstention uses the evaluation harness's same
+cause classification.
+
 The note separates what fired, evidence, likely cause, commands to confirm,
-and a proposed fix. Every factual claim and recommendation cites evidence IDs;
+and a proposed fix. The shared runner stamps every note's `review` field as
+`hypothesis, needs human review`, including CLI JSON and incomplete notes;
+model output cannot promote it to a verified diagnosis.
+Every factual claim and recommendation cites evidence IDs;
 anything without supporting evidence is explicitly marked **unsupported**.
 The runner rejects unknown IDs and marks uncited claims unsupported; a valid
 ID alone does not prove that the cited evidence supports a claim, so the
@@ -472,8 +505,10 @@ sampled the receiver every 10 seconds: 3 MiB idle and an observed peak of
 miss short peaks. In live bad-deploy and OOM drills the model abstained on
 root cause; the runner supplied a pod confirmation command. A citation ID
 alone does not establish that a claim is supported.
-3. A non-blocking TUI pane over the same runner, logging the equivalent CLI.
-4. `lab assist eval`, the seven drills and seeded known-mistake cases.
+3. A non-blocking TUI pane over the same runner, logging the equivalent CLI
+   (draft #41; model-state and cached first-frame gates, no live drill run).
+4. `lab assist eval`, the seven drills and seeded known-mistake cases
+   (implemented in #40; training fixtures measure plumbing, not generalisation).
 
 ### Labs
 

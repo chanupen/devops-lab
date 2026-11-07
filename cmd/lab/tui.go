@@ -30,6 +30,14 @@ func runTUI(cmd *cobra.Command, flags labFlags) error {
 	if err != nil {
 		return err
 	}
+	caFile, _ := cmd.Flags().GetString("langfuse-ca")
+	if api, ok := opts.Assistant.(tuiAssistant); ok {
+		api.caFile = caFile
+		opts.Assistant = api
+		if caFile != "" {
+			opts.AssistFlags = append(opts.AssistFlags, "--langfuse-ca", caFile)
+		}
+	}
 	if opts.Release, opts.ReadOnly, err = claimTUI(opts, labHolder(cmd)); err != nil {
 		return err
 	}
@@ -87,6 +95,11 @@ func tuiOptions(flags labFlags, newProvider providerFactory) (*tui.Options, erro
 	if mode == "local" {
 		opts.AppURL, opts.AccessHint = local.AppURL, local.TunnelHint()
 		opts.Units = tuiUnits
+		opts.Assistant = tuiAssistant{flags: flags, kubeconfig: opts.Kubeconfig}
+		opts.AssistFlags = []string{"--state", path}
+		if cfgPath != "" {
+			opts.AssistFlags = append(opts.AssistFlags, "--config", cfgPath)
+		}
 	}
 	// The Labs screen: the labs next to lab.yaml, verified and hinted through
 	// the same manager as lab labs. Without a labs/ directory it is empty.
