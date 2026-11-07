@@ -2,7 +2,7 @@
 
 # DevOps Lab Control Center — Plan and Design
 
-Oct 30, 2026 · @Chandan Kumar
+Oct 30, 2026
 
 ## Summary
 
@@ -116,7 +116,7 @@ The Gateway is never exposed on the LAN. The kind control plane publishes Envoy'
 
 ```text
 Host fedora-lab
-  HostName asuszephyrus          # the Fedora box; same address as the fedora entry
+  HostName lab-host              # example: replace with the Linux host's SSH address
   LocalForward 8080 127.0.0.1:8080
   LocalForward 8443 127.0.0.1:8443
   ExitOnForwardFailure yes       # fail fast if 8080/8443 are taken on the Mac
@@ -506,7 +506,7 @@ miss short peaks. In live bad-deploy and OOM drills the model abstained on
 root cause; the runner supplied a pod confirmation command. A citation ID
 alone does not establish that a claim is supported.
 3. A non-blocking TUI pane over the same runner, logging the equivalent CLI
-   (draft #41; model-state and cached first-frame gates, no live drill run).
+   (implemented in #41; model-state and cached first-frame gates).
 4. `lab assist eval`, the seven drills and seeded known-mistake cases
    (implemented in #40; training fixtures measure plumbing, not generalisation).
 
@@ -597,7 +597,7 @@ lab:
 
 profiles:
   local:
-    host: asuszephyrus
+    host: lab-host         # example SSH hostname
     runtime: podman        # rootless, always; KIND_EXPERIMENTAL_PROVIDER=podman
     cluster: { provider: kind, workers: 2, k8sVersion: "1.36" }
     awsEndpoint: http://127.0.0.1:4566   # Moto
@@ -829,6 +829,25 @@ podman exec ollama ollama ps                          # PROCESSOR column should 
 On the G14's hybrid graphics, keep the default hybrid mode so the NVIDIA GPU powers down when idle; Ollama wakes it on demand.
 
 Sources: [RPM Fusion NVIDIA howto](https://rpmfusion.org/Howto/NVIDIA), [RPM Fusion Secure Boot howto](https://rpmfusion.org/Howto/Secure%20Boot), [Fedora 45 driver walkthrough](https://computingforgeeks.com/install-nvidia-drivers-fedora/), [NVIDIA Container Toolkit CDI support](https://nvidia.github.io/cloud-native-docs/review/pr-467/container-toolkit/latest/cdi-support.html), [Podman GPU containers](https://oneuptime.com/blog/post/2026-03-18-run-nvidia-gpu-containers-podman/view).
+
+## Public readiness and release
+
+Release work is split into three draft PRs, reviewed one at a time: the
+public-readiness audit, README and demo documentation, then the tag-triggered
+binary release workflow. The audit comes before publication documentation.
+No v1.0.0 tag is created by this work.
+
+The 7 Nov 2026 audit is recorded in [public-readiness.md](public-readiness.md).
+It scans all fetched branch, tag and PR-head history, including merge-parent
+patches, and the working tree without repository gitleaks allowlists.
+Identifying examples are generalized at the tip; history is not rewritten.
+[licences.md](licences.md) inventories the selected Go module graphs, charts,
+images and model terms. A clean secret scan is not proof of public readiness.
+The repository is [MIT-licensed](../LICENSE), copyright 2026 chanupen.
+The maintainer accepted historical host names on 7 Nov 2026: hostnames only,
+no secrets and no history rewrite. Third-party redistribution reviews remain
+gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
+README/demo and release-pipeline work have not started.
 
 ## Risks and open questions
 

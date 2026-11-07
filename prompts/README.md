@@ -30,7 +30,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Open: PR #29, needs one passing cloud session |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
 | `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Next |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook done; eval done (#40); assistant TUI pane draft (#41); release work remains |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c public-readiness audit #42 ([findings](../docs/public-readiness.md)); MIT approved, historical host names retained without secrets or rewrite; README/demo and release pipeline not started |
 
 ## To continue from today
 
