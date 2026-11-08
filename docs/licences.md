@@ -148,6 +148,7 @@ notices; the image as a whole is not Apache-2.0-only.
 | AWS Terraform provider | 6.71.0 in all three `.terraform.lock.hcl` files | [MPL-2.0](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/LICENSE) |
 | OpenTofu / Terraform executable | User-installed, not pinned or shipped by this repository | OpenTofu MPL-2.0; Terraform modern releases have BUSL-1.1 terms; terraform-exec's MPL-2.0 does not licence the executable |
 | gitleaks used for this audit | 8.30.1, session-local tool only | [MIT](https://github.com/gitleaks/gitleaks/blob/v8.30.1/LICENSE) |
+| actionlint for release validation | 1.7.12, session-local tool only | [MIT](https://github.com/rhysd/actionlint/blob/v1.7.12/LICENSE.txt) |
 
 Qwen2.5 3B is used only as a non-commercial research eval comparison.
 It must never become a default assistant model.
@@ -156,13 +157,15 @@ It must never become a default assistant model.
 
 These tools are not linked into `lab` or bundled with release binaries.
 
-| Component | Exact pin in `.github/workflows/ci.yml` | Licence |
+| Component | Exact workflow pin | Licence |
 | --- | --- | --- |
 | actions/checkout v5.1.0 | `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` | MIT |
 | actions/setup-go v6.5.0 | `924ae3a1cded613372ab5595356fb5720e22ba16` | MIT |
 | actions/cache restore/save v6.1.0 | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` | MIT |
 | golangci-lint-action v8.0.0 | `25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128` | [MIT action](https://github.com/golangci/golangci-lint-action/blob/25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128/LICENSE) |
 | golangci-lint | v2.15.0 | [GPL-3.0](https://github.com/golangci/golangci-lint/blob/v2.15.0/LICENSE) |
+| actions/upload-artifact v7.0.2 (release) | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | [MIT](https://github.com/actions/upload-artifact/blob/v7.0.2/LICENSE) |
+| actions/download-artifact v8.0.2 (release) | `9000827ccba6bdab643e8b6fd33ac0654aef8333` | [MIT](https://github.com/actions/download-artifact/blob/v8.0.2/LICENSE) |
 
 ## Verification caveats
 
@@ -170,7 +173,10 @@ Do not publish a blanket "all dependencies are MIT/Apache-2.0" statement.
 Confirm the specifically marked source gaps, image SBOMs and model terms before
 redistributing them. No dependency, model or image was replaced during this
 audit; licence-driven substitutions change behavior and require a separate
-decision. The release workflow and binary notice packaging remain future PRs.
+decision. The release workflow packages the repository licence, toolchain notices and
+licences/notices for the module versions actually linked into both binary
+targets. It includes source archive references. This does not waive the
+README-only declaration caveat or authorize redistribution of images/models.
 
 ## Generated image reference inventory
 

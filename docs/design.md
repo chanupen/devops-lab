@@ -861,7 +861,25 @@ The [TUI preview](tui-preview.md) comes from the renderer's checked-in
 100% is on fixtures written against; both 3B model-only recordings scored 0%
 on diagnosable drills. These are harness measurements, not generalisation.
 A live walkthrough remains unrecorded; no drills are run for this docs PR.
-Tagged binaries and checksums remain a separate, unstarted release PR.
+The audit (#42) and README/docs (#43) are squash-merged into main.
+The separate [release workflow](../.github/workflows/release.yml) runs on
+`v*` tag pushes and branch `workflow_dispatch` probes. Lint/race checks gate the static,
+trimmed linux/amd64 and darwin/amd64 builds. Each binary records the tag as
+its version (the commit SHA for a dispatch). SHA256SUMS covers both binaries, LICENSE and the linked-module
+notices; source archive references retain MPL-covered source availability.
+The build job has read-only repository permission. Only `v*` tags can start
+the publishing job, which uses GITHUB_TOKEN with `contents: write`, checks
+the tagged commit is reachable from main, verifies the downloaded artifact,
+and publishes only after a complete draft-release upload. No other credentials
+or signing keys are required.
+
+Dispatch probes may target an unmerged branch: they build the same payload but
+cannot publish a release, even when dispatched on a tag. A hosted probe must
+confirm both binary targets, checksum verification and a skipped publish job
+before this draft is reviewed. Earlier `release-test-*` tag probes are recorded
+in the release PR with their checksums; those tags are removed after the
+evidence is preserved. New probes use dispatch, not tags.
+No v1.0.0 tag, live demo, drill or cloud operation is part of the probe.
 
 ## Risks and open questions
 

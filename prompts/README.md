@@ -14,7 +14,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 ## Order and status
 
-| File | Phase | Builds | Status (7 Nov 2026) |
+| File | Phase | Builds | Status (8 Nov 2026) |
 | --- | --- | --- | --- |
 | `01-phase0-foundations.md` | 0 | Repo skeleton, Cobra CLI, `lab doctor` | Done (#1, #4) |
 | `02-phase1-local-core.md` | 1 | Engine, state, local provider, gitops, core, obs, sample-app | Done (#2–#7) |
@@ -30,12 +30,12 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Done (#29, passing session #32) |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
 | `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Done (gate passed 6 Nov 2026; [design](../docs/design.md#build-roadmap)) |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42 merged (MIT approved, historical host names retained without secrets or rewrite); [README/docs](../README.md) in #43; live demo and release pipeline not started |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42 and [README/docs](../README.md) #43 merged; [release pipeline](../.github/workflows/release.yml) in a separate PR with branch-dispatch validation and recorded historical probe evidence; live demo and v1.0.0 not done |
 
 ## To continue from today
 
-1. Review the README/docs (#43); the public-readiness audit (#42) is merged.
-2. Continue `15-phase5-ai-release.md` with the tag-triggered binary/checksum workflow as its own draft PR, after approval.
+1. The README/docs (#43) and public-readiness audit (#42) are merged.
+2. Review the separate binary/checksum workflow and its branch-dispatch validation. Dispatch probes do not publish releases; earlier test-tag evidence is retained in the PR body.
 3. Record a live walkthrough only with approval to mutate the lab; verify restoration. Do not tag v1.0.0 until the maintainer approves the release.
 
 ## To rebuild from nothing
