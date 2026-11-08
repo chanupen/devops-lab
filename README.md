@@ -10,13 +10,9 @@ recovery. Drills inject a bounded fault and restore saved state.
 
 ## TUI
 
-![Home screen from the TUI's checked-in golden fixture](docs/assets/tui-home.svg)
+![Live lab TUI Home screen](docs/assets/tui-home.png)
 
-This is the TUI's **100-column, 30-row golden test output**, not a live lab
-screenshot. Its sample state deliberately includes progressing and failed
-apps. Colours are stripped by the test; status symbols remain.
-See [the source fixture](internal/tui/testdata/home_up.golden) and
-[preview provenance and capture instructions](docs/tui-preview.md).
+The [golden fixture](internal/tui/testdata/home_up.golden) still backs the renderer test.
 
 `lab` opens the TUI. Its **five implemented screens** use these keys:
 
@@ -34,6 +30,12 @@ Each action logs its CLI command.
 Mutating operations share one lock; another TUI opens read-only. Views remain
 non-blocking. The first frame comes from cached state, with a 100 ms gate.
 Logs retain 5,000 lines and redraw at most 20 times a second.
+
+## Demo
+
+[Watch the recorded TUI session](docs/assets/lab-demo.cast) (38 seconds, under
+1 MB). Download and replay with asciinema 3: `asciinema play docs/assets/lab-demo.cast`.
+Shell identifiers were removed; see [capture provenance](docs/tui-preview.md).
 
 ## Local quick start
 
@@ -285,8 +287,7 @@ builds linux/amd64 and darwin/amd64 on `v*` tags, after lint and race tests.
 It verifies SHA256SUMS, retains repository and linked-module notices, and
 publishes a GitHub release using only GITHUB_TOKEN. A release commit must be
 reachable from `main`; a draft is made public only after all assets upload.
-A live walkthrough has not been recorded;
-the preview above is deliberately a golden fixture, not an invented demo.
+The live screenshot and recorded TUI session are linked above.
 See [build status](prompts/README.md).
 
 ### Verify downloaded binaries
