@@ -76,6 +76,8 @@ jobs:
         run: make build
       - if: github.event_name != 'pull_request'
         run: make build-all
+      - name: CLI documentation drift
+        run: python3 scripts/generate-cli-docs.py --check
       # The reaper is a third full compile (linux/arm64). On a PR, build it only
       # when the reaper, a module package it imports, the baseline module or
       # the build inputs changed.

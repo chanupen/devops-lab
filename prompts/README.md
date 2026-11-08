@@ -52,8 +52,8 @@ as a draft, with review before the next PR; none is merged by the agent.
 
 | PR | Scope | Status |
 | --- | --- | --- |
-| 1 | Index, local/cloud getting started, architecture, shorter root README | Draft for review; page-list approval required before PR 2 |
-| 2 | TUI, generated CLI help with drift CI, profiles/stacks, assistant, troubleshooting | Pending |
+| 1 | Index, local/cloud getting started, architecture, shorter root README | Approved and merged (#48) |
+| 2 | TUI, generated CLI help with drift CI, profiles/stacks, assistant, troubleshooting | Draft for review; [guides](../docs/README.md) added |
 | 3 | Drill/lab guides and consistent exercise READMEs, with labelled solutions | Pending |
 | 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Pending |
 

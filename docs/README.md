@@ -12,16 +12,20 @@ The repository is private; you need access to clone it.
 | Understand the CLI, TUI and GitOps | [Architecture](concepts/architecture.md) |
 | Read a failed readiness check | [The doctor reading guide](getting-started/local.md#read-lab-doctor) |
 | Take a first-hour tour without injecting faults | [The local tour](getting-started/local.md#first-hour-tour) |
+| Use every TUI screen and key | [TUI guide](guides/tui.md) |
+| Find exact CLI arguments and flags | [Generated CLI reference](guides/cli.md) |
+| Choose a profile or add/remove a stack | [Profiles and stacks](guides/profiles-and-stacks.md) |
+| Investigate with the local assistant and understand its limits | [Assistant guide](guides/assistant.md) |
 | Choose a hands-on exercise | [Existing lab instructions](../labs/README.md) |
 | Understand the current incident exercises | [Existing drill instructions](../drills/README.md) |
-| Diagnose a known host or deployment problem | [Known issues](../prompts/91-known-issues.md) |
+| Diagnose a known host or deployment problem | [Troubleshooting](guides/troubleshooting.md) |
 | Verify a downloaded binary | [Release binaries](#release-binaries) |
 | Check component and model terms | [Licence inventory](licences.md) |
 | Change the implementation | [Engineering reference](design.md) |
 
-The existing lab and drill pages are the interim references. Separate TUI,
-CLI, profile, assistant, troubleshooting, drill and lab guides follow in later
-documentation PRs. They are not part of this first PR.
+The task guides are available above. The existing lab and drill pages remain
+interim exercise references until PR 3; their replacement guides and README
+standardisation are not part of this PR.
 
 ## Safety labels
 
