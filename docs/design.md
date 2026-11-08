@@ -12,9 +12,14 @@ cover prerequisites, expected output and cleanup without requiring this file.
 [Architecture](concepts/architecture.md) explains the shared engine and GitOps
 in plain language. This file remains the engineering reference.
 
-The first documentation PR adds structure and getting started. Later PRs add
-task guides and generated CLI help, exercise guides, then offline link checks
-and an accuracy pass. Each PR is reviewed separately; the repository stays private.
+The first documentation PR added structure and getting started (#48).
+The [TUI](guides/tui.md), [generated CLI](guides/cli.md),
+[profiles/stacks](guides/profiles-and-stacks.md), [assistant](guides/assistant.md)
+and [troubleshooting](guides/troubleshooting.md) guides follow in PR 2.
+`scripts/generate-cli-docs.py` builds a temporary binary and recursively captures
+help only; the CI build job checks the generated reference for drift.
+Later PRs add exercise guides, then offline link checks and an accuracy pass.
+Each PR is reviewed separately; the repository stays private.
 Command examples are checked against help and code without cloud operations,
 drill injection or live-lab changes.
 
@@ -868,9 +873,12 @@ The repository is [MIT-licensed](../LICENSE), copyright 2026 chanupen.
 The maintainer accepted historical host names on 7 Nov 2026: hostnames only,
 no secrets and no history rewrite. Third-party redistribution reviews remain
 gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
-The root [README](../README.md) documents local installation, cloud cost
-rules, the lab/drill catalogues and the assistant's recorded fixture results.
-Its 14-node Mermaid diagram shows the shared engine and read-only runner.
+The short root [README](../README.md) links to reader documentation.
+Getting-started pages cover installation and cloud cost rules; the
+[assistant guide](guides/assistant.md#honest-recorded-eval-result) retains the
+honest recorded fixture result and limits. The 15-node
+[architecture diagram](concepts/architecture.md) shows the shared engine,
+GitOps, loopback access and independent cloud cleanup.
 The README now shows a [live TUI screenshot](assets/tui-home.png) supplied
 on 8 Nov 2026, with the identifying terminal title bar cropped out.
 The [38-second asciinema recording](assets/lab-demo.cast) is under 1 MB;
