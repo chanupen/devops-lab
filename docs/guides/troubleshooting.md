@@ -13,13 +13,31 @@ lab status --mode local
 `applied` alone does not mean healthy. Operation failures print stack log paths.
 
 ```sh
-lab doctor --mode local --profile minimal
+lab doctor --mode local --profile minimal --read-only
 ```
 
 **What you will see:** named checks, details, suggested fixes and a summary.
 `✕` failures exit non-zero; `◐` warnings need review. Skipped/stopped entries
 are explained in the [doctor reading guide](../getting-started/local.md#read-lab-doctor).
 Choose `full` only if you want that threshold and AI checks.
+
+The read-only registry probe uses GET and checks loopback bindings and the
+selected lab's mirror file. It does not test upload permission. Ordinary
+doctor retains its temporary upload-and-cancel probe.
+
+```sh
+lab next
+```
+
+**What you will see:** one exact suggested command, its reason and effect.
+Failed doctor checks precede ordinary startup or exercise suggestions.
+An active/interrupted drill gets explicit status/recovery guidance first;
+its identity stays hidden if it is random. No suggested command is executed.
+
+Start rejects an active lab/drill, a busy lock, insufficient available RAM
+or changed consent. Finish the exercise explicitly, quit the acting TUI,
+close memory-heavy apps, or rerun the preview as directed. Never remove a
+held lock or erase state to bypass a refusal.
 
 > **Danger and cost:** do not delete state, kubeconfigs or Podman volumes as
 > a repair. Get approval before sudo, host configuration changes, destructive

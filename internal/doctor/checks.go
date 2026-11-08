@@ -236,7 +236,9 @@ func ollamaVRAM(apps string) (held int, others []string) {
 func aiCheck(run func(context.Context, System, Options) Result) func(context.Context, System, Options) Result {
 	return func(ctx context.Context, sys System, opts Options) Result {
 		r := run(ctx, sys, opts)
-		if r.Status == Fail && opts.Profile != "full" && !slices.Contains(opts.Stacks, "ai") {
+		required := slices.Contains(opts.Stacks, "ai") || slices.Contains(opts.RequestedStacks, "ai") ||
+			(opts.RequestedStacks == nil && opts.Profile == "full")
+		if r.Status == Fail && !required {
 			r.Status = Warn
 			r.Detail += " (only the full profile needs it)"
 		}
@@ -346,12 +348,15 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 	if !known {
 		return fail("use minimal, standard or full", "unknown profile %q", opts.Profile)
 	}
-	b, err := sys.ReadFile("/proc/meminfo")
-	if err != nil {
-		return fail("", "read /proc/meminfo: %v", err)
+	mem := opts.Memory
+	if mem == nil {
+		m, err := ReadMemory(sys)
+		if err != nil {
+			return fail("", "read /proc/meminfo: %v", err)
+		}
+		mem = &m
 	}
-	mem := parseMeminfo(b)
-	total, avail := kibToGiB(mem["MemTotal"]), kibToGiB(mem["MemAvailable"])
+	total, avail := float64(mem.Total)/(1<<30), float64(mem.Available)/(1<<30)
 	detail := fmt.Sprintf("%.1f GiB available of %.1f GiB, %s needs ~%.0f GiB", avail, total, opts.Profile, need)
 	switch {
 	case total < need:
@@ -360,6 +365,40 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 		return warn("close memory-heavy apps or choose a smaller profile", "%s", detail)
 	}
 	return ok("%s", detail)
+}
+
+// Memory is a validated host memory snapshot in bytes. Swap is not capacity.
+type Memory struct {
+	Total     uint64
+	Available uint64
+}
+
+// ProfileMemoryBytes shares doctor's thresholds with guided profile selection.
+func ProfileMemoryBytes(profile string) (uint64, error) {
+	need, ok := profileGiB[profile]
+	if !ok {
+		return 0, fmt.Errorf("unknown profile %q", profile)
+	}
+	return uint64(need * (1 << 30)), nil
+}
+
+// ReadMemory reads once; callers may pass the snapshot to subsequent checks.
+func ReadMemory(sys System) (Memory, error) {
+	b, err := sys.ReadFile("/proc/meminfo")
+	if err != nil {
+		return Memory{}, err
+	}
+	values := parseMeminfo(b)
+	for _, key := range []string{"MemTotal", "MemAvailable"} {
+		if values[key] <= 0 || uint64(values[key]) > ^uint64(0)/1024 {
+			return Memory{}, fmt.Errorf("missing or invalid %s", key)
+		}
+	}
+	m := Memory{Total: uint64(values["MemTotal"]) * 1024, Available: uint64(values["MemAvailable"]) * 1024}
+	if m.Available > m.Total {
+		return Memory{}, fmt.Errorf("MemAvailable exceeds MemTotal")
+	}
+	return m, nil
 }
 
 func parseMeminfo(b []byte) map[string]int64 {
@@ -371,7 +410,7 @@ func parseMeminfo(b []byte) map[string]int64 {
 			continue
 		}
 		f := strings.Fields(rest)
-		if len(f) == 0 {
+		if len(f) != 2 || f[1] != "kB" {
 			continue
 		}
 		if n, err := strconv.ParseInt(f[0], 10, 64); err == nil {
@@ -380,8 +419,6 @@ func parseMeminfo(b []byte) map[string]int64 {
 	}
 	return m
 }
-
-func kibToGiB(kib int64) float64 { return float64(kib) / (1 << 20) }
 
 type version struct{ major, minor, patch int }
 

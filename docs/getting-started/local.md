@@ -169,13 +169,53 @@ a zero exit status as proof of enough free memory for every selected stack.
 For a machine-readable report:
 
 ```sh
-lab doctor --mode local --profile minimal --json
+lab doctor --mode local --profile minimal --read-only --json
 ```
 
 **What you will see:** JSON with `profile`, `ok`, and `results`. Each result has
 `name`, `status`, `detail`, and sometimes `fix`. Only failures make `ok` false.
 
 ## Plan and start
+
+Start with a guided preview. Use an explicit minimal profile for this first
+tour so the plan matches the checked-in default.
+
+```sh
+lab start --profile minimal --dry-run
+```
+
+**What you will see:** doctor results, available RAM, the selected profile,
+extra stacks and the dependency-ordered plan. The final line says no apply,
+restart, chart download or state write occurred. Failed checks block startup.
+The registry check says `write permission untested`; it only observes.
+
+Without `--profile`, start picks the largest profile that fits available RAM:
+4 GiB for minimal, 12 GiB for standard, 19 GiB for full. Swap does not count.
+An explicit profile still needs that much available RAM. Selection is temporary;
+it never rewrites `lab.yaml` or drops `extraStacks`. Extras need more headroom.
+
+> **Changes the lab:** the next command asks for confirmation before creating
+> containers, downloading charts or applying stacks. Review the plan first.
+> `--yes` skips the prompt, not readiness checks. Finish active labs/drills
+> explicitly; start never restores them automatically.
+
+```sh
+lab start --profile minimal
+```
+
+**What you will see:** the same checks and plan, then
+`Start this local plan? [y/N]`. Decline, EOF or noninteractive input without
+`--yes` makes no changes. Consent is checked again under the shared lock.
+Success prints stack progress, app URLs and commands for status, next and TUI.
+Nodes/cache can restart after consent even if a later gate or download fails.
+
+Start exits 0 for success or a ready preview, 1 for a blocked/failed run,
+and 2 on a non-Linux host or cloud configuration. It has no `--mode` flag.
+
+### Explicit planning and up
+
+Use these lower-level commands when you already know the configured profile.
+Unlike guided start, plain up does not select a profile or run doctor first.
 
 **Read-only.**
 
@@ -214,8 +254,8 @@ as `◐ cluster: applying` and `● cluster: applied in ...`. Each stack's log p
 is printed. Once core is available, application URLs are listed.
 The first run depends heavily on download speed; do not assume a fixed duration.
 
-If up fails, read the failed stack's log. After fixing the reported problem,
-up retries failed stacks and keeps applied ones. To abandon the install,
+If start or up fails, read the failed stack's log. After fixing the problem,
+both retry failed stacks and keep applied ones. To abandon the install,
 use the cleanup section. Do not delete state to hide a partial deployment.
 
 ## First-hour tour
@@ -275,6 +315,29 @@ trust of this certificate; do not disable TLS verification globally.
 Argo CD and Grafana also have URLs, but their login credentials are private.
 
 ### 4. Choose what to learn next
+
+```sh
+lab next
+```
+
+**What you will see:** one suggested command with its reason and effect.
+Nothing runs or is recorded. It reads fresh doctor results and local state
+without taking the lab lock. A healthy lab gets an eligible exercise; problems
+get diagnostics, recovery guidance or a confirmed startup suggestion.
+
+```sh
+lab next --json
+```
+
+**What you will see:** one object with `schemaVersion`, `kind`, `reason`,
+`command`, `effect` and `requiresSudo`. Exit 0 means a valid recommendation,
+not a healthy lab. Bad input/report data exits 1; unsupported host/cloud exits 2.
+Effects are `read-only`, `writes-state`, `changes-lab` or `host-change`.
+Review any mutating suggestion before running it.
+
+Completion selection currently uses saved session completion and bounded
+drill history. Scratch cleanup/reset can make a lab eligible again. Durable
+progress is a separate change, not part of these commands yet.
 
 ```sh
 lab labs list --mode local

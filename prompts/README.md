@@ -55,7 +55,18 @@ as a draft, with review before the next PR; none is merged by the agent.
 | 1 | Index, local/cloud getting started, architecture, shorter root README | Approved and merged (#48) |
 | 2 | TUI, generated CLI help with drift CI, profiles/stacks, assistant, troubleshooting | Approved and merged (#49) |
 | 3 | Drill/lab guides and consistent exercise READMEs, with labelled solutions | Approved and merged (#50) |
-| 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Draft for review; `make docs-check` and [contribution rules](../docs/contributing-docs.md) added |
+| 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Approved and merged (#51); `make docs-check` and [contribution rules](../docs/contributing-docs.md) added |
+
+## Guided-use rollout
+
+The [guided design](../docs/design-guided.md) is approved and merged (#52).
+Implementation is split into three reviewed PRs; none is merged by the agent.
+
+| PR | Scope | Status |
+| --- | --- | --- |
+| B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Draft for review; state remains version 1 |
+| B2 | Durable lab/drill completion, best times, migration and cached Home summary | Deferred until B1 is merged |
+| B3 | Print-only `doctor --fix`, exact commands and sudo labels | Deferred until B1 is merged and owner authorises it; not implemented |
 
 ## To rebuild from nothing
 

@@ -58,7 +58,9 @@ Available Commands:
   extend      Push the cloud lab's expires-at forward (default 1h)
   help        Help about any command
   labs        Hands-on labs: list, start, verify each step, stop
+  next        Suggest one local next step without executing or recording it
   plan        Show what lab up (or lab down with --destroy) would change
+  start       Check readiness, select a local profile and confirm its plan
   status      Show stacks, the GitOps revision and app URLs
   tunnel      Reach a cloud lab's apps at https://<app>.localtest.me:8443 without a load balancer
   up          Bring the lab up to the profile in lab.yaml
@@ -519,10 +521,13 @@ Usage:
   lab doctor [flags]
 
 Flags:
+      --config string      path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
   -h, --help               help for doctor
       --json               print results as JSON
       --mode string        local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget (default "local")
       --profile string     memory profile to check against: minimal, standard, full (default "minimal")
+      --read-only          observe the local registry without testing upload permission
+      --state string       path to the state file (default ~/.lab/state.json)
       --timeout duration   timeout per check (default 10s)
 ```
 
@@ -1064,6 +1069,29 @@ Flags:
       --state string    path to the state file (default ~/.lab/state.json)
 ```
 
+### lab next
+
+```sh
+lab next --help
+```
+
+**What you will see:** the help below. No operation is executed.
+
+```text
+Reads local state, catalogs and fresh observational doctor results. Prints one exact
+command and its effect, never executes it or records observations. A successful
+suggestion does not mean the lab is healthy. No cloud probes or lab lock.
+
+Usage:
+  lab next [flags]
+
+Flags:
+      --config string   path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
+  -h, --help            help for next
+      --json            print one recommendation as JSON
+      --state string    path to the state file (default ~/.lab/state.json)
+```
+
 ### lab plan
 
 ```sh
@@ -1089,6 +1117,32 @@ Flags:
       --prune             plan destroying deployed stacks that are not in the profile
       --revision string   plan lab up --revision (default main)
       --state string      path to the state file (default ~/.lab/state.json)
+```
+
+### lab start
+
+```sh
+lab start --help
+```
+
+**What you will see:** the help below. No operation is executed.
+
+```text
+Local Linux only. Selects the largest profile that fits available RAM (4/12/19 GiB),
+keeps extraStacks, runs read-only doctor preflight and shows the plan before confirmation.
+The profile override is temporary. Active labs/drills must be finished explicitly.
+Dry-run never applies, restarts containers, downloads charts or writes state/locks.
+
+Usage:
+  lab start [flags]
+
+Flags:
+      --config string    path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
+      --dry-run          show readiness and the plan without applying or writing
+  -h, --help             help for start
+      --profile string   temporary profile override: minimal, standard, full (default: available RAM)
+      --state string     path to the state file (default ~/.lab/state.json)
+      --yes              confirm the local plan without prompting; does not bypass readiness
 ```
 
 ### lab status

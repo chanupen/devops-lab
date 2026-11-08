@@ -36,7 +36,7 @@ func aiDeployed(run func(AIState) Result) func(context.Context, System, Options)
 			return Result{Status: Skip, Detail: "ai stack not deployed"}
 		}
 		if sys.AI == nil {
-			return Result{Status: Skip, Detail: "no cluster to ask"}
+			return Result{Status: Skip, Detail: "no cluster to ask", Unavailable: true}
 		}
 		st, err := sys.AI(ctx)
 		if err != nil {
@@ -105,7 +105,7 @@ func checkLANListeners(_ context.Context, sys System, _ Options) Result {
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		b, err := sys.ReadFile(f)
 		if err != nil {
-			return Result{Status: Skip, Detail: fmt.Sprintf("read %s: %v", f, err)}
+			return Result{Status: Skip, Detail: fmt.Sprintf("read %s: %v", f, err), Unavailable: true}
 		}
 		for _, l := range ParseListeners(string(b)) {
 			name, ok := labPorts[l.Port]

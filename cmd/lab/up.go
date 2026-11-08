@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"time"
 
@@ -56,77 +57,8 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 				cfg.Cloud.TTL = config.Duration(ttl)
 			}
 			command := upCommand(stacks, prune, revision, refresh)
-			eng := engine.New(g, store, nil)
 			opts := engine.PlanOptions{Stacks: stacks, Prune: prune, Revision: revision, RefreshRepo: refresh}
-			// Plan once without the provider so a bad request fails before
-			// one is built, then again with what it supports.
-			if _, err := eng.PlanUp(cfg, opts); err != nil {
-				return err
-			}
-			prov, err := newProvider(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Revision: revision, Timeout: timeout, Stacks: stacks}))
-			if err != nil {
-				return err
-			}
-			// A pin outside the compatibility table is refused before
-			// anything else happens, even before stopped containers start.
-			if g, ok := prov.(versionGate); ok {
-				if err := g.CheckK8sVersion(cmd.Context()); err != nil {
-					return err
-				}
-			}
-			// After a reboot the lab's containers are there but stopped:
-			// start the main cluster and the cache before anything else
-			// looks at them. Then the running cluster's version can be
-			// read from its node, and must be the pin.
-			if err := startStopped(cmd, prov); err != nil {
-				return err
-			}
-			if g, ok := prov.(clusterVersionGate); ok {
-				if err := g.CheckClusterVersion(cmd.Context()); err != nil {
-					return err
-				}
-			}
-			opts.Supports = prov.Supports
-			if sr, ok := prov.(staleReporter); ok {
-				if opts.Reapply, err = sr.StaleStacks(cmd.Context()); err != nil {
-					return err
-				}
-			}
-			p, err := eng.PlanUp(cfg, opts)
-			if err != nil {
-				return err
-			}
-			if g, ok := prov.(stackVersionGate); ok {
-				if err := g.CheckNewStacks(cmd.Context(), newStacks(p, store)); err != nil {
-					return err
-				}
-			}
-			out := cmd.OutOrStdout()
-			if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
-				return err
-			}
-			if p.Changes() == 0 {
-				if _, err := fmt.Fprintln(out, "\nnothing to do"); err != nil {
-					return err
-				}
-			} else {
-				if err := confirmCloudApply(cmd, prov, p, time.Duration(cfg.Cloud.TTL), yes); err != nil {
-					return err
-				}
-				if destroys := p.Count(engine.Destroy); destroys > 0 {
-					if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
-						return err
-					}
-				}
-				if err := prefetchCharts(cmd.Context(), prov, p, cmd.OutOrStdout()); err != nil {
-					return err
-				}
-				if err := run(cmd, prov, g, store, p, command); err != nil {
-					warnHalfBuilt(cmd, flags, store)
-					return err
-				}
-			}
-			return printApps(cmd, prov, store)
+			return executeUp(cmd, newProvider, flags, cfg, store, g, opts, timeout, command, yes, nil)
 		},
 	}
 	flags.register(cmd)
@@ -142,6 +74,90 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 	registerTimeout(cmd, &timeout)
 	cmd.MarkFlagsMutuallyExclusive("stacks", "prune")
 	return cmd
+}
+
+// executeUp is the shared consented apply path. Start supplies the plan it
+// confirmed; ordinary up retains its existing planning/confirmation behavior.
+func executeUp(cmd *cobra.Command, factory providerFactory, flags labFlags, cfg config.Config, store *state.Store,
+	g *engine.Graph, opts engine.PlanOptions, timeout time.Duration, command string, yes bool, expected *engine.Plan,
+) error {
+	if err := cmd.Context().Err(); err != nil {
+		return err
+	}
+	eng := engine.New(g, store, nil)
+	if _, err := eng.PlanUp(cfg, opts); err != nil {
+		return err
+	}
+	prov, err := factory(cfg, homeOf(store), flags.cloudRunOptions(cmd, runOptions{Revision: opts.Revision, Timeout: timeout, Stacks: opts.Stacks}))
+	if err != nil {
+		return err
+	}
+	if gate, ok := prov.(versionGate); ok {
+		if err := gate.CheckK8sVersion(cmd.Context()); err != nil {
+			return err
+		}
+	}
+	if err := startStopped(cmd, prov); err != nil {
+		return err
+	}
+	if gate, ok := prov.(clusterVersionGate); ok {
+		if err := gate.CheckClusterVersion(cmd.Context()); err != nil {
+			return err
+		}
+	}
+	p, err := observeUpPlan(cmd.Context(), prov, eng, cfg, opts)
+	if err != nil {
+		return err
+	}
+	if gate, ok := prov.(stackVersionGate); ok {
+		if err := gate.CheckNewStacks(cmd.Context(), newStacks(p, store)); err != nil {
+			return err
+		}
+	}
+	out := cmd.OutOrStdout()
+	if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
+		return err
+	}
+	if expected != nil && !reflect.DeepEqual(p, *expected) {
+		return fmt.Errorf("live discovery changed the confirmed plan; containers may have restarted, but no stacks were applied; run lab start again")
+	}
+	if err := cmd.Context().Err(); err != nil {
+		return err
+	}
+	if p.Changes() == 0 {
+		if _, err := fmt.Fprintln(out, "\nnothing to do"); err != nil {
+			return err
+		}
+	} else {
+		if err := confirmCloudApply(cmd, prov, p, time.Duration(cfg.Cloud.TTL), yes); err != nil {
+			return err
+		}
+		if destroys := p.Count(engine.Destroy); destroys > 0 {
+			if err := confirm(cmd, yes, fmt.Sprintf("Destroy %d stacks outside the profile?", destroys)); err != nil {
+				return err
+			}
+		}
+		if err := prefetchCharts(cmd.Context(), prov, p, out); err != nil {
+			return err
+		}
+		if err := run(cmd, prov, g, store, p, command); err != nil {
+			warnHalfBuilt(cmd, flags, store)
+			return err
+		}
+	}
+	return printApps(cmd, prov, store)
+}
+
+// observeUpPlan never starts containers, fetches charts or runs a stack.
+func observeUpPlan(ctx context.Context, prov provider, eng *engine.Engine, cfg config.Config, opts engine.PlanOptions) (engine.Plan, error) {
+	opts.Supports = prov.Supports
+	if sr, ok := prov.(staleReporter); ok {
+		var err error
+		if opts.Reapply, err = sr.StaleStacks(ctx); err != nil {
+			return engine.Plan{}, err
+		}
+	}
+	return eng.PlanUp(cfg, opts)
 }
 
 // restoreDrill puts back a drill that is still in the lab (a crash, a

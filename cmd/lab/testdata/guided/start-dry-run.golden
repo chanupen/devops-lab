@@ -1,0 +1,19 @@
+● memory        8.0 GiB available of 24.0 GiB, minimal needs ~4 GiB
+○ lab registry  Zot is not there yet (lab up makes it); write permission untested (read-only probe)
+
+1 ok, 0 warn, 0 fail, 1 skipped
+
+Profile: minimal (explicit); 8.0 GiB available; threshold 4 GiB
+Extra stacks: obs; memory estimates are not a hard capacity guarantee
+local mode, minimal + obs profile, Kubernetes 1.36, gitops revision main
+
+  + registry    not deployed
+  + cluster     not deployed
+  + gitops      not deployed
+  + core        not deployed
+  + sample-app  not deployed
+  + obs         not deployed
+
+6 to apply, 0 to destroy, 0 unchanged
+Dry run: no apply, restart, chart download or state write.
+--- stderr ---

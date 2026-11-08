@@ -46,10 +46,11 @@ func (s Status) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) 
 
 // Result is what a check reports.
 type Result struct {
-	Name   string `json:"name"`
-	Status Status `json:"status"`
-	Detail string `json:"detail"`
-	Fix    string `json:"fix,omitempty"`
+	Name        string `json:"name"`
+	Status      Status `json:"status"`
+	Detail      string `json:"detail"`
+	Fix         string `json:"fix,omitempty"`
+	Unavailable bool   `json:"unavailable,omitempty"` // observational data could not be read
 }
 
 // System is the host surface the checks read from. Tests replace it with fakes.
@@ -125,6 +126,9 @@ func HostSystem() System {
 // Options select what the checks compare against.
 type Options struct {
 	Profile string
+	Memory  *Memory // reuse the memory preflight without reading it again
+	// RequestedStacks adds host prerequisites without claiming pods are deployed.
+	RequestedStacks []string
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
 	// Stacks are the stacks deployed, from the state file.

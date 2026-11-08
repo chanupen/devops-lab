@@ -1,0 +1,4 @@
+Next: Bring up the configured local profile.
+Command: lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json
+Effect: changes-lab; not executed.
+--- stderr ---

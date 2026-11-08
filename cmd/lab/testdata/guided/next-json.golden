@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "kind": "start",
+  "reason": "Bring up the configured local profile.",
+  "command": "lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json",
+  "effect": "changes-lab",
+  "requiresSudo": false
+}
+--- stderr ---

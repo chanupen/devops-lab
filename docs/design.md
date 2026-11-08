@@ -36,6 +36,33 @@ Each PR is reviewed separately; the repository stays private.
 Command examples are checked against help and code without cloud operations,
 drill injection or live-lab changes.
 
+## Guided local use
+
+The approved [guided design](design-guided.md) adds `lab start` and `lab next`
+in B1. Start shares the engine and `up` execution path; it never shells out to
+up or creates a separate planner. Doctor exposes one typed memory snapshot
+and shared 4/12/19 GiB thresholds. Requested host prerequisites are separate
+from deployed-stack health checks.
+
+Start keeps extras and selects a profile only in memory. Its preflight and
+dry-run are observational. Confirmation precedes the shared lock; state/config
+are reloaded under it, and live plan changes stop before stack application.
+An active lab/drill must be handled explicitly. Version gates, container
+restart, chart prefetch, engine logs and app output remain shared with up.
+
+Next reads local state, catalogs and bounded doctor observations; it never
+executes or saves a recommendation, takes the lock or probes AWS. Diagnostic
+commands use the new local `doctor --read-only` with selected config/state
+paths. The registry variant uses GET, rejects redirects and labels write
+permission untested. Ordinary doctor retains its upload/cancel behavior.
+Unavailable observations block guided readiness without changing ordinary
+doctor skip semantics. Local TUI doctor reports use the observational variant
+in their existing background path; cached first-frame rendering is unchanged.
+
+B1 leaves state schema version 1 and exercise lifecycles unchanged. Next uses
+current lab completion and bounded drill history until B2 adds durable progress
+and migration. B3 adds print-only doctor fixes. Both wait for B1 to merge.
+
 ## Summary
 
 Build one lab with one control center: a Go terminal app called `lab` that brings up the same DevOps platform either on the Fedora box (local mode) or on AWS (cloud mode), with the same screens, keys and lab exercises in both.

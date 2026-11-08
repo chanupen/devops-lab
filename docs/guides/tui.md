@@ -5,6 +5,15 @@
 Start from a configured checkout with an installed `lab`.
 
 ```sh
+lab next
+```
+
+**What you will see:** one advisory CLI command and its effect, without
+executing it or taking the lab lock. Use it before opening the acting TUI.
+Guided startup is described in the [local guide](../getting-started/local.md#plan-and-start).
+It is not a new TUI key or screen.
+
+```sh
 lab
 ```
 
@@ -12,6 +21,11 @@ lab
 shows mode and profile; the bottom strip shows actions and their CLI command.
 Views do not wait for operations. Output retains 5,000 lines, with at most
 20 redraws per second.
+
+Local doctor reports use the selected configuration/state paths and
+`--read-only`, so the registry is observed without an upload test. Reports
+still run in background commands. The cached first frame and Home layout
+are unchanged; a durable progress summary comes in a separate PR.
 
 > **Danger and cost:** action keys really run operations. Local up changes
 > containers; down deletes stack data. A cloud TUI changes billed AWS resources.

@@ -71,7 +71,7 @@ func listUnits(ctx context.Context, sys System) ([]Unit, Result, bool) {
 	}
 	units, err := sys.Units(ctx)
 	if err != nil {
-		return nil, Result{Status: Skip, Detail: "podman API unavailable: " + firstLine(err.Error())}, false
+		return nil, Result{Status: Skip, Detail: "podman API unavailable: " + firstLine(err.Error()), Unavailable: true}, false
 	}
 	return units, Result{}, true
 }
@@ -104,25 +104,35 @@ func runningResult(u Unit) Result {
 
 // RegistryState is what the lab registry check found.
 type RegistryState struct {
-	Missing bool   // Zot is not there yet
-	Pending string // a step still to run (the nodes' mirror file); a warning
-	Err     error  // anything else: a failure
+	Missing       bool   // Zot is not there yet
+	Pending       string // a step still to run (the nodes' mirror file); a warning
+	Err           error  // anything else: a failure
+	WriteUntested bool   // observational probe, not an upload permission test
+	Stopped       bool
 }
 
 // checkLabRegistry reports whether labs can push images from the host and
 // the cluster can pull them.
-func checkLabRegistry(ctx context.Context, sys System, _ Options) Result {
+func checkLabRegistry(ctx context.Context, sys System, _ Options) (r Result) {
 	if sys.LabRegistry == nil {
 		return Result{Status: Skip, Detail: "not checked"}
 	}
 	st := sys.LabRegistry(ctx)
+	if st.WriteUntested {
+		defer func() { r.Detail += "; write permission untested (read-only probe)" }()
+	}
 	switch {
+	case st.Stopped:
+		return stopped("podman start lab-zot", "stopped")
 	case st.Missing:
 		return Result{Status: Skip, Detail: "Zot is not there yet (lab up makes it)"}
 	case st.Err != nil:
 		return fail("lab up --stacks registry publishes Zot on 127.0.0.1:5000", "%s", firstLine(st.Err.Error()))
 	case st.Pending != "":
 		return warn("lab labs start (or lab up) writes it", "%s", st.Pending)
+	}
+	if st.WriteUntested {
+		return ok("registry available on loopback; node mirror file present")
 	}
 	return ok("push 127.0.0.1:5000/lab from the host, pull lab-zot:5000/lab in the cluster")
 }
