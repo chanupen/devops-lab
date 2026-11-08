@@ -162,6 +162,9 @@ Pay particular attention to `lan listeners`, `memory`, `ghcr.io download`,
 or a slow image CDN can make the first install fail. An old active drill is
 not a clean starting point. Use the reported fix and
 [known issues](../../prompts/91-known-issues.md); do not disable checks.
+Memory compares both total and available RAM with the profile threshold:
+insufficient total fails, while low available memory warns. Do not treat
+a zero exit status as proof of enough free memory for every selected stack.
 
 For a machine-readable report:
 
@@ -279,7 +282,7 @@ lab labs list --mode local
 
 **What you will see:** six catalog entries with time, level, mode and progress.
 Lab 6 is marked unavailable locally. Listing does not start a lab.
-Use [the existing lab instructions](../../labs/README.md) before starting one.
+Use [the labs guide](../guides/labs.md) before starting one.
 
 ```sh
 lab drills list
@@ -288,7 +291,7 @@ lab drills list
 **What you will see:** seven drills with limits, alerts and best times.
 It reports missing prerequisite stacks; the default does not include
 `secrets` or `sample-db`. Listing does not inject a fault.
-Read [the current drill instructions](../../drills/README.md) first.
+Read [the drills guide](../guides/drills.md) first.
 
 ```sh
 lab --help

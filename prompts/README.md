@@ -54,8 +54,8 @@ as a draft, with review before the next PR; none is merged by the agent.
 | --- | --- | --- |
 | 1 | Index, local/cloud getting started, architecture, shorter root README | Approved and merged (#48) |
 | 2 | TUI, generated CLI help with drift CI, profiles/stacks, assistant, troubleshooting | Approved and merged (#49) |
-| 3 | Drill/lab guides and consistent exercise READMEs, with labelled solutions | Draft for review; [labs](../docs/guides/labs.md) and [drills](../docs/guides/drills.md) added |
-| 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Pending |
+| 3 | Drill/lab guides and consistent exercise READMEs, with labelled solutions | Approved and merged (#50) |
+| 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Draft for review; `make docs-check` and [contribution rules](../docs/contributing-docs.md) added |
 
 ## To rebuild from nothing
 
