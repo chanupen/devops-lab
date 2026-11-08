@@ -162,7 +162,7 @@ These tools are not linked into `lab` or bundled with release binaries.
 | actions/checkout v5.1.0 | `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` | MIT |
 | actions/setup-go v6.5.0 | `924ae3a1cded613372ab5595356fb5720e22ba16` | MIT |
 | actions/cache restore/save v6.1.0 | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` | MIT |
-| golangci-lint-action v8.0.0 | `25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128` | [MIT action](https://github.com/golangci/golangci-lint-action/blob/25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128/LICENSE) |
+| golangci-lint-action v9.3.0 | `ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a` | [MIT action](https://github.com/golangci/golangci-lint-action/blob/ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a/LICENSE) |
 | golangci-lint | v2.15.0 | [GPL-3.0](https://github.com/golangci/golangci-lint/blob/v2.15.0/LICENSE) |
 | actions/upload-artifact v7.0.2 (release) | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | [MIT](https://github.com/actions/upload-artifact/blob/v7.0.2/LICENSE) |
 | actions/download-artifact v8.0.2 (release) | `9000827ccba6bdab643e8b6fd33ac0654aef8333` | [MIT](https://github.com/actions/download-artifact/blob/v8.0.2/LICENSE) |
