@@ -282,7 +282,8 @@ GitOps ownership, TUI behaviour and cleanup guarantees.
 E2E labs and drills have separate opt-in commands in their READMEs; they
 mutate a lab and are not part of the unit suite.
 
-There is no v1.0.0 release yet. The [release workflow](.github/workflows/release.yml)
+[v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
+on 2026-11-08. The [release workflow](.github/workflows/release.yml)
 builds linux/amd64 and darwin/amd64 on `v*` tags, after lint and race tests.
 It verifies SHA256SUMS, retains repository and linked-module notices, and
 publishes a GitHub release using only GITHUB_TOKEN. A release commit must be

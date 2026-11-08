@@ -18,7 +18,7 @@ defaults:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       BUILD_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref_name }}
@@ -34,7 +34,7 @@ jobs:
         if: github.event_name == 'push'
         run: |
           [[ "$BUILD_VERSION" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
-      - uses: golangci/golangci-lint-action@25e2cdc5eb1d7a04fdc45ff538f1a00e960ae128 # v8.0.0
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           install-mode: goinstall
@@ -71,7 +71,7 @@ jobs:
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

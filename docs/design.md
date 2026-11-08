@@ -838,10 +838,11 @@ Sources: [RPM Fusion NVIDIA howto](https://rpmfusion.org/Howto/NVIDIA), [RPM Fus
 
 ## Public readiness and release
 
-Release work is split into three draft PRs, reviewed one at a time: the
-public-readiness audit, README and demo documentation, then the tag-triggered
-binary release workflow. The audit comes before publication documentation.
-No v1.0.0 tag is created by this work.
+[v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
+on 2026-11-08. The repository remains private. Both binaries, LICENSE and
+THIRD_PARTY_NOTICES.txt passed verification against the release's
+[SHA256SUMS](https://github.com/chanupen/devops-lab/releases/download/v1.0.0/SHA256SUMS);
+the verified hashes are recorded in [prompts/README.md](../prompts/README.md#current-release).
 
 The 7 Nov 2026 audit is recorded in [public-readiness.md](public-readiness.md).
 It scans all fetched branch, tag and PR-head history, including merge-parent
@@ -867,7 +868,7 @@ distinguishes the live captures from the earlier golden-output SVG.
 The rules-first 100% is on fixtures written against; both 3B model-only recordings scored 0%
 on diagnosable drills. These are harness measurements, not generalisation.
 No drills, live-lab changes or cloud operations are run for this docs PR.
-The audit (#42), README/docs (#43) and release pipeline (#45) are merged into main.
+The audit (#42), README/docs (#43), release pipeline (#45) and demo (#46) are merged into main.
 The separate [release workflow](../.github/workflows/release.yml) runs on
 `v*` tag pushes and branch `workflow_dispatch` probes. Lint/race checks gate the static,
 trimmed linux/amd64 and darwin/amd64 builds. Each binary records the tag as
@@ -879,13 +880,11 @@ the tagged commit is reachable from main, verifies the downloaded artifact,
 and publishes only after a complete draft-release upload. No other credentials
 or signing keys are required.
 
-Dispatch probes may target an unmerged branch: they build the same payload but
-cannot publish a release, even when dispatched on a tag. A hosted probe must
-confirm both binary targets, checksum verification and a skipped publish job
-before this draft is reviewed. Earlier `release-test-*` tag probes are recorded
-in the release PR with their checksums; those tags are removed after the
-evidence is preserved. New probes use dispatch, not tags.
-No v1.0.0 tag, live demo, drill or cloud operation is part of the probe.
+Dispatch probes may target an unmerged branch: they build the same payload,
+verify checksums and skip the publishing job, even when dispatched on a tag.
+Earlier `release-test-*` tag probes are recorded in #45 with their checksums;
+those tags were removed after the evidence was preserved. New probes use
+branch dispatch and do not create tags, releases, drills or cloud resources.
 
 ## Risks and open questions
 

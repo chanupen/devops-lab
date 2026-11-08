@@ -30,13 +30,19 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Done (#29, passing session #32) |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
 | `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Done (gate passed 6 Nov 2026; [design](../docs/design.md#build-roadmap)) |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42, [README/docs](../README.md) #43 and [release pipeline](../.github/workflows/release.yml) #45 merged; supplied [live screenshot and recording](../README.md#demo) added in this draft docs PR; v1.0.0 not done |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | Done: [v1.0.0 released](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) on 2026-11-08; [release workflow](../.github/workflows/release.yml) #45 and [demo](../README.md#demo) #46 merged; all four assets verified against [SHA256SUMS](https://github.com/chanupen/devops-lab/releases/download/v1.0.0/SHA256SUMS) |
 
-## To continue from today
+## Current release
 
-1. The public-readiness audit (#42), README/docs (#43) and release pipeline (#45) are merged.
-2. Review this draft's supplied live screenshot and 38-second recording. Identifying shell information was removed; the recording is under 1 MB.
-3. Do not tag v1.0.0 until the maintainer approves the release. Any new drill walkthrough requires separate approval and verified restoration.
+v1.0.0 was released on 2026-11-08. The repository remains private.
+All four downloaded release assets passed `sha256sum --check SHA256SUMS`:
+
+```text
+ef22df3d083f66ded69d086c43e42eeb35c44320b04e49d1733a1eb717642447  lab-linux-amd64
+cccf5d698caf7990b76fd0073404f0e3ce62835112cec082e7c8f53f906be1ea  lab-darwin-amd64
+47645d336159ac26585408aae879dbc64ed4fe0a1b6a0488dcdf768fcd190e71  LICENSE
+bad535c73e2b4440012f1d61338836c47fd45f1c3d1b536151dc7fb70d2283a0  THIRD_PARTY_NOTICES.txt
+```
 
 ## To rebuild from nothing
 
