@@ -22,11 +22,13 @@ The repository is private; you need access to clone it.
 | Verify a downloaded binary | [Release binaries](#release-binaries) |
 | Check component and model terms | [Licence inventory](licences.md) |
 | Change the implementation | [Engineering reference](design.md) |
+| Write or validate a documentation change | [Documentation contribution guide](contributing-docs.md) |
 
 The task and exercise guides are available above. Individual lab and drill
 pages use a consistent lifecycle layout. Reference solutions are labelled
-spoilers, not required reading. Offline link-check CI and the full documented
-read-only command accuracy pass follow in PR 4.
+spoilers, not required reading. CI checks local links, anchors and Mermaid
+offline with `make docs-check`. See the contribution guide for style rules
+and safe accuracy checks.
 
 ## Safety labels
 

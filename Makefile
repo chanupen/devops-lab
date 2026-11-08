@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 BINDIR  ?= $(HOME)/.local/bin
 bindir  := $(patsubst %/,%,$(BINDIR))
 
-.PHONY: build build-all install uninstall reaper test lint fmt clean doctor help
+.PHONY: build build-all install uninstall reaper test lint docs-check fmt clean doctor help
 
 # Static like the release binaries: smaller (no cgo) and no dynamic loader at
 # exec. go test -race still needs cgo, so only the build targets set it.
@@ -46,9 +46,13 @@ build-all: ## build lab for linux/amd64 and darwin/amd64
 	GOOS=linux  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-linux-amd64 $(PKG)
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-darwin-amd64 $(PKG)
 
-test: ## run the unit tests with -race (the lab and apps/sample-db)
+test: docs-check ## check docs, then run unit tests with -race (both Go modules)
 	go test -race ./...
 	cd apps/sample-db && go test -race ./...
+
+docs-check: ## check documentation links, anchors and Mermaid offline (Python 3.10+)
+	python3 -m unittest discover -s scripts -p 'test_check_docs.py'
+	python3 scripts/check_docs.py
 
 lint: ## run golangci-lint (the lab and apps/sample-db)
 	golangci-lint run

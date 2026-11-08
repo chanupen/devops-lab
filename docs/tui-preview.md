@@ -21,6 +21,11 @@ Replay with asciinema 3:
 asciinema play docs/assets/lab-demo.cast
 ```
 
+**What you will see:** passive playback of the supplied recording in a terminal.
+Replay does not execute its recorded commands.
+Playback needs a TTY; a redirected/noninteractive shell can report
+`No such device or address`. Use a terminal, not an output pipe.
+
 No live-lab command, drill or cloud operation was run to add these supplied assets.
 
 ## Golden test provenance
@@ -45,6 +50,9 @@ cluster, model or drill operation:
 go test ./internal/tui -run 'TestGolden/home_up$|TestFirstFrame' -v
 ```
 
+**What you will see:** synthetic renderer/startup test results, with no cluster
+or model operation.
+
 If the renderer changes, review the golden diff first. The existing
 `go test ./internal/tui -run Golden -update` mechanism updates test fixtures;
 it is not a live screenshot command. If regenerating the earlier SVG, keep its
@@ -61,6 +69,9 @@ lab status
 lab drills status
 lab
 ```
+
+**What you will see:** local state/health and drill reports, then the TUI.
+It can hold the mutation lock; do not use action keys for a passive capture.
 
 Use a 100-column, 30-row terminal. Select Home with `1`. Capture the whole
 terminal content, including header, tabs, both panes, operations strip and

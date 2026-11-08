@@ -29,6 +29,8 @@ extraStacks: [obs]
 
 Doctor's `--profile` selects a readiness threshold; it does not change
 `lab.yaml` or deploy a profile. There is no up `--profile` flag.
+Total RAM below the profile threshold fails. Available RAM below it warns,
+even when total RAM is sufficient; a zero exit status can still need review.
 
 ## Stack catalog
 
@@ -62,6 +64,9 @@ lab plan --mode local
 
 **What you will see:** requested stacks in dependency order and counts.
 `+` applies; `=` keeps; `-` destroys or skips. Skips include `skip:` in the reason.
+Already-deployed stacks outside the selected profile are kept with a warning,
+not silently destroyed. Their rows say `not in profile`; pruning requires
+an explicit mutating operation.
 
 ```sh
 lab doctor --mode local --profile minimal

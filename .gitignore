@@ -1,6 +1,7 @@
 # Build output
 /bin/
 /.github/scripts/__pycache__/
+/scripts/__pycache__/
 
 # Secrets and credentials: never commit
 *.pem

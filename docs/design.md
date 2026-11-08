@@ -18,14 +18,20 @@ The [TUI](guides/tui.md), [generated CLI](guides/cli.md),
 and [troubleshooting](guides/troubleshooting.md) guides were added in PR 2 (#49).
 `scripts/generate-cli-docs.py` builds a temporary binary and recursively captures
 help only; the CI build job checks the generated reference for drift.
-PR 3 adds [labs](guides/labs.md) and [drills](guides/drills.md) lifecycle guides
-and standardises all six lab and seven drill READMEs. Learner pages describe
+PR 3 added [labs](guides/labs.md) and [drills](guides/drills.md) lifecycle guides (#50)
+and standardised all six lab and seven drill READMEs. Learner pages describe
 symptoms/tasks, not root-cause walkthroughs; reference scripts are labelled
 spoilers. Drill incident text stays before the first H2 for `Drill.Page`.
 Lab lifecycle sections stay before the first `## Step N: title`; each step
 retains `### Hints` and `### Expected result` for the CLI/TUI parser.
 This keeps cleanup text out of the final step's expected result without
-changing execution or restoration logic. PR 4 adds offline link checks and an accuracy pass.
+changing execution or restoration logic.
+PR 4 adds `make docs-check` and an offline CI job for relative links, GitHub
+anchors and the documented Mermaid flowchart subset. Python standard-library
+tests cover broken targets/anchors, code-fence exclusion and diagram failures.
+[Documentation contributions](contributing-docs.md) defines style and safety.
+The accuracy pass runs local read-only reports; cloud and mutation commands
+are verified with help/code only. Host-specific audit output stays outside Git.
 Each PR is reviewed separately; the repository stays private.
 Command examples are checked against help and code without cloud operations,
 drill injection or live-lab changes.

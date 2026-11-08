@@ -47,7 +47,8 @@ Download it and replay with asciinema 3:
 asciinema play docs/assets/lab-demo.cast
 ```
 
-You will see the recorded terminal session; replay does not run its commands.
+**What you will see:** the recorded terminal session; replay does not run its commands.
+Run playback in a terminal, not an output pipe.
 Shell identifiers were removed; see [capture provenance](docs/tui-preview.md).
 
 ## Install and develop
@@ -59,15 +60,16 @@ On Linux, from the checkout with Go 1.27.1+ and the prerequisites in the
 make install
 ```
 
-You will see the installed path and version. The default is `~/.local/bin/lab`,
+**What you will see:** the installed path and version. The default is `~/.local/bin/lab`,
 without sudo; `BINDIR` changes the destination. Installation does not start a lab.
 
 ```sh
 make lint test
 ```
 
-You will see golangci-lint and race-test results for both Go modules.
+**What you will see:** offline documentation checks, golangci-lint and race-test results for both Go modules.
 Opt-in e2e tests mutate a lab and are not part of this command.
+Documentation checks need Python 3.10+ and make, with no downloads or secrets.
 
 [v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
 on 2026-11-08. Linux/amd64 and Intel macOS binaries come with `SHA256SUMS`;
