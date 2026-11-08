@@ -60,12 +60,13 @@ as a draft, with review before the next PR; none is merged by the agent.
 ## Guided-use rollout
 
 The [guided design](../docs/design-guided.md) is approved and merged (#52).
-Implementation is split into three reviewed PRs; none is merged by the agent.
+Implementation uses small reviewed PRs; none is merged by the agent.
 
 | PR | Scope | Status |
 | --- | --- | --- |
-| B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Draft for review; state remains version 1 |
-| B2 | Durable lab/drill completion, best times, migration and cached Home summary | Deferred until B1 is merged |
+| B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Approved and merged (#53); state remains version 1 |
+| B1.1 | Ignore accepted doctor warnings in next; regression fixtures, goldens and docs | Draft for review |
+| B2 | Durable lab/drill completion, best times, migration and cached Home summary | Deferred until B1.1 is merged |
 | B3 | Print-only `doctor --fix`, exact commands and sudo labels | Deferred until B1 is merged and owner authorises it; not implemented |
 
 ## To rebuild from nothing

@@ -58,10 +58,14 @@ permission untested. Ordinary doctor retains its upload/cancel behavior.
 Unavailable observations block guided readiness without changing ordinary
 doctor skip semantics. Local TUI doctor reports use the observational variant
 in their existing background path; cached first-frame rendering is unchanged.
+Next ignores warnings whose fix marker is `allowed` or `accepted` (optionally
+followed by `:` and an explanation). Failures and other warnings still suggest
+doctor; an accepted compatibility warning does not prevent exercise guidance.
 
 B1 leaves state schema version 1 and exercise lifecycles unchanged. Next uses
 current lab completion and bounded drill history until B2 adds durable progress
-and migration. B3 adds print-only doctor fixes. Both wait for B1 to merge.
+and migration. B1 is merged (#53); B1.1 fixes accepted-warning recommendations.
+B2 waits for B1.1 to merge. B3 adds print-only doctor fixes in a later PR.
 
 ## Summary
 

@@ -491,18 +491,96 @@ func TestNextPrioritiesAndReadOnly(t *testing.T) {
 	}
 }
 
-func TestGuidedGoldens(t *testing.T) {
+func TestNextWarningDisposition(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		args []string
+		name, fix, kind string
+		status          doctor.Status
 	}{
-		{"start-dry-run", []string{"start", "--dry-run", "--profile", "minimal"}},
-		{"start-blocked", []string{"start", "--dry-run", "--profile", "full"}},
-		{"next", []string{"next"}},
-		{"next-json", []string{"next", "--json"}},
+		{"allowed", "allowed", "start-lab", doctor.Warn},
+		{"allowed explanation", "allowed: tested range", "start-lab", doctor.Warn},
+		{"accepted", "accepted", "start-lab", doctor.Warn},
+		{"accepted explanation", " Accepted: reviewed constraint ", "start-lab", doctor.Warn},
+		{"actionable", "update the component", "doctor", doctor.Warn},
+		{"unmarked", "", "doctor", doctor.Warn},
+		{"not accepted", "not accepted: update the component", "doctor", doctor.Warn},
+		{"failure marked allowed", "allowed: tested range", "doctor", doctor.Fail},
+		{"allowed before actionable", "allowed: tested range", "doctor", doctor.Warn},
+		{"Kyverno tested range", "", "start-lab", doctor.Warn},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGuidedFixture(t)
+			st := fixtureReadyState()
+			st.Stacks["policy"] = state.StackState{Status: state.Applied}
+			f.save(t, st, false)
+			f.deps.catalog = func(string) ([]labs.Lab, []drills.Drill, error) {
+				return []labs.Lab{{ID: "01-first", Modes: []string{"local"}, Stacks: []string{"core"}}}, nil, nil
+			}
+			f.deps.checks = func() []doctor.Check {
+				if tt.name == "Kyverno tested range" {
+					for _, check := range doctor.Checks() {
+						if check.Name == "k8s support" {
+							return []doctor.Check{check}
+						}
+					}
+					t.Fatal("missing k8s support check")
+				}
+				checks := []doctor.Check{{Name: "k8s support", Run: func(context.Context, doctor.System, doctor.Options) doctor.Result {
+					return doctor.Result{Status: tt.status, Fix: tt.fix}
+				}}}
+				if tt.name == "allowed before actionable" {
+					checks = append(checks, doctor.Check{Name: "memory", Run: func(context.Context, doctor.System, doctor.Options) doctor.Result {
+						return doctor.Result{Status: doctor.Warn, Fix: "close memory-heavy apps"}
+					}})
+				}
+				return checks
+			}
+			out, _, err := f.execute("next", "--json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var step nextStep
+			if err := json.Unmarshal([]byte(out), &step); err != nil {
+				t.Fatal(err)
+			}
+			if step.Kind != tt.kind {
+				t.Fatalf("step: %+v", step)
+			}
+			if tt.kind == "start-lab" && !strings.HasPrefix(step.Command, "lab labs start 01-first ") {
+				t.Fatal(step.Command)
+			}
+			if tt.name == "allowed before actionable" && !strings.Contains(step.Reason, "memory") {
+				t.Fatal(step.Reason)
+			}
+		})
+	}
+}
+
+func TestGuidedGoldens(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		args       []string
+		warningFix string
+	}{
+		{"start-dry-run", []string{"start", "--dry-run", "--profile", "minimal"}, ""},
+		{"start-blocked", []string{"start", "--dry-run", "--profile", "full"}, ""},
+		{"next", []string{"next"}, ""},
+		{"next-json", []string{"next", "--json"}, ""},
+		{"next-allowed-warning", []string{"next"}, "allowed: tested range"},
+		{"next-actionable-warning", []string{"next"}, "update the component"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newGuidedFixture(t)
+			if tt.warningFix != "" {
+				f.save(t, fixtureReadyState(), false)
+				f.deps.catalog = func(string) ([]labs.Lab, []drills.Drill, error) {
+					return []labs.Lab{{ID: "01-first", Modes: []string{"local"}}}, nil, nil
+				}
+				f.deps.checks = func() []doctor.Check {
+					return []doctor.Check{{Name: "k8s support", Run: func(context.Context, doctor.System, doctor.Options) doctor.Result {
+						return doctor.Result{Status: doctor.Warn, Fix: tt.warningFix}
+					}}}
+				}
+			}
 			out, stderr, err := f.execute(tt.args...)
 			if err != nil {
 				stderr += err.Error() + "\n"

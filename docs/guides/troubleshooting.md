@@ -33,6 +33,10 @@ lab next
 Failed doctor checks precede ordinary startup or exercise suggestions.
 An active/interrupted drill gets explicit status/recovery guidance first;
 its identity stays hidden if it is random. No suggested command is executed.
+Warnings marked `fix: allowed` or `fix: accepted` remain visible in doctor
+but do not divert next from an eligible exercise. This includes Kyverno's
+accepted Kubernetes 1.36 tested-range warning. Actionable warnings and failures
+still suggest doctor.
 
 Start rejects an active lab/drill, a busy lock, insufficient available RAM
 or changed consent. Finish the exercise explicitly, quit the acting TUI,
