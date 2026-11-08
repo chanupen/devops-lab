@@ -4,6 +4,20 @@
 
 Oct 30, 2026
 
+## Reader documentation
+
+[docs/README.md](README.md) is the reader entry point. Its
+[local](getting-started/local.md) and [cloud](getting-started/cloud.md) guides
+cover prerequisites, expected output and cleanup without requiring this file.
+[Architecture](concepts/architecture.md) explains the shared engine and GitOps
+in plain language. This file remains the engineering reference.
+
+The first documentation PR adds structure and getting started. Later PRs add
+task guides and generated CLI help, exercise guides, then offline link checks
+and an accuracy pass. Each PR is reviewed separately; the repository stays private.
+Command examples are checked against help and code without cloud operations,
+drill injection or live-lab changes.
+
 ## Summary
 
 Build one lab with one control center: a Go terminal app called `lab` that brings up the same DevOps platform either on the Fedora box (local mode) or on AWS (cloud mode), with the same screens, keys and lab exercises in both.

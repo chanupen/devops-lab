@@ -44,6 +44,19 @@ cccf5d698caf7990b76fd0073404f0e3ce62835112cec082e7c8f53f906be1ea  lab-darwin-amd
 bad535c73e2b4440012f1d61338836c47fd45f1c3d1b536151dc7fb70d2283a0  THIRD_PARTY_NOTICES.txt
 ```
 
+## Reader documentation rollout
+
+The [documentation index](../docs/README.md) is the reader entry point.
+These four small PRs are separate from the completed release. Each starts
+as a draft, with review before the next PR; none is merged by the agent.
+
+| PR | Scope | Status |
+| --- | --- | --- |
+| 1 | Index, local/cloud getting started, architecture, shorter root README | Draft for review; page-list approval required before PR 2 |
+| 2 | TUI, generated CLI help with drift CI, profiles/stacks, assistant, troubleshooting | Pending |
+| 3 | Drill/lab guides and consistent exercise READMEs, with labelled solutions | Pending |
+| 4 | Offline link-check CI, docs style note, documented read-only command accuracy pass | Pending |
+
 ## To rebuild from nothing
 
 Run 01 to 15 in order. The prompts for finished work already include the fixes that came later, so a rebuild avoids the bugs found the first time. The lessons behind them are in `91-known-issues.md`.
