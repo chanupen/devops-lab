@@ -1,100 +1,154 @@
-# Lab 5: Kyverno policy that blocks images without a digest
+# Lab 5: Require image digests with Kyverno
 
-A tag such as `6.15.0` is a pointer: whoever can push can move it to other bytes. A digest names exactly one image. In this lab you write a Kyverno policy that refuses Pods whose images are not pinned by digest, see it deny and allow, grant one named workload an exception, read the reports Kyverno writes, and test the policy offline before it ever reaches a cluster.
+Test admission rules and narrow exceptions before trusting their reports.
 
-The lab runs on your main lab's cluster, in the namespace `lab05-apps`. It needs the `policy` stack: `lab up --stacks policy` installs Kyverno and the Pod Security Standards "baseline" policies, in Audit mode. Your policy is scoped to `lab05-*` namespaces, so nothing else in the cluster is affected. Cluster-scoped objects you create carry the label `lab.devops/lab=05-kyverno-digest`, which is how `lab labs reset` finds them.
+## Goal
 
-You need `kubectl`, `jq` and `podman`. The kyverno CLI runs as a pinned image through rootless Podman:
+Write a digest requirement, prove denial/allowance, add a narrow exception and
+test offline. Allow 35 minutes; intermediate level.
 
-```bash
+## Prerequisites
+
+Local or cloud main lab, healthy `policy`; kubectl, jq and rootless Podman.
+Start lab 5 and select its exports with [the lifecycle guide](../../docs/guides/labs.md).
+No other active lab/drill. Use namespace `lab05-apps` and workspace `~/lab05`.
+Label cluster-scoped exercise objects `lab.devops/lab=05-kyverno-digest`.
+Append `--mode cloud` to every labs hint/verify/reset/stop command below for
+a cloud session; the examples otherwise use the configured mode.
+
+**Danger:** admission policy can block workloads. Restrict matching to `lab05-*`.
+**Billed — approval required in cloud:** live policy/workload changes use EKS.
+
+Define the offline CLI wrapper from your exercise workspace:
+
+```sh
 kyverno() { podman run --rm --network none -v "$PWD":/work:Z -w /work ghcr.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56dc33154a2d1d1fba58f4cadad3f47be7e78b11c "$@"; }
 ```
 
-The image is `ghcr.io/stefanprodan/podinfo:6.15.0`, by digest `@sha256:ec73780a8425f59ea49f5bc8cdff0d598805a224fbaa1f86c67a244f250fa9da`.
+**What you will see:** no output until invoked. Tests mount only the workspace,
+without container network access.
+Use podinfo `ghcr.io/stefanprodan/podinfo:6.15.0`, with pinned reference
+`@sha256:ec73780a8425f59ea49f5bc8cdff0d598805a224fbaa1f86c67a244f250fa9da`.
 
-You write the policy as a `ValidatingPolicy` (`policies.kyverno.io/v1`): rules in CEL, the expression language of Kubernetes' own ValidatingAdmissionPolicy. The baseline policies of the stack are written the same way.
+## Steps
 
-Many clusters still run the older form, the `kyverno.io/v1` ClusterPolicy: rules with `match`, `validate.pattern` and `failureAction`, and wildcards such as `image: "*@sha256:*"` instead of CEL. Kyverno 1.19 still runs it but marks it deprecated, and `kubectl` prints a warning for it. Expect to read ClusterPolicies, and to move them to ValidatingPolicy: [the migration guide](https://kyverno.io/docs/guides/migration-to-cel/) maps one onto the other.
+1. [Write the policy](#step-1-write-a-validatingpolicy-that-requires-digests).
+2. [Prove denial](#step-2-show-that-a-tag-only-pod-is-denied).
+3. [Prove allowance](#step-3-show-that-a-digest-pod-is-allowed).
+4. [Scope an exception](#step-4-grant-one-named-workload-an-exception).
+5. [Read reports](#step-5-read-the-policyreports).
+6. [Test offline](#step-6-test-the-policy-offline-with-kyverno-test).
 
-Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
+## What you should see
+
+Tag-only workloads are denied only in the exercise scope. A pinned workload is
+allowed; the named legacy exception cannot be copied with labels.
+Baseline Pod Security policies remain Audit-only and report findings.
+
+Use `policies.kyverno.io/v1` ValidatingPolicy with CEL. Older ClusterPolicy
+examples use different matching and validation syntax; do not mix their fields.
+
+## Hints
+
+```sh
+lab labs hint
+```
+
+**What you will see:** the next hint for the current step.
+
+## How to verify
+
+```sh
+lab labs verify
+```
+
+**What you will see:** the step result and saved progress on success.
+Admission probes use server-side dry runs without storing a workload.
+Offline tests read your `~/lab05/test` files.
+**Reference solutions (spoilers):** [solution scripts](solution/).
+
+## Cleanup
+
+**Destructive to the exercise; cloud changes need approval:**
+
+```sh
+lab labs reset
+```
+
+**What you will see:** `lab05-apps` and labelled exercise policies removed,
+including the older ClusterPolicy form if present. Your workspace remains.
+
+```sh
+lab labs stop
+```
+
+**What you will see:** the session ends. Use `--mode cloud` for cloud.
+Stop alone would leave the policy in the main cluster; EKS still bills.
 
 ## Step 1: Write a ValidatingPolicy that requires digests
 
-Write a ValidatingPolicy `require-image-digest` with the label `lab.devops/lab: 05-kyverno-digest`. It matches Pods (create and update), only in namespaces `lab05-*`, and denies a Pod unless every container image contains `@sha256:`.
+Create `require-image-digest`, labelled for this lab. Match Pod CREATE/UPDATE only in `lab05-*`. Deny images without `@sha256:` in normal and init containers. Use a denial message containing `pinned by digest`, which the verification probes expect.
 
 ### Hints
-- `spec.matchConstraints.resourceRules` says what to check: `apiGroups: [""]`, `apiVersions: [v1]`, `operations: [CREATE, UPDATE]`, `resources: [pods]`. `spec.validationActions: [Deny]` blocks; `[Audit]` would only report.
-- Scope it with a `matchConditions` entry, a CEL expression on the object: `has(object.metadata.namespace) && object.metadata.namespace.startsWith('lab05-')`.
-- The check is one CEL expression in `spec.validations`, with a `message`: `object.spec.containers.all(c, c.image.contains('@sha256:'))`, and the same for `initContainers` when there are any (`!has(object.spec.initContainers) || ...`). Kyverno adds the same check for Deployments, Jobs and the other Pod controllers itself (autogen), so a bad Deployment fails at once instead of making Pods that fail.
+- Compare match constraints, match conditions and validation actions.
+- CEL must handle optional init containers.
+- Inspect Kyverno's controller autogeneration before assuming only Pods are checked.
 
 ### Expected result
-`kubectl get vpol require-image-digest` shows it ready, and `kubectl get vpol require-image-digest -o jsonpath='{.status.autogen}'` lists the checks Kyverno generated for Deployments and Jobs.
+The ValidatingPolicy is Ready with autogenerated workload-controller checks.
 
 ## Step 2: Show that a tag-only Pod is denied
 
-Create the namespace `lab05-apps`. Then try a Pod with the image by tag only, `ghcr.io/stefanprodan/podinfo:6.15.0`, with a server-side dry run.
-
-A server-side dry run sends the object through the API server and its admission webhooks, Kyverno's included, and stores nothing. It is how a pipeline checks a manifest against the real cluster's policies.
+Create `lab05-apps`, then send a tag-only podinfo Pod through server-side dry run. Contrast the result with a client-side dry run.
 
 ### Hints
-- `kubectl -n lab05-apps run tagged --image=ghcr.io/stefanprodan/podinfo:6.15.0 --restart=Never --dry-run=server`.
-- `--dry-run=client` would not reach Kyverno: it never leaves your machine.
-- Try the same Pod in `default`: it is allowed, because the policy only applies to `lab05-*`.
+- Client-only validation cannot test admission webhooks.
+- Inspect the denial message and the policy name.
 
 ### Expected result
-The dry run fails with `admission webhook "vpol.validate.kyverno.svc-fail-finegrained-require-image-digest" denied the request` and your message.
+Admission rejects the tag-only Pod with the digest policy's message.
 
 ## Step 3: Show that a digest Pod is allowed
 
-Run a Pod `web` in `lab05-apps` with the same image by digest.
+Run Pod `web` in `lab05-apps` using the full pinned podinfo reference above.
 
 ### Hints
-- `kubectl -n lab05-apps run web --restart=Never --image=ghcr.io/stefanprodan/podinfo:6.15.0@sha256:ec73780a...` (the full digest is above).
-- A reference may have both a tag and a digest. The tag is then only a label for people; the digest decides what is pulled.
+- A reference can contain both a human-readable tag and a decisive digest.
+- Verify actual pod health after admission succeeds.
 
 ### Expected result
-Pod `web` is Running.
+Pod `web` runs with the pinned image.
 
 ## Step 4: Grant one named workload an exception
 
-A legacy app cannot move to digests yet. Let exactly one workload, a Deployment `legacy` in `lab05-apps`, run the tag-only image. Write a PolicyException `legacy-tag` in `lab05-apps` for it, then create the Deployment. Every other tag-only Pod must still be denied, even one that copies the Deployment's labels.
-
-An exception should be as narrow as you can make it: one policy, one named workload. Exceptions are reviewed like code, so they live in Git, next to the policy.
+Create PolicyException `legacy-tag` in `lab05-apps` for Deployment `legacy` under `require-image-digest`, then run that one-replica Deployment with the tag-only image. Other tag-only Pods must still be denied, even if they copy `app=legacy`.
 
 ### Hints
-- A PolicyException (`policies.kyverno.io/v1`) names the policy in `policyRefs` (`name` and `kind: ValidatingPolicy`) and says what it covers in `matchConditions`, CEL expressions on the object.
-- The policy checks the Deployment, its ReplicaSet and its Pods. Match the Deployment by kind and name, and its children by who owns them: `object.metadata.ownerReferences.exists(o, o.kind == 'Deployment' && o.name == 'legacy')` for the ReplicaSet, and a ReplicaSet owner named `legacy-...` for the Pods.
-- Matching on a label such as `app=legacy` is too wide: anyone can copy a label. Create the exception before the Deployment, or the Deployment is denied. Kyverno takes a few seconds to load a new exception: if the Deployment is denied right after, try again.
+- Controller autogeneration checks the Deployment and its children.
+- Match workload identity and owner relationships, not easily copied labels.
+- Wait for the controller to load an exception before interpreting a denial.
 
 ### Expected result
-Deployment `legacy` is available with the tag-only image. A dry run of another tag-only Pod in `lab05-apps` is still denied, and so is one labelled `app=legacy`.
+Legacy is available; unrelated and label-copying tag-only Pods are denied.
 
 ## Step 5: Read the PolicyReports
 
-The baseline policies do not block: they are in Audit mode. Run a Pod `debug` in `lab05-apps` with the image by digest and a `hostPath` volume (for example `/tmp`, read-only). Then find the PolicyReport that says what is wrong with it.
-
-Audit is how you roll out a new policy: first see what it would deny, fix that, then switch it to Enforce.
+Run digest-pinned Pod `debug` in `lab05-apps` with a read-only hostPath volume. Find its baseline policy failure and contrast Audit with Deny.
 
 ### Hints
-- `kubectl -n lab05-apps get policyreports` lists one report per resource. `-o wide` adds pass and fail counts.
-- `kubectl -n lab05-apps get policyreport <name> -o yaml` shows each `result`: the policy, the rule, `pass` or `fail`, and a message.
-- Your policy appears in the reports too: Pod `web` passes `require-image-digest`.
+- Keep the host path narrow, such as `/tmp`; do not mount credentials or host root.
+- Reports are reconciled asynchronously and identify policy/rule/result.
 
 ### Expected result
-Pod `debug` runs, and its report has `disallow-host-path` with `result: fail`.
+The Pod runs while its PolicyReport records `disallow-host-path` as a failure.
 
 ## Step 6: Test the policy offline with kyverno test
 
-Before a policy reaches a cluster, test it. In `~/lab05/test`, put the policy (`policy.yaml`), two Pods in `lab05-apps` (`resources.yaml`: `tagged` by tag, `pinned` by digest) and a `kyverno-test.yaml` that expects `tagged` to fail the rule and `pinned` to pass. Run `kyverno test` on it.
-
-`kyverno test` needs no cluster, so a pipeline can run it on every change to a policy.
+In `~/lab05/test`, write `policy.yaml`, `resources.yaml` and `kyverno-test.yaml`. Expect a tag-only Pod `tagged` to fail and digest-pinned Pod `pinned` to pass, both in `lab05-apps`. Run the pinned Kyverno CLI's test command there.
 
 ### Hints
-- `kyverno-test.yaml` is `apiVersion: cli.kyverno.io/v1alpha1`, `kind: Test`, with `policies`, `resources` and `results`. Each result names the `policy`, `kind`, `resources` and the expected `result`, with `isValidatingPolicy: true` (a ValidatingPolicy has no rule names).
-- Run it with the function above: `cd ~/lab05/test && kyverno test .`.
-- A test that passes says your expectations hold, not that the policy is right: write a result for each case that matters, the denials included.
+- The test schema distinguishes ValidatingPolicy expectations from older rule names.
+- Assert denied as well as allowed cases; a passing suite only proves its assertions.
 
 ### Expected result
-`Test Summary: 2 tests passed and 0 tests failed`.
-
-`lab labs reset` deletes `lab05-apps`, with every Pod, Deployment, PolicyException and PolicyReport in it, and the ValidatingPolicy with the lab's label. It keeps your `~/lab05` directory.
+The offline summary reports at least two passed tests and no failures.

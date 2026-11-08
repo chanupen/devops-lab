@@ -1,13 +1,15 @@
 # Labs
 
-Hands-on labs, one directory each. `lab labs list` shows them, and `lab labs start <id>` starts one.
+For the learner workflow and catalog, read [the labs guide](../docs/guides/labs.md).
+This page defines the authoring contract. Use help/code and unit tests for
+documentation checks, not exercises against the live lab.
 
 ## Format
 
 ```text
 labs/NN-name/
   lab.yaml          id, title, time, level, modes, needs, stacks, tools
-  README.md         an intro, then "## Step N: title" sections
+  README.md         lifecycle overview, then "## Step N: title" sections
   steps/NN-verify.sh  one per step
   reset.sh          returns the cluster to the lab's start
   solution/NN-solve.sh  a reference answer per step, plus any files it applies (NN-*)
@@ -25,7 +27,13 @@ labs/NN-name/
 | `tools` | commands the steps use; `lab labs start` checks they are on PATH |
 | `install` | a pinned install command per tool and platform (`linux/amd64`, `darwin/amd64`), printed when the tool is missing |
 
-Each step in the README has three parts: the task, `### Hints` (a list, one hint each) and `### Expected result`.
+Every learner README uses Goal, Prerequisites, Steps, What you should see,
+Hints, How to verify and Cleanup. Steps is a linked index. Put these lifecycle
+sections before the first `## Step N: title`; the parser treats trailing prose
+as part of the final step. Keep each detailed step's task, `### Hints`
+(`- ` bullets, one hint each) and `### Expected result`.
+Do not replace these parser headings with nested step headings.
+Keep complete answers in labelled `solution/` scripts, not hints.
 
 ## Verify scripts
 
@@ -49,5 +57,6 @@ Each step in the README has three parts: the task, `### Hints` (a list, one hint
 - Pin every version: charts, images, Git tags or commits.
 - The solutions must pass the verify scripts on a fresh cluster. `go test -tags e2e ./internal/labs/` checks that: scratch labs on a cluster named `lab-scratch-e2e-<NN>-<pid>`, so it never meets a learner's; labs on the main cluster with `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig`, inside their own namespaces.
 - `lab labs start` never reuses a scratch cluster that its state did not start; it says how to delete it instead.
-- Time spent counts only while the lab's cluster runs.
+- Scratch time follows container uptime; a main-cluster lab counts its active session.
+- Reset clears steps/hints/completion but retains time and verification attempts.
 - `lab labs stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and resets the steps and the time, so the next start begins at step 1. A lab on the main cluster keeps its steps; its time starts from zero.

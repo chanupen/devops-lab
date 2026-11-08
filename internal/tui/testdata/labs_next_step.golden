@@ -4,18 +4,18 @@
  Labs                                                      │ Step 4 of 6: Turn on auto-sync         
  ◐ 01  Bootstrap Argo CD from scratch  2/6                 │ ● ● ◐ ○ ○ ○                            
  ○ 02  Build, scan and promote an image by retagging  0/6  │                                        
- ○ 03  SLO and burn-rate alerts for the sample app  0/7    │ Make Argo CD sync podinfo on its own.  
- ○ 04  Rotate a database password without restarting the a…│ Turn on self-heal, so it undoes        
- ○ 05  Kyverno policy that blocks images without a digest …│ changes made in the cluster. Turn on   
- ○ 06  Karpenter consolidation, PDBs and spot interruption…│ prune, so it deletes what was removed  
-                                                           │ from Git.                              
+ ○ 03  SLO and burn-rate alerts for the sample app  0/7    │ Enable automated sync, pruning and     
+ ○ 04  Rotate a database password without restarting the a…│ self-healing on Application podinfo.   
+ ○ 05  Kyverno policy that blocks images without a digest …│ Explain the difference between a new   
+ ○ 06  Karpenter consolidation, PDBs and spot interruption…│ Git revision, a removed Git object and 
+                                                           │ a manual change in the cluster.        
                                                            │                                        
                                                            │ h shows a hint (2 left)                
                                                            │                                        
                                                            │ Expected result                        
-                                                           │ The Application's sync policy is       
-                                                           │ automated, with prune and self-heal    
-                                                           │ on.                                    
+                                                           │ The Application has automated sync     
+                                                           │ with both prune and selfHeal enabled.  
+                                                           │                                        
                                                            │                                        
                                                            │                                        
                                                            │                                        
