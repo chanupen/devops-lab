@@ -32,6 +32,30 @@ Doctor's `--profile` selects a readiness threshold; it does not change
 Total RAM below the profile threshold fails. Available RAM below it warns,
 even when total RAM is sufficient; a zero exit status can still need review.
 
+## Guided selection
+
+```sh
+lab start --dry-run
+```
+
+**What you will see:** read-only doctor results and the largest profile whose
+4/12/19 GiB threshold fits available RAM, plus the plan and a no-change line.
+This does not use swap or change the configured profile. Extras remain selected;
+their memory cost is not included in the profile threshold.
+
+```sh
+lab start --profile minimal --dry-run
+```
+
+**What you will see:** the explicit minimal selection and its plan. Below
+4 GiB available, this refuses. Guided start deliberately blocks low available
+RAM where ordinary doctor would warn. `--yes` cannot bypass this gate.
+
+> **Changes the lab:** removing `--dry-run` permits apply after confirmation.
+> The selected profile is temporary; later plain up still uses `lab.yaml`.
+> Start is local Linux only. Full requests GPU/Ollama readiness, not healthy
+> AI pods before first deployment. Unsupported stacks remain skips.
+
 ## Stack catalog
 
 | Stack | Direct dependencies | What it supplies | Current availability |
@@ -69,7 +93,7 @@ not silently destroyed. Their rows say `not in profile`; pruning requires
 an explicit mutating operation.
 
 ```sh
-lab doctor --mode local --profile minimal
+lab doctor --mode local --profile minimal --read-only
 ```
 
 **What you will see:** host/readiness checks for the chosen threshold.

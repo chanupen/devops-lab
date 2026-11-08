@@ -1,8 +1,8 @@
 # Guided first run and daily use
 
-**Status: proposal only.** These commands and schema changes are not implemented.
-This is Step A. Approval is required before Step B starts.
-The examples below are proposed fixture output, not live-run evidence.
+**Status:** design approved and merged in #52. B1 implements sections 1 and 2.
+Sections 3 and 4 remain future work, in B2 and B3 after B1 merges.
+Start/next examples below are fixture output, not live-run evidence.
 
 [Engineering reference](design.md) · [Documentation rules](contributing-docs.md)
 
@@ -87,6 +87,11 @@ Explicitly label write permission as untested, not passing. The same variant
 is used by print-only fix reports. Keep the ordinary doctor's existing probe
 compatible; do not change unrelated doctor semantics in this design.
 
+B1 adds local `doctor --read-only`, `--config` and `--state` for replayable
+diagnostic suggestions. The observational registry probe uses GET and rejects
+redirects. A failed observational read blocks guided readiness, even where
+ordinary doctor retains its skip status.
+
 Failures block apply. Other warnings are shown before confirmation.
 Unsupported stacks are still skipped by engine planning, not installed or
 treated as failed stacks. Darwin prints the existing Linux-host guidance.
@@ -124,13 +129,17 @@ nodes/cache may have restarted before a later gate or download fails; report
 that fact. Do not roll back pre-existing containers or hide partial failures.
 Already-deployed stacks outside the selected profile stay deployed, as with up.
 
-### Proposed output
+### Fixture output
 
-**Read-only preview; do not run until Step B is implemented.**
+**Read-only preview.**
 
 ```text
 $ lab start --profile minimal --dry-run
-Doctor: ready; warnings are shown above
+● memory        8.0 GiB available of 24.0 GiB, minimal needs ~4 GiB
+○ lab registry  Zot is not there yet (lab up makes it); write permission untested (read-only probe)
+
+1 ok, 0 warn, 0 fail, 1 skipped
+
 Profile: minimal (explicit); 8.0 GiB available; threshold 4 GiB
 Extra stacks: obs; memory estimates are not a hard capacity guarantee
 local mode, minimal + obs profile, Kubernetes 1.36, gitops revision main
@@ -206,11 +215,11 @@ Recommendations are deterministic. Choose one row, in this priority order:
 | --- | --- | --- |
 | Interrupted/restoring/expired drill, including e2e state | Explicit recovery with `lab drills abort` and the correct state path | Changes the lab |
 | Running drill | Inspect symptoms/timers with `lab drills status`; hide a random drill's identity | May record drill observations |
-| Failed doctor check | Inspect its instructions with `lab doctor --profile <configured>` | Read-only |
+| Failed doctor check | Inspect its instructions with `lab doctor --read-only --profile <configured>` | Read-only |
 | Active lab, including a completed one awaiting cleanup | `lab labs status` | Read-only; shows the existing cleanup guidance |
-| Stopped main nodes/cache | `lab start --profile <configured>` | Changes the lab after confirmation |
+| Stopped main nodes/cache or registry | `lab start --profile <configured>` | Changes the lab after confirmation |
 | Empty state or engine plan needs apply/retry | `lab start --profile <configured>` | Changes the lab after confirmation |
-| Remaining doctor warning | Inspect it with `lab doctor --profile <configured>` | Read-only |
+| Remaining doctor warning | Inspect it with `lab doctor --read-only --profile <configured>` | Read-only |
 | Ready lab, eligible incomplete exercise | Start the lowest-numbered eligible lab; after those, an eligible random drill | Changes the lab; never injects automatically |
 | No eligible incomplete exercise | `lab labs list` to review progress/replay options | Read-only |
 
@@ -226,13 +235,18 @@ re-checks and confirmations remain the responsibility of the printed command.
 Render exact supported commands, quote selected paths, and never add `--yes`.
 Before fix support lands, do not suggest a nonexistent `doctor --fix` flag.
 
-### Proposed output
+Until the B2 ledger exists, B1 reads version-1 session completion and bounded
+drill history only. Reset/scratch cleanup can make a lab eligible again.
+The existing `--random` selector can replay a completed eligible drill; next
+does not add a new selector or expose its choice.
+
+### Fixture output
 
 ```text
 $ lab next
-Next: bring up the configured local profile.
+Next: Bring up the configured local profile.
 Command: lab start --profile minimal
-Effect: changes the local lab after confirmation; not executed.
+Effect: changes-lab; not executed.
 ```
 
 **What you will see:** one reason, one command and its effect. This example uses
@@ -251,7 +265,8 @@ $ lab next --json
 ```
 
 **What you will see:** one JSON object, with no banners or probe output on stdout.
-JSON schema version 1 is independent of state schema version 2.
+JSON schema version 1 is independent of the state schema. B1 retains state
+version 1; version 2 is planned in B2.
 Use effect values `read-only`, `writes-state`, `changes-lab` and `host-change`.
 
 Exit 0 means a valid suggestion, even if doctor found a blocking failure.
@@ -463,12 +478,13 @@ Update their golden fixtures in the same PR.
 | PR | Contents | Gate |
 | --- | --- | --- |
 | Step A: this design | Only `docs/design-guided.md`; no code or other documentation changes | Open draft, send link, stop for approval |
-| Step B1: guided local use | Start, next, durable progress/migration, shared doctor input/memory collection, shared up preparation/apply, Home line, aliases and focused tests/goldens | Only after design approval; open draft, do not merge |
-| Step B2: print-only fixes | Typed remediation, doctor fix text/JSON, exact-command/sudo coverage, next suggestion/golden updates | Depends on B1; open draft, do not merge |
+| Step B1: guided local use | Sections 1–2 only: start, next, shared doctor input/memory, observational registry/path flags, shared up preparation/apply, focused tests/goldens and docs | Design approved; open draft, stop, do not merge |
+| Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Only after B1 merges and owner authorises it; separate draft |
+| Step B3: print-only fixes | Section 4: typed remediation, doctor fix text/JSON, exact-command/sudo coverage and next golden updates | Only after B1 merges and owner authorises it; separate draft |
 
-B2 can target B1's branch while B1 is unmerged; make that dependency explicit.
-After the owner merges B1, retarget/update B2 without replaying B1's changes.
-No implementation begins merely because the design PR is open.
+This split follows the owner's post-approval scope. B1 has no progress/schema
+or exercise-lifecycle changes and no doctor fix flag. Stop after its draft PR.
+Do not create B2/B3 merely because B1 is open.
 
 Each implementation PR updates quickstart pages, generated
 [CLI help](guides/cli.md), [TUI guide](guides/tui.md), relevant task guides,

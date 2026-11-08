@@ -7,6 +7,9 @@ Cloud mode runs on AWS in `ap-south-1`. It is not needed for ordinary local
 practice. This guide describes the commands; no cloud operation is performed
 to maintain these docs.
 
+`lab start` and `lab next` are local Linux commands. They reject cloud
+configuration and do not replace the approved sequence below.
+
 > **Billed — approval required:** AWS charges continue until resources are
 > deleted. Review the account, stacks, revision, duration, current prices and
 > cleanup plan with the operator before starting. Get explicit approval before

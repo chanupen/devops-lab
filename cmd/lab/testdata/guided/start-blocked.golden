@@ -1,0 +1,28 @@
+◐ memory        8.0 GiB available of 24.0 GiB, full needs ~19 GiB
+                fix: close memory-heavy apps or choose a smaller profile
+○ lab registry  Zot is not there yet (lab up makes it); write permission untested (read-only probe)
+
+0 ok, 1 warn, 0 fail, 1 skipped
+
+Profile: full (explicit); 8.0 GiB available; threshold 19 GiB
+Extra stacks: obs; memory estimates are not a hard capacity guarantee
+local mode, full profile, Kubernetes 1.36, gitops revision main
+
+  + registry    not deployed
+  + cluster     not deployed
+  + gitops      not deployed
+  + core        not deployed
+  + secrets     not deployed
+  + obs         not deployed
+  + policy      not deployed
+  - scaling     skip: not supported by the local provider yet
+  - ci          skip: not supported by the local provider yet
+  - chaos       skip: not supported by the local provider yet
+  + ai          not deployed
+  + sample-app  not deployed
+  + sample-db   not deployed
+
+10 to apply, 0 to destroy, 0 unchanged, 3 skipped
+warning: 3 stacks skipped, not supported by the local provider yet: scaling, ci, chaos
+--- stderr ---
+full requires at least 19 GiB available; close memory-heavy apps or select a smaller profile

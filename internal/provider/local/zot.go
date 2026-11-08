@@ -199,8 +199,9 @@ func LabRegistryEnv() []string {
 // Errors from CheckLabRegistry that are a state to report, not a fault:
 // Zot is not there yet, or the nodes' mirror file is still to be written.
 var (
-	ErrNoRegistry = errors.New("the lab registry (lab-zot) is not there yet; lab up --stacks registry makes it")
-	ErrNoPullFile = errors.New("the nodes have no mirror file for the lab registry yet")
+	ErrNoRegistry      = errors.New("the lab registry (lab-zot) is not there yet; lab up --stacks registry makes it")
+	ErrNoPullFile      = errors.New("the nodes have no mirror file for the lab registry yet")
+	ErrRegistryStopped = errors.New("lab-zot is stopped")
 )
 
 // CheckLabRegistry checks the host can push to the lab registry and the
@@ -210,13 +211,22 @@ var (
 // for lab-zot:5000 exists under home.
 // base is Zot's address from the host, http://127.0.0.1:5000.
 func CheckLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base, home string) error {
+	return checkLabRegistry(ctx, rt, client, base, home, false)
+}
+
+// ObserveLabRegistry checks availability and bindings, never write permission.
+func ObserveLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base, home string) error {
+	return checkLabRegistry(ctx, rt, client, base, home, true)
+}
+
+func checkLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base, home string, readOnly bool) error {
 	c, err := rt.Container(ctx, ZotContainer)
 	switch {
 	case err != nil:
 		return err
 	case !c.Exists:
 		return ErrNoRegistry
-	case !c.Running:
+	case !c.Running && !readOnly:
 		return fmt.Errorf("%s is stopped: podman start %s (or lab up)", ZotContainer, ZotContainer)
 	}
 	binds := c.HostPorts[fmt.Sprintf("%d/tcp", ZotPort)]
@@ -228,7 +238,17 @@ func CheckLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base
 			return fmt.Errorf("%s publishes %d on %s, not on 127.0.0.1 only; the registry must never listen on the LAN", ZotContainer, ZotPort, b)
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v2/lab/doctor/blobs/uploads/", nil)
+	if readOnly && !c.Running {
+		return ErrRegistryStopped
+	}
+	method, path, status := http.MethodPost, "/v2/lab/doctor/blobs/uploads/", http.StatusAccepted
+	if readOnly {
+		method, path, status = http.MethodGet, "/v2/", http.StatusOK
+		observational := *client
+		observational.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &observational
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, nil)
 	if err != nil {
 		return err
 	}
@@ -237,10 +257,13 @@ func CheckLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base
 		return fmt.Errorf("push to %s: %w", LabRegistryPush, err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
+	if readOnly && resp.StatusCode != status {
+		return fmt.Errorf("registry availability: HTTP %d, want 200", resp.StatusCode)
+	}
+	if resp.StatusCode != status {
 		return fmt.Errorf("push to %s: Zot answered HTTP %d to an upload, want 202", LabRegistryPush, resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "" {
+	if loc := resp.Header.Get("Location"); loc != "" && !readOnly {
 		if !strings.HasPrefix(loc, "http") {
 			loc = base + loc
 		}
@@ -255,6 +278,16 @@ func CheckLabRegistry(ctx context.Context, rt Runtime, client *http.Client, base
 		return fmt.Errorf("%w: %s is missing, so the nodes cannot pull %s; lab labs start (or lab up) writes it", ErrNoPullFile, hosts, LabRegistryPull)
 	}
 	return nil
+}
+
+// HostObserveLabRegistry is the strictly observational registry probe.
+func HostObserveLabRegistry(ctx context.Context, home string) error {
+	sock, err := PodmanSocket()
+	if err != nil {
+		return err
+	}
+	return ObserveLabRegistry(ctx, NewPodman(sock), &http.Client{Timeout: 5 * time.Second},
+		fmt.Sprintf("http://127.0.0.1:%d", ZotPort), home)
 }
 
 // HostCheckLabRegistry is CheckLabRegistry over the rootless Podman socket.

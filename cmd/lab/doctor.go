@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -24,9 +25,11 @@ import (
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		asJSON bool
-		mode   string
-		opts   doctor.Options
+		asJSON   bool
+		readOnly bool
+		mode     string
+		opts     doctor.Options
+		flags    labFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -44,26 +47,35 @@ func newDoctorCmd() *cobra.Command {
 					return err
 				}
 			case "cloud":
+				if readOnly || flags.cfgPath != "" || flags.statePath != "" {
+					return fmt.Errorf("--read-only, --config and --state apply to local doctor reports only")
+				}
 				checks = doctor.CloudChecks(cloudProbe(cmd.Context(), cmd, !asJSON))
 			default:
 				return fmt.Errorf("--mode %q: want local or cloud", mode)
 			}
 			sys := doctor.HostSystem()
 			if mode == "local" {
-				sys.Units = doctorUnits
-				sys.LabRegistry = doctorLabRegistry
-				sys.MotoSecrets = local.NewMotoSecrets(local.MotoEndpointHost).Count
-				sys.AI = doctorAI
-				sys.GitOps = doctorGitOps
-				opts.K8sVersion = config.K8sVersion
-				if cfg, err := (&labFlags{}).loadConfigOnly(); err == nil {
-					opts.K8sVersion = cfg.K8sVersion
-					opts.ZotHosts = cfg.Zot.AddHosts
+				cfg, err := flags.loadConfigOnly()
+				if err != nil {
+					if flags.cfgPath != "" {
+						return err
+					}
+					cfg = config.Default()
 				}
-				repo, digest := local.ZotImageBlob()
-				sys.GHCR = doctor.HostGHCRProbe{Repo: repo, Digest: digest}
-				opts.Stacks = deployedStacks()
-				opts.Drill = activeDrill()
+				path := flags.statePath
+				if path == "" {
+					path, err = state.DefaultPath()
+					if err != nil {
+						return err
+					}
+				}
+				st, err := state.NewStore(path).Load()
+				if err != nil && flags.statePath != "" {
+					return err
+				}
+				sys = localDoctorSystem(filepath.Dir(path), readOnly)
+				opts = localDoctorOptions(cfg, st, drillState(path, state.E2EPath(path)), opts)
 			}
 			results := doctor.Run(cmd.Context(), sys, opts, checks)
 			out := cmd.OutOrStdout()
@@ -83,18 +95,16 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
+	cmd.Flags().BoolVar(&readOnly, "read-only", false, "observe the local registry without testing upload permission")
 	cmd.Flags().StringVar(&mode, "mode", "local", "local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget")
 	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
+	flags.register(cmd)
 	return cmd
 }
 
-func doctorGitOps(ctx context.Context) (doctor.GitOpsState, error) {
-	path, err := state.DefaultPath()
-	if err != nil {
-		return doctor.GitOpsState{}, err
-	}
-	cfg, err := kube.RESTConfig(filepath.Join(filepath.Dir(path), "kubeconfig"))
+func doctorGitOpsAt(ctx context.Context, home string) (doctor.GitOpsState, error) {
+	cfg, err := kube.RESTConfig(filepath.Join(home, "kubeconfig"))
 	if err != nil {
 		return doctor.GitOpsState{}, err
 	}
@@ -146,12 +156,8 @@ func clusterVersion(ctx context.Context) (version, why string) {
 // doctorAI reads the ai stack for lab doctor: the host's Ollama, the
 // EndpointSlice behind ollama.ai.svc, Ollama and Langfuse through the
 // cluster, and the stack's Argo CD apps.
-func doctorAI(ctx context.Context) (doctor.AIState, error) {
-	path, err := state.DefaultPath()
-	if err != nil {
-		return doctor.AIState{}, err
-	}
-	st, err := local.HostAIStatus(ctx, filepath.Join(filepath.Dir(path), "kubeconfig"))
+func doctorAIAt(ctx context.Context, home string) (doctor.AIState, error) {
+	st, err := local.HostAIStatus(ctx, filepath.Join(home, "kubeconfig"))
 	if err != nil {
 		return doctor.AIState{}, err
 	}
@@ -160,31 +166,57 @@ func doctorAI(ctx context.Context) (doctor.AIState, error) {
 		LangfuseErr: st.LangfuseErr, Apps: st.Apps, AppsNotReady: st.AppsNotReady}, nil
 }
 
-// doctorLabRegistry checks the lab registry for lab doctor. The mirror
-// files are under ~/.lab, where lab writes them.
-func doctorLabRegistry(ctx context.Context) doctor.RegistryState {
-	home, err := state.DefaultPath()
-	if err != nil {
-		return doctor.RegistryState{Err: err}
+func localDoctorOptions(cfg config.Config, st state.State, drill *doctor.DrillState, opts doctor.Options) doctor.Options {
+	opts.K8sVersion, opts.ZotHosts, opts.Drill = cfg.K8sVersion, cfg.Zot.AddHosts, drill
+	opts.Stacks = nil
+	for name := range st.Stacks {
+		if st.IsApplied(name) {
+			opts.Stacks = append(opts.Stacks, name)
+		}
 	}
-	err = local.HostCheckLabRegistry(ctx, filepath.Dir(home))
-	switch {
-	case errors.Is(err, local.ErrNoRegistry):
-		return doctor.RegistryState{Missing: true}
-	case errors.Is(err, local.ErrNoPullFile):
-		return doctor.RegistryState{Pending: err.Error()}
-	}
-	return doctor.RegistryState{Err: err}
+	slices.Sort(opts.Stacks)
+	return opts
 }
 
-// activeDrill is the drill still in the local lab, for lab doctor: the
-// lab's own, else one an e2e test run left in ~/.lab/e2e.
-func activeDrill() *doctor.DrillState {
-	path, err := state.DefaultPath()
-	if err != nil {
-		return nil
+func localDoctorSystem(home string, readOnly bool) doctor.System {
+	sys := doctor.HostSystem()
+	var unitsOnce, aiOnce sync.Once
+	var units []doctor.Unit
+	var unitsErr error
+	sys.Units = func(ctx context.Context) ([]doctor.Unit, error) {
+		unitsOnce.Do(func() { units, unitsErr = doctorUnits(ctx) })
+		return units, unitsErr
 	}
-	return drillState(path, state.E2EPath(path))
+	sys.LabRegistry = func(ctx context.Context) doctor.RegistryState {
+		probe := local.HostCheckLabRegistry
+		if readOnly {
+			probe = local.HostObserveLabRegistry
+		}
+		err := probe(ctx, home)
+		r := doctor.RegistryState{WriteUntested: readOnly}
+		switch {
+		case errors.Is(err, local.ErrRegistryStopped):
+			r.Stopped = true
+		case errors.Is(err, local.ErrNoRegistry):
+			r.Missing = true
+		case errors.Is(err, local.ErrNoPullFile):
+			r.Pending = err.Error()
+		default:
+			r.Err = err
+		}
+		return r
+	}
+	sys.MotoSecrets = local.NewMotoSecrets(local.MotoEndpointHost).Count
+	var ai doctor.AIState
+	var aiErr error
+	sys.AI = func(ctx context.Context) (doctor.AIState, error) {
+		aiOnce.Do(func() { ai, aiErr = doctorAIAt(ctx, home) })
+		return ai, aiErr
+	}
+	sys.GitOps = func(ctx context.Context) (doctor.GitOpsState, error) { return doctorGitOpsAt(ctx, home) }
+	repo, digest := local.ZotImageBlob()
+	sys.GHCR = doctor.HostGHCRProbe{Repo: repo, Digest: digest}
+	return sys
 }
 
 func drillState(path, e2e string) *doctor.DrillState {
@@ -202,25 +234,4 @@ func drillState(path, e2e string) *doctor.DrillState {
 			Fix: "if the e2e test is not running, lab up (or lab drills abort --state " + e2e + ") puts back what the drill changed"}
 	}
 	return nil
-}
-
-// deployedStacks are the stacks the local state file records as applied;
-// none when it cannot be read.
-func deployedStacks() []string {
-	path, err := state.DefaultPath()
-	if err != nil {
-		return nil
-	}
-	st, err := state.NewStore(path).Load()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for name := range st.Stacks {
-		if st.IsApplied(name) {
-			out = append(out, name)
-		}
-	}
-	slices.Sort(out)
-	return out
 }

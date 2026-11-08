@@ -13,6 +13,10 @@ func newRootCmd() *cobra.Command { return newRootCmdWith(defaultProvider) }
 // doctor) never do, so they run beside a lab at work. The TUI claims it
 // itself, or opens read-only (see runTUI).
 func newRootCmdWith(newProvider providerFactory) *cobra.Command {
+	return newRootCmdWithGuided(newProvider, hostGuidedDeps())
+}
+
+func newRootCmdWithGuided(newProvider providerFactory, deps guidedDeps) *cobra.Command {
 	var flags labFlags
 	root := &cobra.Command{
 		Use:           "lab",
@@ -31,7 +35,7 @@ func newRootCmdWith(newProvider providerFactory) *cobra.Command {
 	withLabLock(down)
 	withLabLock(extend)
 	// tunnel only reads the lab and forwards ports: it never takes the lock.
-	root.AddCommand(newDoctorCmd(), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newAssistCmd(), newVersionCmd())
+	root.AddCommand(newDoctorCmd(), newStartCmd(newProvider, deps), newNextCmd(deps), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newAssistCmd(), newVersionCmd())
 	return root
 }
 

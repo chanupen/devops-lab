@@ -106,11 +106,14 @@ func (a tuiActions) Run(ctx context.Context, req tui.Request, progress func(tui.
 // in-process. It needs no lock, so read-only TUIs can run it too.
 func (a tuiActions) Report(ctx context.Context, name string) (string, error) {
 	args := []string{name}
-	if name != "doctor" {
+	if name != "doctor" || a.cfg.Mode == "local" {
 		if a.cfgPath != "" {
 			args = append(args, "--config", a.cfgPath)
 		}
 		args = append(args, "--state", a.store.Path())
+	}
+	if name == "doctor" {
+		args = append(args, "--read-only")
 	}
 	root := newRootCmdWith(a.newProvider) // status, plan and doctor take no lock
 	var b bytes.Buffer
