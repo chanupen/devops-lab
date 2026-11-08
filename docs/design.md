@@ -137,11 +137,11 @@ Build the control center in Go with Bubble Tea, Bubbles and Lip Gloss, plus Cobr
 
 ### Layout
 
-One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a list and detail split, and an always-visible operations strip.
+One terminal view, four fixed zones: header (mode, context, health, revision, TTL), tabs, a list and detail split, and an always-visible operations strip.
 
 ```text
- lab  mode: local  ctx: kind-lab  health: ● 14/15  cost: ₹0  ttl: —
- 1 Home  2 Stacks  3 Labs  4 Drills  5 Ops log  6 Cost        ? help  : cmd
+ lab  mode: local  ctx: kind-lab  health: ● 14/15  rev: main  ttl: —
+ 1 Home  2 Stacks  3 Labs  4 Drills  5 Ops log                ? help  : cmd
 ───────────────────────────────┬─────────────────────────────────────────────
  Stacks                        │ argocd                              Healthy
  ● core     kind cluster       │ ns argocd · chart argo-cd · synced 2m ago
@@ -155,12 +155,17 @@ One screen, four fixed zones: header (mode, context, health, cost, TTL), tabs, a
 
 ### Screens
 
+Five screens are implemented, selected by `1` to `5` in
+`internal/tui/tui.go`. `6` only displays a later-release message.
+
 1. **Home**: mode, cluster health (`○ stopped` with the `podman start` command when a reboot stopped it), running stacks, the image cache, TTL countdown, last five operations. Empty state says which key to press next.
 2. **Stacks**: the module catalog with install state, dependencies, endpoints and versions.
 3. **Labs**: the labs with progress (● done, ◐ current, ○ not started). `enter` opens the current step's text, `v` verifies it, `h` shows its next hint, `n`/`p` move between steps.
 4. **Drills**: break/fix scenarios with your best times. `enter` starts the selected drill and `R` a random one (each after a prompt); `a` opens the assistant for the running drill, `A` lists the causes and acks the one you pick, `v` verifies the fix, `h` shows a hint, `x` aborts. The header shows the running drill and its timer (`drill: oom 04:12/30:00`, `?` for a random one).
 5. **Ops log**: every operation with its full streamed output and the equivalent CLI command.
-6. **Cost** (cloud mode): running resources, hourly rate, spend this session, budget left, TTL.
+
+**Planned, not implemented:** a Cost screen on `6` for cloud resources,
+hourly rate, session spend, budget and TTL.
 
 ### Keys
 
@@ -168,7 +173,8 @@ Keys follow k9s habits so there is nothing new to learn.
 
 | Key | Action |
 | --- | --- |
-| `1`–`6` | Switch screen |
+| `1`–`5` | Switch between the five implemented screens |
+| `6` | Reserved for the future Cost screen; shows a later-release message |
 | `:` | Command palette with fuzzy search (`:up obs`, `:mode cloud`, `:drill cert-expiry`) |
 | `/` | Filter the current list |
 | `enter` / `esc` | Open detail / go back |
@@ -607,7 +613,7 @@ profiles:
     region: ap-south-1
     cluster: { provider: eks, k8sVersion: "1.36", nodes: spot }
     awsProfile: lab        # existing account; IAM user today, MFA role later
-    ttl: 4h                # destroy after this, no exceptions
+    ttl: 2h                # default; at most 8h ahead, including lab extend
     budgetMonthlyUSD: 30
     owner: chanupen
 
@@ -686,7 +692,7 @@ Cloud mode must be impossible to forget about: every environment has an owner, a
 - **Cheap by default.** Spot nodes through Karpenter, no NAT gateway (public subnets with tight security groups for lab nodes), no load balancer (`lab tunnel` reaches the Gateway), short log retention.
 - **Small nodes hold enough pods.** The VPC CNI runs with prefix delegation, so a t4g.small is not capped at 11 pods. The managed node group's max pods follows it; Karpenter's EC2NodeClass sets `maxPods: 110` and no per-vCPU cap (16 per vCPU held a 1-vCPU r8gd.medium to 16 pods and forced a third spot node at 12–25% memory in session 5; memory requests decide how many pods fit, and kube-reserved memory on AL2023 follows the ENI pod limit, not maxPods), and the spot NodePool asks for at least 4 GiB (t4g.medium and up): with 32 pods a t4g.micro took Argo CD by its small requests and ran out of memory (session 4). DaemonSets (node-exporter, the OTel Collector) run as `system-node-critical`, so they win a full node's last slot.
 - **Memory requests Karpenter can size by.** In cloud mode every long-running container of the platform charts asks for memory near what it uses on the local lab (`kubectl top`): Argo CD through the AWS provider's values (lab installs it with the Helm SDK), metrics-server and cert-manager through the cloud bootstrap overlay, ESO, Kyverno, kube-prometheus-stack and Loki through their cloud overlays. A render test fails on any container without one.
-- **Live cost meter.** The Cost screen reads Cost Explorer for actual spend and estimates the current hourly rate from running resources.
+- **Planned cost meter.** The future Cost screen would read Cost Explorer and estimate the running resources' hourly rate. It is not one of the five implemented screens; check AWS billing directly today.
 
 **Access and safety**
 
@@ -847,7 +853,15 @@ The repository is [MIT-licensed](../LICENSE), copyright 2026 chanupen.
 The maintainer accepted historical host names on 7 Nov 2026: hostnames only,
 no secrets and no history rewrite. Third-party redistribution reviews remain
 gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
-README/demo and release-pipeline work have not started.
+The root [README](../README.md) documents local installation, cloud cost
+rules, the lab/drill catalogues and the assistant's recorded fixture results.
+Its 14-node Mermaid diagram shows the shared engine and read-only runner.
+The [TUI preview](tui-preview.md) comes from the renderer's checked-in
+100-column, 30-row golden fixture, not a live screenshot. The rules-first
+100% is on fixtures written against; both 3B model-only recordings scored 0%
+on diagnosable drills. These are harness measurements, not generalisation.
+A live walkthrough remains unrecorded; no drills are run for this docs PR.
+Tagged binaries and checksums remain a separate, unstarted release PR.
 
 ## Risks and open questions
 

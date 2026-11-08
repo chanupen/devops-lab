@@ -27,16 +27,16 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 | `09-lab4-secrets.md` | 4 | Lab 4, the secrets and sample-db stacks, Moto | Done (#26) |
 | `10-drills-1.md` | 4 | Drill framework, bad-deploy, oom, dns | Done (#27) |
 | `11-drills-2.md` | 4 | cert-expiry, node-loss, slow-db, secret-drift | Done (#28) |
-| `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Open: PR #29, needs one passing cloud session |
+| `12-cloud-overlays.md` | 4 | Cloud GitOps overlays for every stack | Done (#29, passing session #32) |
 | `13-cloud-session.md` | — | How to run any cloud session safely | Use every time |
-| `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Next |
-| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c public-readiness audit #42 ([findings](../docs/public-readiness.md)); MIT approved, historical host names retained without secrets or rewrite; README/demo and release pipeline not started |
+| `14-lab6-and-gate.md` | 4 | Lab 6 (Karpenter) and the phase 4 gate | Done (gate passed 6 Nov 2026; [design](../docs/design.md#build-roadmap)) |
+| `15-phase5-ai-release.md` | 5 | ai stack, AI On-Call Assistant, README, demo, v1.0 | 15b tools/runner/webhook, eval (#40) and TUI (#41) done; 15c audit #42 merged (MIT approved, historical host names retained without secrets or rewrite); [README/docs](../README.md) in #43; live demo and release pipeline not started |
 
 ## To continue from today
 
-1. `13-cloud-session.md` with the session 5 plan, on `feat/cloud-overlays`. Then merge PR #29.
-2. `14-lab6-and-gate.md`.
-3. `15-phase5-ai-release.md`.
+1. Review the README/docs (#43); the public-readiness audit (#42) is merged.
+2. Continue `15-phase5-ai-release.md` with the tag-triggered binary/checksum workflow as its own draft PR, after approval.
+3. Record a live walkthrough only with approval to mutate the lab; verify restoration. Do not tag v1.0.0 until the maintainer approves the release.
 
 ## To rebuild from nothing
 
