@@ -430,6 +430,24 @@ func TestNextPrioritiesAndReadOnly(t *testing.T) {
 				return []labs.Lab{{ID: "01-first", Modes: []string{"local"}}}, nil, nil
 			}
 		}},
+		{"durable lab after scratch cleanup", "review", func(f *guidedFixture) {
+			st := fixtureReadyState()
+			st.RecordLabCompletion("01-first", f.deps.now(), time.Minute, true)
+			f.save(t, st, false)
+			f.deps.catalog = func(string) ([]labs.Lab, []drills.Drill, error) {
+				return []labs.Lab{{ID: "01-first", Modes: []string{"local"}}}, nil, nil
+			}
+		}},
+		{"durable drill after history trimming", "review", func(f *guidedFixture) {
+			st := fixtureReadyState()
+			st.ActiveDrill = &state.DrillRun{Drill: "dns", Started: f.deps.now().Add(-time.Minute), Recovered: f.deps.now()}
+			st.EndDrill(state.DrillRecovered, f.deps.now())
+			st.Drills = nil
+			f.save(t, st, false)
+			f.deps.catalog = func(string) ([]labs.Lab, []drills.Drill, error) {
+				return nil, []drills.Drill{{ID: "dns", Stacks: []string{"core"}}}, nil
+			}
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGuidedFixture(t)

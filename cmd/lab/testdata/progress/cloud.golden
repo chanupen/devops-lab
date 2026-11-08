@@ -1,0 +1,6 @@
+Progress: 1/1 cloud labs completed
+   ID        TITLE  TIME  LEVEL  NEEDS    MODES  CURRENT            COMPLETIONS  BEST ACTIVE
+○  01-first  First               scratch  local  not in cloud mode  1            18m0s
+○  02-cloud  Cloud               lab      cloud  not started        1            -
+
+lab labs start <id> starts one (the number is enough: lab labs start 1).

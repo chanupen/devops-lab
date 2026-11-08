@@ -156,15 +156,11 @@ func registerVerbose(cmd *cobra.Command, v *bool) {
 }
 
 func newLabsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "labs",
-		Short: "Hands-on labs: list, start, verify each step, stop",
-		Long: "Labs live in labs/ next to lab.yaml. A scratch lab gets its own single-node kind cluster,\n" +
-			"lab-scratch-<id>, which lab labs stop deletes with the lab's progress; the main lab is not\n" +
-			"touched. Progress is kept in ~/.lab/state.json. With --mode cloud, labs run on the EKS\n" +
-			"cluster and their progress is in ~/.lab/cloud/state.json.",
-		Args: cobra.NoArgs,
-	}
+	cmd := newLabsListCmd()
+	cmd.Use, cmd.Short = "labs", "Hands-on labs: list, start, verify each step, stop"
+	cmd.Long = "Without a subcommand, lists current and durable progress; --help shows commands.\n" +
+		"Labs live in labs/ next to lab.yaml. Scratch stop deletes its cluster and current steps,\n" +
+		"not lifetime completions/bests. Progress lives in ~/.lab/state.json (cloud: ~/.lab/cloud/state.json)."
 	start, stop, reset := newLabsStartCmd(), newLabsStopCmd(), newLabsResetCmd()
 	for _, c := range []*cobra.Command{start, stop, reset} {
 		withLabLock(c)
@@ -212,16 +208,21 @@ func doneHint(l labs.Lab) string {
 // writeLabList lists the labs; a lab that does not run in mode says so
 // instead of its progress.
 func writeLabList(w io.Writer, all []labs.Lab, st state.State, spent spentFunc, mode string) error {
+	c := st.Progress.Counts(labs.CatalogIDs(all, mode), nil)
+	if _, err := fmt.Fprintf(w, "Progress: %d/%d %s labs completed\n", c.Labs, c.LabTotal, mode); err != nil {
+		return err
+	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tTIME\tLEVEL\tNEEDS\tMODES\tPROGRESS")
+	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tTIME\tLEVEL\tNEEDS\tMODES\tCURRENT\tCOMPLETIONS\tBEST ACTIVE")
 	for _, l := range all {
 		p := st.Labs[l.ID]
 		prog := progressText(l, p, st.ActiveLab == l.ID, spent(l, p))
 		if !slices.Contains(l.Modes, mode) {
 			prog = "not in " + mode + " mode"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", labs.LabMark(l, p).Symbol(), l.ID, l.Title, l.Time, l.Level, l.Needs,
-			strings.Join(l.Modes, ","), prog)
+		b := st.Progress.Labs[l.ID]
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", labs.LabMark(l, p).Symbol(), l.ID, l.Title, l.Time, l.Level, l.Needs,
+			strings.Join(l.Modes, ","), prog, b.Completions, bestDuration(b.BestActive))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

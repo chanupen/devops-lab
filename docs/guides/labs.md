@@ -35,6 +35,22 @@ lab labs list --mode local
 **What you will see:** six entries, mode restrictions, estimated time, level
 and progress. Lab 6 says it is not in local mode.
 
+```sh
+lab labs --mode local
+```
+
+**What you will see:** the same list, with a mode-catalog completion summary,
+current step/session, lifetime completion count and best active attempt.
+Missing best time prints `-`, not zero. `--help` still shows command help.
+Listing takes no lab lock and saves nothing.
+
+The durable ledger is beside current progress in the selected state file.
+The first successful final-step transition counts once; repeated verification
+does not count again. Reset starts a new timed attempt. Pause/resume uses the
+existing active-time accounting; displayed session time keeps its old meaning.
+Scratch stop removes current steps, not historical counts/bests.
+Imported version-1 completions have unknown best time until a fresh known attempt.
+
 > **Changes and isolation:** one lab can be active, never alongside a drill.
 > Scratch lab 1 gets `lab-scratch-01-argocd-bootstrap`, no host ports, and its
 > own kubeconfig. Main-cluster labs work only in their `labNN-*` namespaces

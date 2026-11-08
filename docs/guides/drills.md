@@ -55,6 +55,23 @@ lab drills list
 **What you will see:** seven entries, limits, alerts and best times. Marked
 entries lack required stacks. Listing injects nothing.
 
+```sh
+lab drills
+```
+
+**What you will see:** the same read-only list, with unique recovered drills,
+ended-run/recovered counts and durable best detect/recovery times. Missing best
+prints `-`. Readiness marks still describe prerequisites, not completion.
+
+Only passing verification followed by successful restoration counts a recovery.
+Aborted, expired, inject-failed and restored-by-up runs count as ended runs,
+not recoveries. Test runs never count. Recovery time is fault-start to successful
+verify, not restoration latency. Raw history keeps 200 runs; future lifetime
+counts and bests survive trimming. `history --reset [id]` clears the matching
+raw history and drill summary after confirmation, but does not alter a live drill.
+The [migration guide](troubleshooting.md#state-and-progress-migration) explains
+what older, already-trimmed history cannot recover.
+
 Finish/stop any active lab first. One drill can run at a time, never alongside
 a started lab. CLI start/verify/abort share the mutation lock. Quit the acting
 TUI before using them in another shell, or use its Drills controls.

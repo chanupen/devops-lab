@@ -62,10 +62,24 @@ Next ignores warnings whose fix marker is `allowed` or `accepted` (optionally
 followed by `:` and an explanation). Failures and other warnings still suggest
 doctor; an accepted compatibility warning does not prevent exercise guidance.
 
-B1 leaves state schema version 1 and exercise lifecycles unchanged. Next uses
-current lab completion and bounded drill history until B2 adds durable progress
-and migration. B1 is merged (#53); B1.1 fixes accepted-warning recommendations.
-B2 waits for B1.1 to merge. B3 adds print-only doctor fixes in a later PR.
+B1 and B1.1 are merged (#53, #54). B2 adds the section-3 ledger in
+`internal/state/progress.go`: state version 2, one in-memory version-1 migration,
+durable completions and best times. Only a successful existing state mutation
+saves the upgraded file. Corrupt/unversioned/future files are refused.
+
+Lab completion is recorded in the final-step transaction, once per attempt.
+Separate nanosecond counters reuse `TimeSpent` and fold at start/stop/reset/
+completion; current Spent/Session behavior is unchanged. Legacy or unreadable/
+incomplete uptime cannot earn a best. Scratch stop/reset retains the ledger.
+Drill recovery is recorded by EndDrill only after successful restoration;
+non-test ended runs update summaries before raw-history trimming. The shared
+state fold owns best-time semantics; explicit history reset clears summaries.
+
+Bare labs/drills are read-only list aliases with mode-catalog totals and
+current versus lifetime columns. Home adds one line from preloaded state and
+catalogs, including empty state and read-only TUI; no probe/write enters View.
+Next uses durable completion even after current scratch progress disappears.
+Legacy totals cover retained evidence only. B3 remains a separate future PR.
 
 ## Summary
 
@@ -610,7 +624,7 @@ A lab on the main cluster works only in its own namespaces, `labNN-*`, and label
 
 `lab labs list | start <id> | status | verify [step] | hint [step] | solution <step> | env | reset | stop`, each with `--mode`. `start`, `stop` and `reset` take the lab lock; `solution` and `reset` ask first. Verify scripts run with `KUBECONFIG` set to the lab's cluster and a 60-second timeout. Progress lives in `~/.lab/state.json`: the step reached, attempts and hints per step, solutions shown and time spent. Only one lab is started at a time.
 
-- **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears the lab's progress, steps and time, because the work went with the cluster; the next start begins at step 1. A lab on the main cluster keeps its steps and starts its time from zero.
+- **Time spent** counts only while the lab is started and its cluster's node runs, from the node's start and stop times in Podman. A node that a reboot stopped adds nothing after it stopped. `start` adds the session so far to the total and opens a new one. `stop` prints how far the lab got ("stopped at step 4/6 after 32m"). For a scratch lab it deletes the cluster and clears current steps/session time, because the work went with the cluster; the next start begins at step 1. Lifetime completion/bests remain in `progress`. A lab on the main cluster keeps its steps and starts its displayed time from zero; the independent active-attempt counter survives pause/resume.
 - **`list`** shows the current step: `step 1/6, 0m, started` right after a start, `done, 6/6 steps, 42m` at the end.
 - **`start` output** is a few progress lines (image cache, creating the cluster, kubeconfig, nodes ready) and then the step. kind's own output and node diagnostics go to the op log only; `-v`/`--verbose` on `start` and `stop` streams them too.
 - **client-go messages** (a watch that fails while a new cluster's RBAC comes up) go to the op log, never the terminal: every wait gives its informer a logger that writes to the step's log (for `lab labs start`, the op log's detail). The informer retries on its own.

@@ -120,7 +120,7 @@ func recommendNext(in guidedInput, deps guidedDeps, p engine.Plan, results []doc
 			return makeStep("start-lab", "Start the next eligible lab.", guidedCommand("labs start", in, l.ID), "changes-lab")
 		}
 	}
-	best := drills.BestTimes(in.st.Drills)
+	best := in.st.Progress.DrillBests()
 	if slices.ContainsFunc(drills.Eligible(ds, in.st), func(d drills.Drill) bool { return best[d.ID].Recovered == 0 }) {
 		return makeStep("start-drill", "Practise an eligible drill without revealing its identity.",
 			guidedCommand("drills start", in, "--random"), "changes-lab")

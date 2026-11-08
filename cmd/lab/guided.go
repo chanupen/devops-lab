@@ -195,7 +195,7 @@ func shellArg(s string) string {
 }
 
 func eligibleGuidedLab(l labs.Lab, in guidedInput, deps guidedDeps) bool {
-	if !slices.Contains(l.Modes, in.cfg.Mode) || !in.st.Labs[l.ID].Completed.IsZero() {
+	if !slices.Contains(l.Modes, in.cfg.Mode) || !in.st.Labs[l.ID].Completed.IsZero() || in.st.Progress.Labs[l.ID].Completions > 0 {
 		return false
 	}
 	for _, stack := range l.Stacks {

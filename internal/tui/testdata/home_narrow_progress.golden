@@ -1,0 +1,24 @@
+ lab   mode: local  ctx: kind-lab  health: ✕ 3/5 apps  rev: main  ttl: —        
+ 1 Home   2 Stacks   3 Labs   4 Drills   5 Ops                                  
+───────────────────────────────────────┬────────────────────────────────────────
+ Lab                                   │ Last operations                        
+                                       │  ● Oct 31 02:31  lab up  core apply  4…
+  mode       local (minimal + obs prof…│  ● Oct 31 02:30  lab up  core apply  4…
+  config     /home/user/devops-lab/lab…│  ● Oct 31 02:29  lab up  core apply  4…
+  progress   labs 1/5 complete | drill…│  ● Oct 31 02:28  lab up  core apply  4…
+  revision   main                      │  ● Oct 31 02:27  lab up  core apply  4…
+  nodes      ● 3/3 Ready               │                                        
+  apps       ● 3/5 ready  ◐ 1 progress…│ App URLs                               
+  stacks     ● 4 healthy  ◐ 1 progress…│  https://grafana.localtest.me:8443     
+                                       │  https://podinfo.localtest.me:8443     
+                                       │  on the Mac: ssh -N fedora-lab         
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+───────────────────────────────────────┴────────────────────────────────────────
+ ops ▸ ● Oct 31 02:31  lab up  core apply  41s                                  
+ a firing alerts  1 home  2 stacks  3 labs  4 drills  5 ops  U up  : palette  K…

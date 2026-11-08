@@ -36,7 +36,7 @@ func TestLoad(t *testing.T) {
 			}
 		}},
 		{name: "corrupt", content: ptr(`{"version":1,`), wantErr: "unexpected end"},
-		{name: "future schema", content: ptr(`{"version":2}`), wantErr: "schema version 2"},
+		{name: "future schema", content: ptr(`{"version":3}`), wantErr: "schema version 3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
