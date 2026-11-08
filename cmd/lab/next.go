@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -107,7 +108,9 @@ func recommendNext(in guidedInput, deps guidedDeps, p engine.Plan, results []doc
 		return start("Bring up the configured local profile.")
 	}
 	for _, r := range results {
-		if r.Status == doctor.Warn {
+		marker, _, _ := strings.Cut(r.Fix, ":")
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if r.Status == doctor.Warn && marker != "allowed" && marker != "accepted" {
 			return diagnostic(r)
 		}
 	}

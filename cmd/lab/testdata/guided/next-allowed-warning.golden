@@ -1,0 +1,4 @@
+Next: Start the next eligible lab.
+Command: lab labs start 01-first --config <fixture>/lab.yaml --state <fixture>/state.json
+Effect: changes-lab; not executed.
+--- stderr ---

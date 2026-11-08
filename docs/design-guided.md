@@ -1,7 +1,8 @@
 # Guided first run and daily use
 
-**Status:** design approved and merged in #52. B1 implements sections 1 and 2.
-Sections 3 and 4 remain future work, in B2 and B3 after B1 merges.
+**Status:** design approved and merged in #52. B1 implemented sections 1 and 2 (#53).
+B1.1 fixes accepted-warning recommendations. Sections 3 and 4 remain future
+work; B2 starts only after B1.1 merges.
 Start/next examples below are fixture output, not live-run evidence.
 
 [Engineering reference](design.md) · [Documentation rules](contributing-docs.md)
@@ -219,7 +220,7 @@ Recommendations are deterministic. Choose one row, in this priority order:
 | Active lab, including a completed one awaiting cleanup | `lab labs status` | Read-only; shows the existing cleanup guidance |
 | Stopped main nodes/cache or registry | `lab start --profile <configured>` | Changes the lab after confirmation |
 | Empty state or engine plan needs apply/retry | `lab start --profile <configured>` | Changes the lab after confirmation |
-| Remaining doctor warning | Inspect it with `lab doctor --read-only --profile <configured>` | Read-only |
+| Remaining actionable doctor warning | Inspect it with `lab doctor --read-only --profile <configured>` | Read-only |
 | Ready lab, eligible incomplete exercise | Start the lowest-numbered eligible lab; after those, an eligible random drill | Changes the lab; never injects automatically |
 | No eligible incomplete exercise | `lab labs list` to review progress/replay options | Read-only |
 
@@ -228,6 +229,9 @@ Eligibility uses catalog modes, prerequisites and tool availability. Missing
 prerequisites lead to a review/list suggestion, not automatic stack installation.
 A failed probe never counts as ready. Within doctor failures/warnings, use the
 existing check order. Do not recommend unsupported stacks or disclose solutions.
+Warnings with a fix marker of `allowed` or `accepted`, alone or before a colon
+and explanation, do not trigger this row. Matching ignores case and surrounding
+whitespace. Doctor still displays them; failures are never exempted.
 
 A completed run in the progress ledger counts for exercise selection even if
 scratch cleanup removed its current session. Recommendations are advisory:
@@ -479,7 +483,7 @@ Update their golden fixtures in the same PR.
 | --- | --- | --- |
 | Step A: this design | Only `docs/design-guided.md`; no code or other documentation changes | Open draft, send link, stop for approval |
 | Step B1: guided local use | Sections 1–2 only: start, next, shared doctor input/memory, observational registry/path flags, shared up preparation/apply, focused tests/goldens and docs | Design approved; open draft, stop, do not merge |
-| Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Only after B1 merges and owner authorises it; separate draft |
+| Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Only after B1.1 merges and owner authorises it; separate draft |
 | Step B3: print-only fixes | Section 4: typed remediation, doctor fix text/JSON, exact-command/sudo coverage and next golden updates | Only after B1 merges and owner authorises it; separate draft |
 
 This split follows the owner's post-approval scope. B1 has no progress/schema

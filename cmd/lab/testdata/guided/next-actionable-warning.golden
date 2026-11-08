@@ -1,0 +1,4 @@
+Next: Review doctor instructions for k8s support.
+Command: lab doctor --read-only --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json
+Effect: read-only; not executed.
+--- stderr ---
