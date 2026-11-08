@@ -1,37 +1,60 @@
-# The database got slow
+# Slow database requests
 
-The pager goes off: `SampleDBLatencyFastBurn`. sample-db's latency SLO says 99% of `/api/check` requests answer within 250 ms, and it is burning its 30-day error budget more than 14 times too fast. Requests still succeed, only slowly. Nothing was deployed. Find out why the requests are slow, fix it, and run `lab drills verify`.
+`SampleDBLatencyFastBurn` pages for sample-db. Successful `/api/check` requests are slow and its latency budget is burning quickly. Nothing was deployed. Find supporting evidence, restore latency and verify recovery.
 
-## What happened
+## Goal
 
-Postgres's network interface got a `tc netem` rule that delays every packet it sends by 300 ms (±50 ms). It is the rule a network chaos experiment adds (Chaos Mesh's NetworkChaos, Litmus, or someone with `tc` and a debug container) and a failed cleanup leaves behind. Each `/api/check` waits for at least one round trip to Postgres, often two (pgxpool pings a connection idle for over a second before it hands it out), so requests take 300 to 700 ms instead of a few. Everything else looks healthy: no errors, no restarts, Postgres's CPU is idle and its queries are fast.
+Separate successful-but-slow requests from availability errors and locate
+where time is spent.
 
-How lab injects it, and why this way: the kind node runs `tc` inside the Postgres pod's network namespace (`podman exec` on the node, `nsenter -n` into the container's process). On rootless Podman the node is root in its own user namespace and owns the pod's network namespace, so this needs no privileged pod, no `sudo` on the host and no extra image, and costs no memory. Chaos Mesh would do the same with a CRD and a daemon on each node, about 300 MiB more (its controller, dashboard and chaos-daemon DaemonSet); worth it once the lab has several network drills, not for one.
+## Prerequisites
 
-## Finding it
+Local main lab; healthy `sample-db` and `obs` stacks, with steady request traffic.
+No active lab or drill. Use the [drill lifecycle](../../docs/guides/drills.md).
+**Danger:** this exercise affects database connectivity; limit is 30 minutes.
+Do not make unrelated host networking or sudo changes.
 
-- The alert: `SampleDBLatencyFastBurn` (lab 3's pattern, on sample-db: the error ratio over the budget, over 10 minutes and 2 minutes). `SampleDBLatencySlowBurn` follows if it lasts.
-- The latency: `histogram_quantile(0.99, sum by (le) (rate(sampledb_http_request_duration_seconds_bucket{path="/api/check"}[2m])))` in Prometheus or Grafana jumps from a few milliseconds to about half a second. The error ratio `sampledb:sli_latency:error_ratio_rate2m` goes to 1.
-- Not the database itself: the same query inside the Postgres pod, over the local socket, takes well under a millisecond (`psql` with `\timing`). Postgres's CPU (`container_cpu_usage_seconds_total`) is idle.
-- The network: `kubectl -n sample-db debug postgres-0 -it --profile=netadmin --target=postgres --image=docker.io/nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61 -- tc qdisc show dev eth0` shows `qdisc netem ... delay 300ms 50ms`. A `ping` from the app's pod to Postgres shows the same delay.
-- Traces would point at the database call straight away; the lab's obs stack has no Tempo yet, so this drill works from metrics.
+## Scenario
 
-## The fix
+Requests still succeed, but the 99% within 250 ms SLO is not met.
+Compare application latency, database observations and the path between them.
 
-Remove the rule:
+## What you should see
 
-```bash
-kubectl -n sample-db debug postgres-0 -it --profile=netadmin --target=postgres \
-  --image=docker.io/nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61 \
-  -- tc qdisc del dev eth0 root
+Elevated request durations without a matching error spike, and latency
+burn-rate evidence. A healthy pod and low CPU usage do not prove fast requests.
+
+## Hints
+
+```sh
+lab drills hint
 ```
 
-Deleting the pod (`kubectl -n sample-db delete pod postgres-0`) also clears it, since the new pod gets a new network namespace, at the cost of a Postgres restart. Then the lasting fixes:
+**What you will see:** the next counted investigation hint. The last can
+reveal the cause; it is an optional spoiler.
 
-- Chaos experiments with a duration and an owner, run through a tool that cleans up (Chaos Mesh, Litmus), never by hand.
-- Who may add `NET_ADMIN` debug containers: `kubectl debug --profile=netadmin` needs the right to create ephemeral containers; limit it with RBAC (`pods/ephemeralcontainers`) and a policy on capabilities.
-- An SLO on latency, not only on errors: this fault never returned an error.
+## How to verify
 
-## What lab puts back
+```sh
+lab drills verify
+```
 
-Restore deletes any `netem` rule on every Postgres container of sample-db, checks none is left, and waits until `/api/check` is fast again.
+**What you will see:** whether request latency recovered, then timing and
+restoration on success. Metric windows can lag current behavior.
+
+## Cleanup
+
+```sh
+lab drills abort
+```
+
+**What you will see:** controlled database-path restoration and an aborted
+result. Do not delete state after a cleanup error.
+
+```sh
+lab drills status
+```
+
+**What you will see after successful cleanup:** no active drill.
+**Reference solution (spoiler):** [solution.sh](solution.sh). Finish through
+verify/abort; the reference alone does not complete snapshot restoration.

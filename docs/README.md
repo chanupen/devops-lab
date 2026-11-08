@@ -16,16 +16,17 @@ The repository is private; you need access to clone it.
 | Find exact CLI arguments and flags | [Generated CLI reference](guides/cli.md) |
 | Choose a profile or add/remove a stack | [Profiles and stacks](guides/profiles-and-stacks.md) |
 | Investigate with the local assistant and understand its limits | [Assistant guide](guides/assistant.md) |
-| Choose a hands-on exercise | [Existing lab instructions](../labs/README.md) |
-| Understand the current incident exercises | [Existing drill instructions](../drills/README.md) |
+| Choose, work through and clean up a hands-on exercise | [Labs guide](guides/labs.md) |
+| Practise an incident from injection through recovery | [Drills guide](guides/drills.md) |
 | Diagnose a known host or deployment problem | [Troubleshooting](guides/troubleshooting.md) |
 | Verify a downloaded binary | [Release binaries](#release-binaries) |
 | Check component and model terms | [Licence inventory](licences.md) |
 | Change the implementation | [Engineering reference](design.md) |
 
-The task guides are available above. The existing lab and drill pages remain
-interim exercise references until PR 3; their replacement guides and README
-standardisation are not part of this PR.
+The task and exercise guides are available above. Individual lab and drill
+pages use a consistent lifecycle layout. Reference solutions are labelled
+spoilers, not required reading. Offline link-check CI and the full documented
+read-only command accuracy pass follow in PR 4.
 
 ## Safety labels
 

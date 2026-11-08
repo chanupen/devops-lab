@@ -6,13 +6,13 @@
  ○ cert-expiry intermediate   │ alert: KubePodCrashLooping                                          
  ● dns         intermediate   │ 1 run(s), 1 recovered · best detect 2m0s, recover 5m0s              
  ● node-loss   intermediate   │                                                                     
- ● oom         intermediate   │ The pager goes off: the sample app's frontend at                    
- ○ secret-drift intermediate  │ https://podinfo.localtest.me:8443 returns errors since a few        
- ○ slow-db     advanced       │ minutes ago. Nobody merged anything to Git today. Find what broke,  
-                              │ roll it back the way your team deploys (Argo CD), and run lab       
-                              │ drills verify.                                                      
+ ● oom         intermediate   │ The pager goes off: https://podinfo.localtest.me:8443 returns       
+ ○ secret-drift intermediate  │ errors. Nobody merged anything to Git today. Find the evidence,     
+ ○ slow-db     advanced       │ restore service through the deployment system, and verify recovery. 
                               │                                                                     
                               │ enter starts it · R starts a random drill · $ lab drills start bad-…
+                              │                                                                     
+                              │                                                                     
                               │                                                                     
                               │                                                                     
                               │                                                                     

@@ -6,25 +6,25 @@
  ○ 02  Build, scan and promote an image by retagging  0/6  │ ✕ not done yet: podinfo is OutOfSync,  
  ○ 03  SLO and burn-rate alerts for the sample app  0/7    │   not Synced: argocd app sync podinfo  
  ○ 04  Rotate a database password without restarting the a…│                                        
- ○ 05  Kyverno policy that blocks images without a digest …│ Create an Application named podinfo in 
- ○ 06  Karpenter consolidation, PDBs and spot interruption…│ the argocd namespace. Its source is    
-                                                           │ the Helm chart at path charts/podinfo  
-                                                           │ in                                     
+ ○ 05  Kyverno policy that blocks images without a digest …│ Create Application podinfo in argocd,  
+ ○ 06  Karpenter consolidation, PDBs and spot interruption…│ using                                  
                                                            │ https://github.com/stefanprodan/podinf 
-                                                           │ o, at tag 6.17.0. Deploy it to the     
-                                                           │ namespace podinfo in the same cluster. 
-                                                           │ Then sync it.                          
-                                                           │                                        
-                                                           │ An Application is a Kubernetes object. 
-                                                           │ Write it as YAML and apply it with     
-                                                           │ kubectl, so it can live in Git too.    
+                                                           │ o, revision 6.17.0, path               
+                                                           │ charts/podinfo. Deploy into namespace  
+                                                           │ podinfo on this cluster and sync it.   
                                                            │                                        
                                                            │ Hints                                  
-                                                           │ 1. The fields you need are             
-                                                           │    spec.source.repoURL, targetRevision 
-                                                           │    and path, and                       
-                                                           │    spec.destination.server and         
-                                                           │ ↓ more: j scrolls                      
+                                                           │ 1. An Application connects a           
+                                                           │    source/revision/path with a         
+                                                           │    destination cluster/namespace.      
+                                                           │                                        
+                                                           │ h shows a hint (1 left)                
+                                                           │                                        
+                                                           │ Expected result                        
+                                                           │ Application podinfo is Synced and      
+                                                           │ Healthy; its podinfo Deployment is     
+                                                           │ available.                             
+                                                           │                                        
 ───────────────────────────────────────────────────────────┴────────────────────────────────────────
  ops ▸ ● Oct 31 02:26  lab up  core apply  41s                                                      
  j/k scroll  n/p next/previous step  v verify  h hint  esc back  ? help  q quit                     

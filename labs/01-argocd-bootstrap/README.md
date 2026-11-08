@@ -2,103 +2,141 @@
 
 Argo CD keeps a cluster in line with what Git says. In this lab you install it on an empty cluster, deploy an app from Git, watch it undo a change made by hand, and then let one Application manage others.
 
-You work on a cluster of your own. `lab labs start 01` creates it, and `lab labs stop` deletes it. Your main lab is not touched.
+## Goal
 
-`lab labs start` prints a few progress lines and then the first step. Creating the cluster takes about a minute. Add `-v` to see kind's full output; it is always in the op log. Time counts only while your cluster runs. If the host reboots, run `lab labs start 01` again: it starts the cluster and the image cache, and you pick up at your step. `lab labs stop` deletes your cluster and the work on it, so it also resets your steps and time: the next `lab labs start 01` begins at step 1. It prints how far you got, for example "stopped at step 4/6 after 32m".
+Install Argo CD, deploy from Git, observe self-healing and build an app-of-apps.
+Allow about 45 minutes; beginner level.
 
-Before you start, you need `kubectl`, `helm`, `jq` and the `argocd` CLI on your PATH. `lab labs start` checks, and prints the install command for anything missing. To install the `argocd` CLI that matches this lab (v3.5.5, checksum verified):
+## Prerequisites
 
-```bash
+Local only. Rootless Podman and kind ready; `kubectl`, `helm`, `argocd` and `jq`
+on PATH. Start creates an isolated single-node scratch cluster, not your main lab.
+Use [the lab lifecycle](../../docs/guides/labs.md) to start lab 1 and select
+its private kubeconfig. No other lab or drill may be active.
+
+Start prints the platform-specific installer for missing tools. This Linux
+amd64 Argo CD v3.5.5 installer matches the metadata and verifies its checksum:
+
+```sh
 mkdir -p ~/.local/bin && curl -fsSLo /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 && echo "c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba  /tmp/argocd" | sha256sum -c - && install -m 0755 /tmp/argocd ~/.local/bin/argocd
 ```
 
-On a Mac, `lab.yaml` has the `darwin/amd64` command.
+**What you will see:** checksum `OK`, then installation in your user bin.
+**Writes host files:** review `/tmp/argocd` and the target first; do not overwrite
+another user's files. The metadata has a separate Intel macOS command.
 
-Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer.
+## Steps
+
+1. [Install Argo CD](#step-1-install-argo-cd-with-helm).
+2. [Log in](#step-2-log-in-with-the-argocd-cli).
+3. [Deploy from Git](#step-3-deploy-an-app-from-git).
+4. [Enable reconciliation](#step-4-turn-on-auto-sync).
+5. [Observe drift](#step-5-watch-argo-cd-undo-drift).
+6. [Manage child applications](#step-6-manage-apps-with-an-app-of-apps).
+
+Detailed tasks follow the lifecycle sections. Full command answers stay in
+the labelled reference scripts.
+
+## What you should see
+
+A separate cluster with Argo CD and healthy Applications. Manual drift is
+reconciled from Git. The main lab's Applications are unchanged.
+
+## Hints
+
+```sh
+lab labs hint
+```
+
+**What you will see:** the next hint for your current step.
+
+## How to verify
+
+```sh
+lab labs verify
+```
+
+**What you will see:** a read-only step result; success advances progress.
+Use a step number to recheck earlier work. **Reference solutions (spoilers):**
+[solution scripts](solution/), or `lab labs solution N`, which prints an answer.
+
+## Cleanup
+
+**Destructive to this scratch lab:**
+
+```sh
+lab labs stop
+```
+
+**What you will see:** the scratch cluster is deleted and its steps/time reset.
+To retry inside the existing cluster instead, use `lab labs reset`; it removes
+Argo CD, its CRDs and the exercise Applications/namespaces. Stop manual
+port-forwards with Ctrl-C. A reboot pauses scratch time; starting the same lab
+again resumes it, but stop discards its cluster work.
 
 ## Step 1: Install Argo CD with Helm
 
-Install Argo CD into the `argocd` namespace with Helm. Use the `argo-cd` chart, version `10.10.5`, from the OCI registry `oci://ghcr.io/argoproj/argo-helm`.
-
-Charts can come from an OCI registry, like images. The same chart is also in the classic Helm repository `https://argoproj.github.io/argo-helm`.
-
-Always pin the chart version. Without a pin, the same command installs something different next month.
+Install the `argo-cd` chart version `10.10.5` from `oci://ghcr.io/argoproj/argo-helm` into namespace `argocd`. Pin the version and wait for readiness.
 
 ### Hints
-- `helm install` takes an OCI reference as the chart: `oci://<registry>/<path>/<chart>`. You do not need `helm repo add`.
-- Pin the version with `--version 10.10.5`. Create the namespace with `--create-namespace`.
-- `--wait` makes Helm wait until the pods are Ready. Give it a few minutes with `--timeout 10m`.
+- Helm supports OCI chart references without adding a classic chart repository.
+- Check the install flags for namespace creation, version and readiness timeout.
 
 ### Expected result
-`helm list -n argocd` shows a release of chart `argo-cd-10.10.5`. Every pod in `argocd` is Ready.
+The release uses chart `argo-cd-10.10.5` and all Argo CD pods are Ready.
 
 ## Step 2: Log in with the argocd CLI
 
-The Argo CD API is not exposed outside the cluster. Reach it with a port-forward, then log in with the `argocd` CLI as `admin`.
-
-Use local port 18080. The main lab already uses 8080.
+Reach the scratch Argo CD API on loopback port 18080 and authenticate as admin. Do not expose it on the LAN or reuse the main lab's port 8080.
 
 ### Hints
-- In a second terminal: `kubectl -n argocd port-forward svc/argocd-server 18080:443`. Keep it running.
-- The first admin password is in the Secret `argocd-initial-admin-secret`, in the `password` key, base64-encoded.
-- The server uses a self-signed certificate. Pass `--insecure` to `argocd login localhost:18080`.
+- In a second terminal: use a port-forward bound to `127.0.0.1`.
+- The initial admin credential is in the scratch namespace's initial-admin Secret.
+- The API uses a self-signed certificate. Review trust options before login; any insecure exception must be limited to this isolated loopback exercise. Never print the password in shared logs or put it in shell history.
 
 ### Expected result
-`argocd account get-user-info` says `Logged In: true`.
+The argocd CLI reports `Logged In: true` for the scratch server.
 
 ## Step 3: Deploy an app from Git
 
-Create an Application named `podinfo` in the `argocd` namespace. Its source is the Helm chart at path `charts/podinfo` in `https://github.com/stefanprodan/podinfo`, at tag `6.17.0`. Deploy it to the namespace `podinfo` in the same cluster. Then sync it.
-
-An Application is a Kubernetes object. Write it as YAML and apply it with `kubectl`, so it can live in Git too.
+Create Application `podinfo` in `argocd`, using `https://github.com/stefanprodan/podinfo`, revision `6.17.0`, path `charts/podinfo`. Deploy into namespace `podinfo` on this cluster and sync it.
 
 ### Hints
-- The fields you need are `spec.source.repoURL`, `targetRevision` and `path`, and `spec.destination.server` and `namespace`. The cluster Argo CD runs in is `https://kubernetes.default.svc`.
-- Add `CreateNamespace=true` under `spec.syncPolicy.syncOptions`, so Argo CD creates the `podinfo` namespace.
-- A new Application is OutOfSync until it is synced: `argocd app sync podinfo`, then `argocd app wait podinfo --health`.
+- An Application connects a source/revision/path with a destination cluster/namespace.
+- Keep its manifest in your exercise workspace; do not change the main bootstrap.
 
 ### Expected result
-`argocd app get podinfo` shows Sync Status `Synced` and Health Status `Healthy`.
+Application `podinfo` is Synced and Healthy; its podinfo Deployment is available.
 
 ## Step 4: Turn on auto-sync
 
-Make Argo CD sync `podinfo` on its own. Turn on self-heal, so it undoes changes made in the cluster. Turn on prune, so it deletes what was removed from Git.
+Enable automated sync, pruning and self-healing on Application `podinfo`. Explain the difference between a new Git revision, a removed Git object and a manual change in the cluster.
 
 ### Hints
-- These settings live under `spec.syncPolicy.automated` in the Application: `prune: true` and `selfHeal: true`.
-- With the CLI: `argocd app set podinfo --sync-policy automated --auto-prune --self-heal`.
+- Inspect the Application's automated sync policy fields.
+- Pruning and self-healing are separate choices, not implied by automated sync.
 
 ### Expected result
-The Application's sync policy is automated, with prune and self-heal on.
+The Application has automated sync with both prune and selfHeal enabled.
 
 ## Step 5: Watch Argo CD undo drift
 
-Change the cluster by hand: scale the `podinfo` Deployment to 3 replicas. Then watch the replica count.
-
-Git says 1 replica, because that is the chart's default. With self-heal on, Argo CD puts it back within seconds. A change that is not in Git does not last.
+Record the Git-desired replica count, change the live podinfo Deployment's replicas, then observe Argo CD restoring the desired value.
 
 ### Hints
-- `kubectl -n podinfo scale deployment podinfo --replicas=3`
-- Watch it with `kubectl -n podinfo get deployment podinfo -w`. Press Ctrl+C to stop watching.
-- To change the replica count for good, change it in Git, or in the Application's Helm values.
+- Compare Application sync status and Deployment state over time.
+- Do not change Git or disable self-heal to keep the manual replica change.
 
 ### Expected result
-The Deployment was changed by hand, and it has 1 replica again.
+The Deployment returns to Git's desired replica count and the Application is Synced.
 
 ## Step 6: Manage apps with an app of apps
 
-Let one Application manage other Applications. Create an Application named `root` in the `argocd` namespace. Its source is the Helm chart at path `apps` in `https://github.com/argoproj/argocd-example-apps`, at commit `8088f4c0d970abb09e250248cc97e35623447cb5`. That chart makes one Application per entry in its `applications` value.
-
-Keep two child apps, `guestbook` and `helm-guestbook`. Set them in the Application's Helm values, and pin the children to the same commit. Turn on auto-sync for `root`.
-
-Now adding an app means adding an entry in Git. Nobody runs `kubectl apply` for it.
+Create root Application `root` from `https://github.com/argoproj/argocd-example-apps`, revision `8088f4c0d970abb09e250248cc97e35623447cb5`, path `apps`. Its destination is `argocd`; sync it and then its child Applications. Configure automated sync and its Helm values to manage exactly `guestbook` and `helm-guestbook`, not every example in the source repository.
 
 ### Hints
-- Set values inline with `spec.source.helm.valuesObject`. A list in your values replaces the chart's list.
-- The chart reads the children's revision from `config.spec.source.targetRevision`.
-- Give each entry a `destination: {namespace: <name>}`. The chart reads it, and fails on an entry without one ("nil pointer evaluating … .namespace").
-- `helm-guestbook` is a Helm app: its entry needs `tool: {helm: {releaseName: helm-guestbook}}`.
-- The children are named `example.guestbook` and `example.helm-guestbook`. Watch them with `argocd app list`.
+- The root's source contains Applications rather than the workloads themselves.
+- Check each child's destination namespace and health, not only the root.
 
 ### Expected result
-`root` is Synced and manages two Applications, and both children are Synced.
+Root has automated sync and manages only `guestbook` and `helm-guestbook`; both are Synced and Healthy with available Deployments in their namespaces.

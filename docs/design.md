@@ -15,10 +15,17 @@ in plain language. This file remains the engineering reference.
 The first documentation PR added structure and getting started (#48).
 The [TUI](guides/tui.md), [generated CLI](guides/cli.md),
 [profiles/stacks](guides/profiles-and-stacks.md), [assistant](guides/assistant.md)
-and [troubleshooting](guides/troubleshooting.md) guides follow in PR 2.
+and [troubleshooting](guides/troubleshooting.md) guides were added in PR 2 (#49).
 `scripts/generate-cli-docs.py` builds a temporary binary and recursively captures
 help only; the CI build job checks the generated reference for drift.
-Later PRs add exercise guides, then offline link checks and an accuracy pass.
+PR 3 adds [labs](guides/labs.md) and [drills](guides/drills.md) lifecycle guides
+and standardises all six lab and seven drill READMEs. Learner pages describe
+symptoms/tasks, not root-cause walkthroughs; reference scripts are labelled
+spoilers. Drill incident text stays before the first H2 for `Drill.Page`.
+Lab lifecycle sections stay before the first `## Step N: title`; each step
+retains `### Hints` and `### Expected result` for the CLI/TUI parser.
+This keeps cleanup text out of the final step's expected result without
+changing execution or restoration logic. PR 4 adds offline link checks and an accuracy pass.
 Each PR is reviewed separately; the repository stays private.
 Command examples are checked against help and code without cloud operations,
 drill injection or live-lab changes.

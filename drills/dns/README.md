@@ -1,28 +1,60 @@
-# Service discovery fails across the app
+# Service discovery failures
 
-The pager goes off: the sample app's frontend at https://podinfo.localtest.me:8443 cannot reach its backend, and other apps report errors too. Every pod you look at is Running. Find what broke, put it back, explain why it went down, and run `lab drills verify`.
+The frontend cannot reach its backend by name. Other applications also report errors, but the pods you inspect are Running. Restore requests and explain the evidence before verifying recovery.
 
-## What happened
+## Goal
 
-CoreDNS, the cluster's DNS server in `kube-system`, was scaled to zero. Pods find each other by Service name (`podinfo-backend.podinfo`), and every lookup goes to the `kube-dns` Service, which now has no endpoints. Nothing crashes: calls by name fail with `lookup podinfo-backend.podinfo: i/o timeout` or `server misbehaving`, while calls by IP still work.
+Distinguish application health from shared service-discovery health.
 
-The cause was a cost saver: kube-downscaler, run without `kube-system` on its exclude list, scaled every Deployment to zero outside "office hours". It recorded the replicas it found in the annotation `downscaler/original-replicas` and set `spec.replicas: 0` as its own field manager.
+## Prerequisites
 
-lab keeps working through all of it: it talks to the API server, which does not use cluster DNS. Argo CD does not: it cannot resolve the Git host, so its apps show comparison errors until DNS is back.
+Local main lab; healthy `sample-app` and `obs` stacks. No active lab or drill.
+Use the [drill lifecycle](../../docs/guides/drills.md) and the lab kubeconfig.
+**Danger:** the incident can affect shared cluster dependencies, not only
+podinfo. The limit is 30 minutes.
 
-## Finding it
+## Scenario
 
-- The frontend's logs and `/api/echo` fail on the backend's name, while both pods run.
-- `kubectl -n kube-system get deploy coredns` shows `0/0`; `kubectl -n kube-system get endpoints kube-dns` shows no addresses.
-- Zero replicas is not a crash: someone set it. `kubectl -n kube-system get deploy coredns -o yaml --show-managed-fields` names the field manager that set `spec.replicas` (`kube-downscaler`) and when; the annotation holds the replicas before.
-- The alert: `CoreDNSDown`. kube-prometheus-stack scrapes CoreDNS but has no alert for it being gone, so this drill adds one to the obs stack (`lab-drills` rules): no CoreDNS target up for a minute.
+Service-name requests fail across applications. Compare independent
+connectivity observations; a Running pod is not necessarily reachable.
 
-## The fix
+## What you should see
 
-```bash
-kubectl -n kube-system scale deployment coredns --replicas=2
+Frontend/backend communication failures and possible GitOps comparison errors.
+The named alert is `CoreDNSDown`. Use its evidence, not the alert name alone,
+to establish what happened.
+
+## Hints
+
+```sh
+lab drills hint
 ```
 
-That restores service. The explanation is half the drill: CoreDNS went down because a cluster-wide automation (the downscaler) treated `kube-system` like any other namespace. The lasting fixes are to exclude system namespaces from it, to alert on CoreDNS being gone (this drill's alert), and a PodDisruptionBudget does not help here: it limits evictions, not a scale to zero.
+**What you will see:** the next counted hint. The final hint can reveal the
+cause, so it is an optional spoiler.
 
-When the drill ends, lab puts CoreDNS's Deployment back exactly as it was before (replicas and annotations).
+## How to verify
+
+```sh
+lab drills verify
+```
+
+**What you will see:** whether user-visible name-based communication recovered,
+then timing and restoration on success.
+
+## Cleanup
+
+```sh
+lab drills abort
+```
+
+**What you will see:** controlled restoration, including shared objects saved
+before injection, and an aborted result.
+
+```sh
+lab drills status
+```
+
+**What you will see after successful cleanup:** no active drill.
+**Reference solution (spoiler):** [solution.sh](solution.sh). Do not bypass the
+manager or discard restore state.

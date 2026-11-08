@@ -7,11 +7,11 @@
  ● dns         intermediate   │ ● detect: 3m12s                                                     
  ● node-loss   intermediate   │ hints 1/4 · verify runs 0                                           
  ◐ oom         intermediate   │                                                                     
- ○ secret-drift intermediate  │ The pager goes off: the sample app's frontend at                    
- ○ slow-db     advanced       │ https://podinfo.localtest.me:8443 fails its calls to the backend,   
-                              │ on and off, since the backend team's latest release. They want to   
-                              │ keep that release. Find what is wrong, fix it the GitOps way, and   
-                              │ run lab drills verify.                                              
+ ○ secret-drift intermediate  │ The frontend fails its backend calls intermittently after a backend 
+ ○ slow-db     advanced       │ release. The team wants to retain the release. Find the evidence    
+                              │ for the failure, restore reliable requests through GitOps, and      
+                              │ verify recovery.                                                    
+                              │                                                                     
                               │                                                                     
                               │                                                                     
                               │                                                                     

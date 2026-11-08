@@ -1,113 +1,154 @@
-# Lab 6: Karpenter consolidation, PDBs and spot interruptions
+# Lab 6: Karpenter, disruption budgets and spot replacement
 
-Karpenter adds nodes when pods cannot be scheduled and removes them when they are no longer needed. That saves money, but it moves pods around: every node it removes is drained first. In this lab you watch Karpenter launch spot nodes for a workload, consolidate them when the workload shrinks, get blocked by a PodDisruptionBudget (PDB), and replace a node after a spot interruption warning.
+Observe real scheduling, consolidation and replacement on an approved cloud lab.
 
-The lab runs only in cloud mode, on the EKS cluster: `lab labs start 6 --mode cloud`. It needs the `cluster` stack. It works in the namespace `lab06-karpenter` and in its own NodePool, `lab06`, so it never moves the cluster's other pods. `lab labs reset` deletes both, and Karpenter then terminates the lab's nodes.
+## Goal
 
-You need `podman`, `kubectl` and `jq`. The aws CLI runs as a pinned image through rootless Podman, and `lab labs env` gives it the cloud session's temporary keys:
+Explain scaling decisions and the trade-off between availability and blocked
+disruption. Allow 50 minutes; advanced level.
 
-```bash
-eval "$(lab labs env --mode cloud)"
+## Prerequisites
+
+Cloud only: an approved EKS session in `ap-south-1`, healthy `cluster`, Karpenter
+and its interruption queue. Tools: rootless Podman, kubectl and jq.
+Start lab 6 with `--mode cloud` using [the lifecycle guide](../../docs/guides/labs.md).
+No other active lab/drill. Select private cloud exports; never log their credentials.
+
+> **Billed — approval required:** the tasks launch and terminate real EC2
+> nodes with disks. Prices vary; do not treat historical estimates as a cap.
+> Keep NodePool `lab06`'s `limits.cpu: "6"`, arm64 spot/2-vCPU restrictions,
+> taint and lab/owner/expiry tags. This limits this pool, not account spending.
+> TTL/reaper safeguards still apply. Sending an interruption message causes
+> real draining/replacement; it is not a harmless read-only probe.
+
+Define the pinned AWS CLI wrapper after selecting the cloud environment:
+
+```sh
 aws() { podman run --rm --network host -e 'AWS_*' docker.io/amazon/aws-cli:2.38.3@sha256:efe32e825cf203652eaca3e7e94679580274e7d567c39270aaa36a5144737108 "$@"; }
 ```
 
-Check each step with `lab labs verify`. `lab labs hint` gives one hint at a time. `lab labs solution N` shows a reference answer. Two terminals help: one for commands, one watching `kubectl get nodeclaims,nodes -l karpenter.sh/nodepool=lab06 -w`.
+**What you will see:** no output until invoked. Calls use the approved session,
+not the local emulator. Review account/region before sending any queue message.
 
-## What it costs, and the cap
+## Steps
 
-The lab's nodes are 2-vCPU arm64 spot instances, about $0.01 an hour each in ap-south-1, plus a 20 GB gp3 disk each. The lab uses at most three at a time, for well under $0.05 in all.
+1. [Read/create the pool](#step-1-read-the-nodepool-then-add-the-labs-own).
+2. [Scale up](#step-2-scale-up-and-watch-karpenter-add-spot-nodes).
+3. [Consolidate](#step-3-scale-down-and-watch-consolidation).
+4. [Block disruption](#step-4-add-a-poddisruptionbudget-and-see-consolidation-stop).
+5. [Allow one disruption](#step-5-let-the-pdb-allow-one-at-a-time).
+6. [Test interruption response](#step-6-simulate-a-spot-interruption).
 
-The NodePool has a hard cap: `limits.cpu: "6"`. Karpenter launches nothing that would take the pool past 6 vCPUs, so whatever you scale to, the lab cannot hold more than three of its nodes. Pods that do not fit stay Pending. Every verify script checks that the cap is still there. The cluster's own spot NodePool has its own cap, and the cloud lab's TTL and the TTL reaper still apply to every node.
+## What you should see
 
-## How the spot interruption is simulated
+Lab pods use only their isolated NodePool. Pending pods trigger provisioning;
+scale-down permits consolidation until a PDB blocks it. Replacement can leave
+temporarily fewer available replicas. Do not depend on fixed node-launch timing.
+The pool is capped at six vCPUs, normally at most three of its two-vCPU nodes.
 
-When EC2 needs a spot instance back, it sends an interruption warning two minutes ahead, as an EventBridge event. The cluster stack routes those events to an SQS queue, and Karpenter reads the queue: it taints the node, starts a replacement and drains the pods. Step 6 puts that same event on the queue yourself.
+## Hints
 
-| Method | What happens | Cost |
-|---|---|---|
-| A test message on Karpenter's SQS queue (this lab) | Karpenter handles it exactly as a real warning: taint, drain, replace, terminate. EC2 does not reclaim the instance; Karpenter terminates it itself. | Nothing: one SQS request, inside the free tier. No new IAM role or AWS resource. |
-| AWS FIS, `aws:ec2:send-spot-instance-interruptions` | EC2 sends a real warning, then interrupts the instance after two minutes. It also tests the EventBridge rule and the queue policy. | $0.10 per action-minute, about $0.20 a run, plus an IAM role and an experiment template that the lab would have to create, tag and clean up. |
+```sh
+lab labs hint --mode cloud
+```
 
-The message tests what this lab is about, Karpenter's response and your workload's, for nothing. FIS is the better test of the AWS wiring (EventBridge to SQS), which the cluster stack sets up and `lab doctor --mode cloud` does not exercise; it is worth a run before you trust a real cluster's interruption handling.
+**What you will see:** the next hint for the current step; no nodes are launched
+by requesting a hint.
+
+## How to verify
+
+**Cloud reads; existing resources still bill:**
+
+```sh
+lab labs verify --mode cloud
+```
+
+**What you will see:** the step check and progress; each check also requires the
+CPU cap to remain. **Reference solutions (spoilers):** [solution scripts](solution/).
+
+## Cleanup
+
+**Destructive/billed AWS teardown — get approval:**
+
+```sh
+lab labs reset --mode cloud
+```
+
+**What you will see:** `lab06-karpenter` and NodePool `lab06` removed.
+Cleanup waits for its NodeClaims to disappear; resolve any failure before leaving.
+
+```sh
+lab labs stop --mode cloud
+```
+
+**What you will see:** the session ends. The main EKS environment still exists.
+Complete [cloud down and leftovers checks](../../docs/getting-started/cloud.md#exact-session-sequence)
+to end the approved session; preserve state on failure.
 
 ## Step 1: Read the NodePool, then add the lab's own
 
-A NodePool tells Karpenter which nodes it may launch (`requirements`), how much in all (`limits`), and when it may remove them (`disruption`). Read the cluster's NodePool, `spot`.
-
-Then apply the lab's namespace and NodePool, `labs/06-karpenter/app/namespace.yaml` and `app/nodepool.yaml`, unchanged. Compare the two NodePools. Record two of `spot`'s settings in a ConfigMap `answers` in `lab06-karpenter`: `cpu-limit`, its CPU limit, and `consolidate-after`, how long a node must stay underused before Karpenter consolidates it.
+Read main NodePool `spot`, then apply provided `app/namespace.yaml` and `app/nodepool.yaml` unchanged. In ConfigMap `answers` in `lab06-karpenter`, record `spot`'s settings as keys `cpu-limit` and `consolidate-after`.
 
 ### Hints
-- `kubectl get nodepools`, then `kubectl get nodepool spot -o yaml`. `kubectl explain nodepool.spec.disruption` describes each field.
-- `limits.cpu` counts the vCPUs of every node the pool holds. `consolidateAfter` is in `spec.disruption`.
-- `kubectl -n lab06-karpenter create configmap answers --from-literal=cpu-limit=<value> --from-literal=consolidate-after=<value>`.
-- Compare the requirements: both pools take arm64 spot instances only. The lab's pool takes 2-vCPU sizes only, carries a taint so that only the lab's pods land on it, and has a lower cap.
+- Compare requirements, limits, disruption and taints.
+- A ready NodePool does not launch nodes without scheduling demand.
 
 ### Expected result
-`kubectl get nodepool lab06` shows it Ready, with no nodes yet. Karpenter launches nothing until a pod needs it.
+NodePool `lab06` is Ready with its cap/taint/label; answers match `spot`.
 
 ## Step 2: Scale up and watch Karpenter add spot nodes
 
-Apply `app/inflate.yaml`. It is a Deployment of pause containers that only take room: each pod requests 700m CPU, and they run only on the lab's nodes. It starts at 0 replicas. Scale it to 4 and watch.
+Apply `app/inflate.yaml` and scale Deployment `inflate` from zero to four. Its pods request 700m CPU and must use only the lab pool.
 
 ### Hints
-- `kubectl -n lab06-karpenter scale deployment inflate --replicas=4`.
-- Pending pods are Karpenter's signal. `kubectl get nodeclaims -w` shows a NodeClaim per node it decides to launch, before the node exists.
-- A 2-vCPU node has about 1.9 vCPU allocatable, and DaemonSets (VPC CNI, kube-proxy, node exporter) take some of it. Two 700m pods fit; a third does not. So 4 pods need 2 nodes.
-- `kubectl get nodes -l karpenter.sh/nodepool=lab06 -L node.kubernetes.io/instance-type,karpenter.sh/capacity-type,topology.kubernetes.io/zone` shows what Karpenter chose. Karpenter lists every type that fits and the requirements allow (16 here), and EC2 Fleet chooses with the `price-capacity-optimized` strategy: the pools least likely to be interrupted, then the cheapest of those. So it may not pick the cheapest type: in the test run it chose m8gd.large ($0.035/h) over t4g.medium ($0.011/h).
-- `kubectl -n kube-system logs deploy/karpenter | grep -i -e launched -e created` shows its decisions.
+- Follow NodeClaims, node readiness, placement and Karpenter events.
+- Allocatable CPU and DaemonSet requests differ from an instance's headline vCPUs.
 
 ### Expected result
-Two spot nodes of `lab06` in under a minute (38 s in the test run), each with two inflate pods.
+Four available pods on at least two lab06 arm64 spot nodes within the CPU cap.
 
 ## Step 3: Scale down and watch consolidation
 
-Scale inflate to 2. The two remaining pods fit on one node. Watch what Karpenter does, and how long it waits.
+Scale inflate to two pods. Observe the consolidation policy and wait interval.
 
 ### Hints
-- The pool's `consolidationPolicy` is `WhenEmptyOrUnderutilized`: Karpenter removes an empty node, and also a node whose pods fit elsewhere.
-- `consolidateAfter: 30s` is how long a node must stay unchanged before Karpenter considers it.
-- `kubectl get events -A --field-selector source=karpenter -w`, or `kubectl describe nodeclaim <name>`, shows why a node goes (`Empty`, `Underutilized`).
-- The ReplicaSet chose which pods to delete; usually the newest. Which node became empty?
-- You may also see `Unconsolidatable`: "SpotToSpotConsolidation is disabled, can't replace a spot node with a spot node". Karpenter can delete a spot node and move its pods, but by default it does not replace one spot node with a cheaper spot node (a feature gate turns that on).
+- An underused node can be removable even when it is not empty.
+- Distinguish deleting a node from replacing spot with cheaper spot.
 
 ### Expected result
-One node of `lab06` left, running both pods. The other was drained and terminated.
+One lab06 node remains with both available pods; the other is terminated.
 
 ## Step 4: Add a PodDisruptionBudget and see consolidation stop
 
-A PDB limits voluntary disruptions: evictions for a drain, which is how Karpenter removes a node. Scale inflate back to 4 (two nodes again). Add a PDB for `app=inflate` that allows no disruption at all (`maxUnavailable: 0`). Then scale to 2 so that one pod stays on each node. Karpenter now has two half-empty nodes it would merge, and cannot.
+Scale back to four, add a PDB selecting `app=inflate` with `maxUnavailable: 0`, then scale to two while retaining one pod per node.
 
 ### Hints
-- When a ReplicaSet scales down, it deletes pods with a lower `controller.kubernetes.io/pod-deletion-cost` first. Annotate one pod on each node with a higher cost before you scale down: `kubectl -n lab06-karpenter annotate pod <pod> controller.kubernetes.io/pod-deletion-cost=1000`.
-- `kubectl -n lab06-karpenter get pdb` shows `ALLOWED DISRUPTIONS`. With `maxUnavailable: 0` it stays 0.
-- Scaling down is not an eviction: a PDB never stops `kubectl scale`. It stops drains.
-- After a minute or two, `kubectl describe nodeclaim <name>` lists a `DisruptionBlocked` event: `Pdb prevents pod evictions (PodDisruptionBudget=[lab06-karpenter/inflate])`. The NodeClaims' `Consolidatable` condition is True: Karpenter would consolidate them.
+- ReplicaSet deletion preference can help retain the intended distribution.
+- Scaling is not eviction; a PDB blocks drains rather than replica-count changes.
+- Inspect both allowed disruptions and Karpenter's blocked-disruption events.
 
 ### Expected result
-Two nodes with one pod each, and they stay. A PDB that never allows a disruption also blocks node upgrades, `expireAfter` and drift replacement: the node is stuck until someone changes the PDB.
+Two nodes retain one pod each; the zero-disruption PDB prevents consolidation.
 
 ## Step 5: Let the PDB allow one at a time
 
-Change the PDB to `maxUnavailable: 1`. Keep it: a PDB is useful when it allows some disruption.
+Change the PDB to `maxUnavailable: 1` without removing it. Watch consolidation.
 
 ### Hints
-- `kubectl -n lab06-karpenter patch pdb inflate --type merge -p '{"spec":{"maxUnavailable":1}}'`.
-- Karpenter evicts one pod, the PDB lets it, the pod is rescheduled on the other node, and the empty node goes.
-- With more replicas, `maxUnavailable: 1` makes a drain move one pod at a time. A PDB that allows 1 is a common default for a service with a few replicas.
+- Reconcile availability with a finite allowance for voluntary disruption.
+- Wait for eviction, rescheduling and node termination before checking.
 
 ### Expected result
-One node of `lab06`, running both pods, within a minute or two.
+The PDB allows disruption and one lab06 node hosts both available pods.
 
 ## Step 6: Simulate a spot interruption
 
-Send Karpenter the interruption warning that EC2 would send for the node inflate runs on (see "How the spot interruption is simulated" above). Watch the node get tainted and drained, the pods move, and a replacement node arrive.
+After approval, send an EC2 Spot Instance Interruption Warning event to Karpenter's configured SQS queue for a node belonging to `lab06`. Observe draining, termination and replacement.
 
 ### Hints
-- The instance ID is the end of the node's `spec.providerID`: `kubectl get node <name> -o jsonpath='{.spec.providerID}'`.
-- The queue's name is in Karpenter's settings: `kubectl -n kube-system get deployment karpenter -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="INTERRUPTION_QUEUE")].value}'`. Its URL: `aws sqs get-queue-url --queue-name <name>`.
-- The message is the EventBridge event, as JSON: `{"version":"0","id":"<uuid>","detail-type":"EC2 Spot Instance Interruption Warning","source":"aws.ec2","account":"<account>","time":"<now, RFC3339>","region":"ap-south-1","resources":["arn:aws:ec2:ap-south-1:<account>:instance/<id>"],"detail":{"instance-id":"<id>","instance-action":"terminate"}}`. Build it with `jq -n`, then `aws sqs send-message --queue-url <url> --message-body "$body"`.
-- `kubectl get events -A -w | grep -i interrupt` shows Karpenter taking it: `SpotInterrupted` ("Spot interruption warning was triggered") and `TerminatingOnInterruption`, on the NodeClaim and the Node, within a second.
-- A real warning gives two minutes. Here nothing forces that, but Karpenter acts at once either way. Ask what your workload needs to survive two minutes' notice: more than one replica, a PDB that allows a disruption, and a short shutdown.
+- Derive the instance identity from the selected lab node's providerID.
+- Inspect the controller's queue setting and the EventBridge event schema.
+- This tests the consumer response, not actual EC2 reclamation or the complete EventBridge routing path. Do not add an FIS experiment for this lab.
 
 ### Expected result
-Karpenter records the interruption on the NodeClaim, drains the node, terminates the instance and launches another spot node. inflate is back to 2 available pods on the new node, about 40 seconds later. Until then it runs on one pod: the drain does not wait for the replacement, which is why one replica is never enough on spot. That is the end of the lab: `lab labs reset` removes the NodePool and its nodes.
+A lab06 NodeClaim records `SpotInterrupted` and disappears with the interrupted node. Two inflate pods become available on a live replacement lab06 node.
