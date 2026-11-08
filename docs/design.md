@@ -856,12 +856,18 @@ gates. Qwen2.5 3B is a non-commercial research eval comparison, never a default.
 The root [README](../README.md) documents local installation, cloud cost
 rules, the lab/drill catalogues and the assistant's recorded fixture results.
 Its 14-node Mermaid diagram shows the shared engine and read-only runner.
-The [TUI preview](tui-preview.md) comes from the renderer's checked-in
-100-column, 30-row golden fixture, not a live screenshot. The rules-first
-100% is on fixtures written against; both 3B model-only recordings scored 0%
+The README now shows a [live TUI screenshot](assets/tui-home.png) supplied
+on 8 Nov 2026, with the identifying terminal title bar cropped out.
+The [38-second asciinema recording](assets/lab-demo.cast) is under 1 MB;
+shell prompts and OSC title/host metadata are removed, with event timing
+unchanged. Both assets were inspected for identifying information and the
+recording was grepped for credential markers before publication.
+The renderer's golden fixture still backs its test; [tui-preview.md](tui-preview.md)
+distinguishes the live captures from the earlier golden-output SVG.
+The rules-first 100% is on fixtures written against; both 3B model-only recordings scored 0%
 on diagnosable drills. These are harness measurements, not generalisation.
-A live walkthrough remains unrecorded; no drills are run for this docs PR.
-The audit (#42) and README/docs (#43) are squash-merged into main.
+No drills, live-lab changes or cloud operations are run for this docs PR.
+The audit (#42), README/docs (#43) and release pipeline (#45) are merged into main.
 The separate [release workflow](../.github/workflows/release.yml) runs on
 `v*` tag pushes and branch `workflow_dispatch` probes. Lint/race checks gate the static,
 trimmed linux/amd64 and darwin/amd64 builds. Each binary records the tag as
