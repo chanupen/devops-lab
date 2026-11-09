@@ -68,12 +68,19 @@ func newStartCmd(factory providerFactory, deps guidedDeps) *cobra.Command {
 					return err
 				}
 			}
+			for _, r := range results {
+				if guidedRestart(r) {
+					if _, err := fmt.Fprintf(out, "Restart proposed after confirmation: %s (%s)\n", r.Name, r.Fix); err != nil {
+						return err
+					}
+				}
+			}
 			blocked := selectionErr != nil || in.st.ActiveLab != "" || doctor.Failed(results)
 			if r, _ := in.activeDrill(); r != nil {
 				blocked = true
 			}
 			if blocked {
-				if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
+				if err := writePlan(out, lipgloss.NewRenderer(out), guidedPreview(p, results)); err != nil {
 					return err
 				}
 			}
@@ -107,15 +114,8 @@ func newStartCmd(factory providerFactory, deps guidedDeps) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read-only plan observations failed: %w", err)
 			}
-			if err := writePlan(out, lipgloss.NewRenderer(out), p); err != nil {
+			if err := writePlan(out, lipgloss.NewRenderer(out), guidedPreview(p, results)); err != nil {
 				return err
-			}
-			for _, r := range results {
-				if r.Status == doctor.Stopped && (r.Name == "lab cluster" || r.Name == "image cache") {
-					if _, err := fmt.Fprintf(out, "Restart proposed: %s (%s)\n", r.Name, r.Fix); err != nil {
-						return err
-					}
-				}
 			}
 			if dry {
 				_, err := fmt.Fprintln(out, "Dry run: no apply, restart, chart download or state write.")

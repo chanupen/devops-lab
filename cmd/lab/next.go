@@ -100,7 +100,7 @@ func recommendNext(in guidedInput, deps guidedDeps, p engine.Plan, results []doc
 		return makeStep("start", reason, guidedCommand("start", in, "--profile", in.cfg.Profile), "changes-lab")
 	}
 	for _, r := range results {
-		if r.Status == doctor.Stopped && (r.Name == "lab cluster" || r.Name == "image cache" || r.Name == "lab registry") {
+		if guidedRestart(r) {
 			return start("Restart the configured local lab after confirmation.")
 		}
 	}

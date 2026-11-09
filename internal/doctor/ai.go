@@ -35,6 +35,9 @@ func aiDeployed(run func(AIState) Result) func(context.Context, System, Options)
 		if !slices.Contains(opts.Stacks, "ai") {
 			return Result{Status: Skip, Detail: "ai stack not deployed"}
 		}
+		if opts.DeferClusterHealth {
+			return Result{Status: Skip, Detail: "cluster health unverified until stopped lab containers restart"}
+		}
 		if sys.AI == nil {
 			return Result{Status: Skip, Detail: "no cluster to ask", Unavailable: true}
 		}

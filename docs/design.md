@@ -49,6 +49,14 @@ dry-run are observational. Confirmation precedes the shared lock; state/config
 are reloaded under it, and live plan changes stop before stack application.
 An active lab/drill must be handled explicitly. Version gates, container
 restart, chart prefetch, engine logs and app output remain shared with up.
+Guided collection observes main nodes, Zot and Moto first. Stopped runtime
+containers defer API-dependent AI/GitOps health, not host prerequisites.
+Previews list proposed restarts; when nodes are down, kept stacks are labelled
+recorded state with unverified health rather than applied. Only display reasons
+change; execution actions and the post-restart consent comparison stay intact.
+Next recommends configured-profile start before deferred cluster diagnostics;
+real host failures and active-exercise handling retain priority. Ordinary doctor
+health reporting is unchanged.
 
 Next reads local state, catalogs and bounded doctor observations; it never
 executes or saves a recommendation, takes the lock or probes AWS. Diagnostic

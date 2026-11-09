@@ -156,13 +156,57 @@ func collectGuided(ctx context.Context, in guidedInput, deps guidedDeps, mem doc
 			return r
 		}
 	}
-	results := doctor.Run(ctx, sys, opts, checks)
+	var runtimeChecks, remaining []doctor.Check
+	for _, check := range checks {
+		if guidedRuntimeCheck(check.Name) {
+			runtimeChecks = append(runtimeChecks, check)
+		} else {
+			remaining = append(remaining, check)
+		}
+	}
+	runtimeResults := doctor.Run(ctx, sys, opts, runtimeChecks)
+	opts.DeferClusterHealth = slices.ContainsFunc(runtimeResults, guidedRestart)
+	byName := make(map[string]doctor.Result, len(checks))
+	for _, r := range append(runtimeResults, doctor.Run(ctx, sys, opts, remaining)...) {
+		byName[r.Name] = r
+	}
+	results := make([]doctor.Result, len(checks))
+	for i, check := range checks {
+		results[i] = byName[check.Name]
+	}
 	for i := range results {
 		if results[i].Unavailable {
 			results[i].Status = doctor.Fail
 		}
 	}
 	return results
+}
+
+func guidedRuntimeCheck(name string) bool {
+	return name == "lab cluster" || name == "image cache" || name == "lab registry" || name == "moto"
+}
+
+func guidedRestart(r doctor.Result) bool {
+	return r.Status == doctor.Stopped && guidedRuntimeCheck(r.Name)
+}
+
+// Only the displayed copy changes: restarting nodes does not redeploy cached stacks.
+func guidedPreview(p engine.Plan, results []doctor.Result) engine.Plan {
+	if slices.ContainsFunc(results, func(r doctor.Result) bool {
+		return r.Name == "lab cluster" && r.Status == doctor.Stopped
+	}) {
+		p.Steps = slices.Clone(p.Steps)
+		for i := range p.Steps {
+			if p.Steps[i].Action == engine.Keep {
+				reason := "recorded in state; health unverified until nodes restart"
+				if p.Steps[i].Reason != "applied" {
+					reason += "; " + p.Steps[i].Reason
+				}
+				p.Steps[i].Reason = reason
+			}
+		}
+	}
+	return p
 }
 
 func guidedCommand(name string, in guidedInput, more ...string) string {

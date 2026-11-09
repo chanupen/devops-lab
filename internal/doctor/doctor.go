@@ -129,6 +129,9 @@ type Options struct {
 	Memory  *Memory // reuse the memory preflight without reading it again
 	// RequestedStacks adds host prerequisites without claiming pods are deployed.
 	RequestedStacks []string
+	// DeferClusterHealth skips live API checks during guided stopped-container recovery.
+	// Ordinary doctor reports leave this false.
+	DeferClusterHealth bool
 	// K8sVersion is lab.yaml k8sVersion: the main cluster must run it.
 	K8sVersion string
 	// Stacks are the stacks deployed, from the state file.

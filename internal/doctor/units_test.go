@@ -177,6 +177,7 @@ func TestCheckMoto(t *testing.T) {
 		text   string
 	}{
 		{"not deployed", []string{"core"}, nil, 0, nil, Skip, "not deployed"},
+		{"not deployed but stopped", []string{"core"}, []Unit{{Kind: "aws emulator", Name: "lab-moto"}}, 0, nil, Skip, "not deployed"},
 		{"missing", []string{"secrets"}, nil, 0, nil, Fail, "lab-moto is missing"},
 		{"stopped", []string{"secrets"}, []Unit{{Kind: "aws emulator", Name: "lab-moto"}}, 0, nil, Stopped, "stopped"},
 		{"no answer", []string{"secrets"}, []Unit{moto}, 0, errors.New("connection refused"), Fail, "does not answer"},

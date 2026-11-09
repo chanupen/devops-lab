@@ -164,7 +164,9 @@ func checkK8sSupport(_ context.Context, _ System, opts Options) Result {
 // asks the API (ListSecrets), not Moto's state dump, which still lists
 // deleted secrets.
 func checkMoto(ctx context.Context, sys System, opts Options) Result {
-	if !slices.Contains(opts.Stacks, "secrets") {
+	deployed := slices.Contains(opts.Stacks, "secrets")
+	// Guided callers also observe stopped Moto before its stack is requested.
+	if !deployed && opts.RequestedStacks == nil {
 		return Result{Status: Skip, Detail: "secrets stack not deployed"}
 	}
 	units, r, listed := listUnits(ctx, sys)
@@ -173,10 +175,12 @@ func checkMoto(ctx context.Context, sys System, opts Options) Result {
 	}
 	i := slices.IndexFunc(units, func(u Unit) bool { return u.Kind == "aws emulator" && u.Name == "lab-moto" })
 	switch {
+	case i >= 0 && !units[i].Running:
+		return stopped("lab up (starts lab-moto and re-seeds it)", "stopped")
+	case !deployed:
+		return Result{Status: Skip, Detail: "secrets stack not deployed"}
 	case i < 0:
 		return fail("lab up --stacks secrets", "lab-moto is missing, but the secrets stack is deployed")
-	case !units[i].Running:
-		return stopped("lab up (starts lab-moto and re-seeds it)", "stopped")
 	}
 	if sys.MotoSecrets == nil {
 		return ok("running")
