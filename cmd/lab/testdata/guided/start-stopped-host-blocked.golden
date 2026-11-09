@@ -1,0 +1,39 @@
+✕ inotify            watches=8192 instances=512, need ≥524288/≥512
+                     fix: sysctl fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512 (persist in /etc/sysctl.d)
+○ ollama in cluster  cluster health unverified until stopped lab containers restart
+○ ollama model       cluster health unverified until stopped lab containers restart
+○ langfuse           cluster health unverified until stopped lab containers restart
+○ gitops revision    cluster health unverified until stopped lab containers restart
+● memory             8.0 GiB available of 24.0 GiB, minimal needs ~4 GiB
+○ lab cluster        stopped
+                     fix: podman start lab-control-plane lab-worker lab-worker2 (or lab up)
+○ image cache        stopped
+                     fix: podman start lab-zot (or lab up)
+○ lab registry       stopped; write permission untested (read-only probe)
+                     fix: podman start lab-zot
+○ moto               stopped
+                     fix: lab up (starts lab-moto and re-seeds it)
+
+1 ok, 0 warn, 1 fail, 4 stopped, 4 skipped
+
+Profile: minimal (explicit); 8.0 GiB available; threshold 4 GiB
+Extra stacks: obs; memory estimates are not a hard capacity guarantee
+Restart proposed after confirmation: lab cluster (podman start lab-control-plane lab-worker lab-worker2 (or lab up))
+Restart proposed after confirmation: image cache (podman start lab-zot (or lab up))
+Restart proposed after confirmation: lab registry (podman start lab-zot)
+Restart proposed after confirmation: moto (lab up (starts lab-moto and re-seeds it))
+local mode, minimal + obs profile, Kubernetes 1.36, gitops revision main
+
+  = registry    recorded in state; health unverified until nodes restart
+  = cluster     recorded in state; health unverified until nodes restart
+  = gitops      recorded in state; health unverified until nodes restart
+  = core        recorded in state; health unverified until nodes restart
+  = sample-app  recorded in state; health unverified until nodes restart
+  = obs         recorded in state; health unverified until nodes restart
+  = secrets     recorded in state; health unverified until nodes restart; not in profile; run lab up --prune to remove
+  = ai          recorded in state; health unverified until nodes restart; not in profile; run lab up --prune to remove
+
+0 to apply, 0 to destroy, 8 unchanged
+warning: 2 deployed stacks are not in profile minimal + obs, kept: secrets, ai. Run lab up --prune to remove.
+--- stderr ---
+doctor preflight failed; no changes made

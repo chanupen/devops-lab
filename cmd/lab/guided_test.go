@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,6 +117,258 @@ func fixtureReadyState() state.State {
 		st.Stacks[name] = state.StackState{Status: state.Applied}
 	}
 	return st
+}
+
+func stoppedGuidedFixture(t *testing.T, f *guidedFixture, stopped string, hostFailure bool) *atomic.Int32 {
+	t.Helper()
+	st := fixtureReadyState()
+	st.Stacks["ai"] = state.StackState{Status: state.Applied}
+	st.Stacks["secrets"] = state.StackState{Status: state.Applied}
+	f.save(t, st, false)
+	var apiCalls atomic.Int32
+	f.deps.system = func(string, bool) doctor.System {
+		var observed atomic.Bool
+		units := []doctor.Unit{
+			{Kind: "cluster", Name: "lab", Nodes: 3, Running: true, Version: "v1.36.0", Fix: "podman start lab-control-plane lab-worker lab-worker2"},
+			{Kind: "image cache", Name: "lab-zot", Running: true, Fix: "podman start lab-zot"},
+			{Kind: "aws emulator", Name: "lab-moto", Running: true},
+			{Kind: "cluster", Name: "lab-scratch-example", Running: true},
+		}
+		for i := range units {
+			if stopped == "all" || units[i].Name == stopped {
+				units[i].Running = false
+			}
+		}
+		return doctor.System{
+			Exists: func(string) bool { return false },
+			ReadFile: func(path string) ([]byte, error) {
+				switch path {
+				case "/proc/meminfo":
+					f.memoryReads++
+					return []byte("MemTotal: 25165824 kB\nMemAvailable: 8388608 kB\n"), nil
+				case "/proc/sys/fs/inotify/max_user_watches":
+					if hostFailure {
+						return []byte("8192"), nil
+					}
+					return []byte("524288"), nil
+				case "/proc/sys/fs/inotify/max_user_instances":
+					return []byte("512"), nil
+				default:
+					return nil, fmt.Errorf("unexpected read: %s", path)
+				}
+			},
+			Units: func(context.Context) ([]doctor.Unit, error) {
+				observed.Store(true)
+				if stopped == "unavailable" {
+					return nil, errors.New("fixture podman API unavailable")
+				}
+				return units, nil
+			},
+			LabRegistry: func(context.Context) doctor.RegistryState {
+				return doctor.RegistryState{WriteUntested: true, Stopped: stopped == "all" || stopped == "lab-zot"}
+			},
+			MotoSecrets: func(context.Context) (int, error) { return 2, nil },
+			AI: func(context.Context) (doctor.AIState, error) {
+				if !observed.Load() {
+					t.Error("API health ran before runtime observations")
+				}
+				apiCalls.Add(1)
+				return doctor.AIState{}, errors.New("fixture API server unreachable")
+			},
+			GitOps: func(context.Context) (doctor.GitOpsState, error) {
+				if !observed.Load() {
+					t.Error("API health ran before runtime observations")
+				}
+				apiCalls.Add(1)
+				return doctor.GitOpsState{}, errors.New("fixture API server unreachable")
+			},
+		}
+	}
+	f.deps.checks = func() []doctor.Check {
+		var checks []doctor.Check
+		for _, check := range doctor.Checks() {
+			if guidedRuntimeCheck(check.Name) || slices.Contains([]string{
+				"memory", "inotify", "ollama in cluster", "ollama model", "langfuse", "gitops revision",
+			}, check.Name) {
+				checks = append(checks, check)
+			}
+		}
+		return checks
+	}
+	return &apiCalls
+}
+
+func TestGuidedStoppedRuntime(t *testing.T) {
+	for _, tt := range []struct {
+		name, stopped string
+		hostFailure   bool
+		wantStart     bool
+		deferred      bool
+	}{
+		{"stopped main cluster", "lab", false, true, true},
+		{"stopped cache", "lab-zot", false, true, true},
+		{"stopped moto", "lab-moto", false, true, true},
+		{"stopped moto without deployed secrets", "lab-moto", false, true, true},
+		{"all stopped", "all", false, true, true},
+		{"host failure with stopped cluster", "lab", true, false, true},
+		{"host failure with stopped cache", "lab-zot", true, false, true},
+		{"host failure with stopped moto", "lab-moto", true, false, true},
+		{"running cluster with API failure", "", false, false, false},
+		{"scratch stop is not main recovery", "lab-scratch-example", false, false, false},
+		{"unknown container status", "unavailable", false, false, false},
+	} {
+		for _, command := range []string{"start", "next"} {
+			t.Run(tt.name+"/"+command, func(t *testing.T) {
+				f := newGuidedFixture(t)
+				apiCalls := stoppedGuidedFixture(t, f, tt.stopped, tt.hostFailure)
+				if tt.name == "stopped moto without deployed secrets" {
+					st := fixtureReadyState()
+					st.Stacks["ai"] = state.StackState{Status: state.Applied}
+					f.save(t, st, false)
+				}
+				before, _ := os.ReadFile(f.statePath)
+				info, _ := os.Stat(f.statePath)
+				args := []string{command}
+				if command == "start" {
+					args = append(args, "--dry-run", "--profile", "minimal")
+				} else {
+					args = append(args, "--json")
+				}
+				out, _, err := f.execute(args...)
+				if command == "start" {
+					if (err == nil) != tt.wantStart {
+						t.Fatalf("err=%v:\n%s", err, out)
+					}
+					if tt.deferred && !strings.Contains(out, "cluster health unverified") {
+						t.Fatal(out)
+					}
+					if tt.stopped == "lab" || tt.stopped == "all" {
+						if strings.Contains(out, "  applied") || !strings.Contains(out, "health unverified until nodes restart") {
+							t.Fatal(out)
+						}
+					}
+					if tt.wantStart && !strings.Contains(out, "Restart proposed after confirmation:") {
+						t.Fatal(out)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					var step nextStep
+					if err := json.Unmarshal([]byte(out), &step); err != nil {
+						t.Fatal(err)
+					}
+					if (step.Kind == "start") != tt.wantStart {
+						t.Fatalf("step: %+v", step)
+					}
+					if tt.wantStart && !strings.HasPrefix(step.Command, "lab start --profile minimal ") {
+						t.Fatal(step.Command)
+					}
+					if tt.hostFailure && !strings.Contains(step.Reason, "inotify") {
+						t.Fatal(step.Reason)
+					}
+				}
+				if (apiCalls.Load() == 0) != tt.deferred {
+					t.Fatalf("API calls=%d, deferred=%v", apiCalls.Load(), tt.deferred)
+				}
+				after, _ := os.ReadFile(f.statePath)
+				afterInfo, _ := os.Stat(f.statePath)
+				if !bytes.Equal(before, after) || !info.ModTime().Equal(afterInfo.ModTime()) {
+					t.Fatal("state changed")
+				}
+				if len(f.prov.calls) != 0 || len(f.prefetch.stacks) != 0 {
+					t.Fatal("read-only command mutated containers or fetched charts")
+				}
+				if _, err := os.Stat(f.statePath + ".lab.lock"); !os.IsNotExist(err) {
+					t.Fatal("read-only command acquired the lab lock")
+				}
+			})
+		}
+	}
+}
+
+func TestGuidedStoppedRequestedGPU(t *testing.T) {
+	for _, requested := range []bool{false, true} {
+		for _, command := range []string{"start", "next"} {
+			t.Run(fmt.Sprintf("requested=%v/%s", requested, command), func(t *testing.T) {
+				f := newGuidedFixture(t)
+				stoppedGuidedFixture(t, f, "lab", false)
+				f.save(t, fixtureReadyState(), false)
+				if requested {
+					if err := os.WriteFile(f.cfgPath, []byte("profile: minimal\nextraStacks: [obs, ai]\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				checks := f.deps.checks
+				f.deps.checks = func() []doctor.Check {
+					out := checks()
+					for _, check := range doctor.Checks() {
+						if check.Name == "nvidia driver" {
+							out = append(out, check)
+						}
+					}
+					return out
+				}
+				args := []string{command}
+				if command == "start" {
+					args = append(args, "--dry-run", "--profile", "minimal")
+				} else {
+					args = append(args, "--json")
+				}
+				out, _, err := f.execute(args...)
+				if command == "start" {
+					if (err != nil) != requested {
+						t.Fatalf("err=%v:\n%s", err, out)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					var step nextStep
+					if err := json.Unmarshal([]byte(out), &step); err != nil {
+						t.Fatal(err)
+					}
+					if (step.Kind == "doctor") != requested {
+						t.Fatalf("step: %+v", step)
+					}
+					if requested && !strings.Contains(step.Reason, "nvidia driver") {
+						t.Fatal(step.Reason)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestStartStoppedRuntimeConsent(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(fmt.Sprint(accepted), func(t *testing.T) {
+			f := newGuidedFixture(t)
+			stoppedGuidedFixture(t, f, "all", false)
+			f.prov.stopped = []string{"lab-control-plane", "lab-worker", "lab-worker2", "lab-zot", "lab-moto"}
+			f.deps.confirm = func(*cobra.Command, bool, string) error {
+				if len(f.prov.calls) != 0 {
+					t.Fatal("containers restarted before consent")
+				}
+				if !accepted {
+					return errors.New("fixture declined")
+				}
+				return nil
+			}
+			out, _, err := f.execute("start", "--profile", "minimal")
+			if accepted {
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"start lab-control-plane", "start lab-worker", "start lab-worker2", "start lab-zot", "start lab-moto"}
+				if !slices.Equal(f.prov.calls, want) || !strings.Contains(out, "Next steps:") {
+					t.Fatalf("calls=%v:\n%s", f.prov.calls, out)
+				}
+			} else if err == nil || len(f.prov.calls) != 0 {
+				t.Fatalf("err=%v, calls=%v", err, f.prov.calls)
+			}
+		})
+	}
 }
 
 func TestStartReadOnlyAndRefusal(t *testing.T) {
@@ -585,9 +838,16 @@ func TestGuidedGoldens(t *testing.T) {
 		{"next-json", []string{"next", "--json"}, ""},
 		{"next-allowed-warning", []string{"next"}, "allowed: tested range"},
 		{"next-actionable-warning", []string{"next"}, "update the component"},
+		{"start-stopped", []string{"start", "--dry-run", "--profile", "minimal"}, ""},
+		{"start-stopped-host-blocked", []string{"start", "--dry-run", "--profile", "minimal"}, ""},
+		{"next-stopped", []string{"next"}, ""},
+		{"next-stopped-host-blocked", []string{"next"}, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGuidedFixture(t)
+			if strings.Contains(tt.name, "stopped") {
+				stoppedGuidedFixture(t, f, "all", strings.Contains(tt.name, "host-blocked"))
+			}
 			if tt.warningFix != "" {
 				f.save(t, fixtureReadyState(), false)
 				f.deps.catalog = func(string) ([]labs.Lab, []drills.Drill, error) {

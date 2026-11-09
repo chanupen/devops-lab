@@ -186,8 +186,17 @@ lab start --profile minimal --dry-run
 
 **What you will see:** doctor results, available RAM, the selected profile,
 extra stacks and the dependency-ordered plan. The final line says no apply,
-restart, chart download or state write occurred. Failed checks block startup.
+restart, chart download or state write occurred. Failed readiness checks block startup.
 The registry check says `write permission untested`; it only observes.
+
+After a reboot, stopped main nodes, Zot or Moto produce proposed restart lines.
+API-dependent AI/GitOps health is labelled unverified until restart, not a
+startup blocker. With nodes down, kept stacks show recorded state rather than
+claiming they are applied and healthy. Host failures such as low inotify limits
+still block; requested AI still needs GPU readiness. `lab next` suggests
+`lab start --profile <configured>` for stopped containers unless a host failure
+or active exercise needs attention first. Ordinary doctor still reports health
+failures while the API server is unreachable.
 
 Without `--profile`, start picks the largest profile that fits available RAM:
 4 GiB for minimal, 12 GiB for standard, 19 GiB for full. Swap does not count.

@@ -77,6 +77,10 @@ preflight selects the profile; remaining checks then run for that selection.
 Separate requested-stack host prerequisites from deployed-stack health checks:
 a requested AI stack needs GPU readiness, but cannot need healthy AI pods
 before its first deployment. Keep existing doctor defaults compatible.
+Observe main nodes, image cache/registry and Moto before collecting live health.
+When any is stopped, defer API-dependent AI and GitOps checks with an explicit
+unverified label. Host prerequisites still block, including requested AI's GPU
+checks. Ordinary doctor continues to report deployed-stack health failures.
 Do not run the same expensive probe twice just to choose a profile.
 
 The existing local registry doctor probe is not strictly read-only:
@@ -128,6 +132,10 @@ Unavailable live checks are labelled, not reported as passing. After consent,
 nodes/cache may have restarted before a later gate or download fails; report
 that fact. Do not roll back pre-existing containers or hide partial failures.
 Already-deployed stacks outside the selected profile stay deployed, as with up.
+If the main nodes are stopped, label kept stacks as recorded state with health
+unverified until restart, not as applied. This display-only annotation does not
+change execution actions or weaken the post-restart consent comparison. List
+each proposed nodes/cache/Moto restart before confirmation, including in dry-run.
 
 ### Fixture output
 
@@ -215,9 +223,9 @@ Recommendations are deterministic. Choose one row, in this priority order:
 | --- | --- | --- |
 | Interrupted/restoring/expired drill, including e2e state | Explicit recovery with `lab drills abort` and the correct state path | Changes the lab |
 | Running drill | Inspect symptoms/timers with `lab drills status`; hide a random drill's identity | May record drill observations |
-| Failed doctor check | Inspect its instructions with `lab doctor --read-only --profile <configured>` | Read-only |
+| Failed host/readiness check (API-dependent health is deferred while runtime containers are stopped) | Inspect its instructions with `lab doctor --read-only --profile <configured>` | Read-only |
 | Active lab, including a completed one awaiting cleanup | `lab labs status` | Read-only; shows the existing cleanup guidance |
-| Stopped main nodes/cache or registry | `lab start --profile <configured>` | Changes the lab after confirmation |
+| Stopped main nodes/cache, registry or Moto | `lab start --profile <configured>` | Changes the lab after confirmation |
 | Empty state or engine plan needs apply/retry | `lab start --profile <configured>` | Changes the lab after confirmation |
 | Remaining actionable doctor warning | Inspect it with `lab doctor --read-only --profile <configured>` | Read-only |
 | Ready lab, eligible incomplete exercise | Start the lowest-numbered eligible lab; after those, an eligible random drill | Changes the lab; never injects automatically |
@@ -228,6 +236,9 @@ Eligibility uses catalog modes, prerequisites and tool availability. Missing
 prerequisites lead to a review/list suggestion, not automatic stack installation.
 A failed probe never counts as ready. Within doctor failures/warnings, use the
 existing check order. Do not recommend unsupported stacks or disclose solutions.
+Stopped runtime recovery takes priority over deferred API health, but never
+over real host failures or explicit active-exercise handling. A stopped scratch
+cluster does not defer main-cluster health or trigger main-runtime recovery.
 Warnings with a fix marker of `allowed` or `accepted`, alone or before a colon
 and explanation, do not trigger this row. Matching ignores case and surrounding
 whitespace. Doctor still displays them; failures are never exempted.

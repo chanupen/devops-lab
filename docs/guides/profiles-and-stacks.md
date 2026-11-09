@@ -51,6 +51,11 @@ lab start --profile minimal --dry-run
 4 GiB available, this refuses. Guided start deliberately blocks low available
 RAM where ordinary doctor would warn. `--yes` cannot bypass this gate.
 
+Stopped main nodes, image cache or Moto are restart proposals, not failed host
+prerequisites. API-dependent AI/GitOps health is deferred until restart. Kept
+stacks on stopped nodes are labelled recorded state with unverified health.
+Real host failures still block, including GPU checks when AI is requested.
+
 > **Changes the lab:** removing `--dry-run` permits apply after confirmation.
 > The selected profile is temporary; later plain up still uses `lab.yaml`.
 > Start is local Linux only. Full requests GPU/Ollama readiness, not healthy
