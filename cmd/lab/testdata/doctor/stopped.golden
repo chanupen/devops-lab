@@ -1,0 +1,11 @@
+Fix commands (PRINT ONLY; nothing below was executed):
+Registry write permission untested (read-only probe).
+STOPPED lab cluster: stopped
+  changes-lab; approval required
+  Restart the configured local lab after confirmation.
+  lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json
+SKIP ollama in cluster: cluster health unverified until stopped lab containers restart
+SKIP ollama model: cluster health unverified until stopped lab containers restart
+SKIP langfuse: cluster health unverified until stopped lab containers restart
+SKIP gitops revision: cluster health unverified until stopped lab containers restart
+--- stderr ---

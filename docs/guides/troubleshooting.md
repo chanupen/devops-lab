@@ -26,6 +26,31 @@ selected lab's mirror file. It does not test upload permission. Ordinary
 doctor retains its temporary upload-and-cancel probe.
 
 ```sh
+lab doctor --fix --profile minimal
+lab doctor --fix --json --config ./lab.yaml --state ~/.lab/state.json
+```
+
+**What you will see:** print-only commands for failed/actionable warned checks,
+in check order. Nothing is executed, including sudo. Commands needing privilege
+say `sudo required`; host/lab changes also say `approval required`.
+When no safe repair is known, `manual action required` explains the prerequisite
+and provides an exact read-only inspection, not a claimed repair. Review each
+command and obtain approval before running it yourself.
+
+Fix reports use the observational registry probe: upload permission remains
+untested. They write no state, migration, lock or role-cache file. Accepted/
+allowed warnings remain in JSON results but produce no remediation command.
+Stopped main nodes, Zot or Moto show `lab start` restart guidance; API-dependent
+AI/GitOps health is deferred and labelled unverified. Real host failures still
+block. Scratch-cluster stops retain their separate exercise guidance.
+
+JSON keeps `profile`, `ok` and `results`, and adds `remediations` with the exact
+command, check/status/detail, `requiresSudo`, `effect`, `explanation`, `manual`
+and `requiresApproval`. No text banner precedes it. Exit codes retain doctor
+policy: 0 without failed checks (warnings/stops included), 1 for a failed check
+or input/output error, 2 for an unsupported host. Re-run doctor after repairs.
+
+```sh
 lab next
 ```
 
@@ -36,7 +61,7 @@ its identity stays hidden if it is random. No suggested command is executed.
 Warnings marked `fix: allowed` or `fix: accepted` remain visible in doctor
 but do not divert next from an eligible exercise. This includes Kyverno's
 accepted Kubernetes 1.36 tested-range warning. Actionable warnings and failures
-still suggest doctor.
+still suggest print-only `lab doctor --fix`, preserving selected paths/profile.
 
 Start rejects an active lab/drill, a busy lock, insufficient available RAM
 or changed consent. Finish the exercise explicitly, quit the acting TUI,

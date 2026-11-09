@@ -198,6 +198,19 @@ still block; requested AI still needs GPU readiness. `lab next` suggests
 or active exercise needs attention first. Ordinary doctor still reports health
 failures while the API server is unreachable.
 
+For copyable repair guidance without executing anything:
+
+```sh
+lab doctor --fix --profile minimal
+```
+
+**What you will see:** print-only commands with sudo/approval labels, or an
+explicit manual prerequisite and read-only inspection. Accepted/allowed
+warnings do not produce fixes. The registry write probe is not run. Stopped
+main-runtime components show `lab start` guidance, not API health errors.
+`--fix --json` adds structured remediations to the ordinary report. Review
+and approve any host/lab changes before running a printed command yourself.
+
 Without `--profile`, start picks the largest profile that fits available RAM:
 4 GiB for minimal, 12 GiB for standard, 19 GiB for full. Swap does not count.
 An explicit profile still needs that much available RAM. Selection is temporary;

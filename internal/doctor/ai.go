@@ -72,7 +72,8 @@ func checkOllamaModel(st AIState) Result {
 		return Result{Status: Skip, Detail: "Ollama does not answer from the cluster"}
 	}
 	if !slices.Contains(st.Models, AIModel) {
-		return fail("podman exec ollama ollama pull "+AIModel, "%s is not pulled (have: %s)", AIModel, orNone(st.Models))
+		return withRemediation(fail("podman exec ollama ollama pull "+AIModel, "%s is not pulled (have: %s)", AIModel, orNone(st.Models)),
+			repair("podman exec ollama ollama pull "+AIModel, "Download the required local model into the existing Ollama container.", "host-change", false))
 	}
 	return ok("%s pulled", AIModel)
 }

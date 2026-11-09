@@ -516,12 +516,15 @@ Checks Podman, cgroup delegation, kernel limits and modules, SELinux, the GPU st
 Ollama, tool versions and free memory. With --mode cloud it checks OpenTofu, that the
 lab AWS profile assumes lab-admin, and that the state bucket and budget exist. Exits
 non-zero if any check fails.
+With --fix, print exact remediation commands and approval/sudo labels only; never
+execute them. Registry upload permission is untested. Supports --json.
 
 Usage:
   lab doctor [flags]
 
 Flags:
       --config string      path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
+      --fix                print fix commands only; never execute them (registry write permission untested)
   -h, --help               help for doctor
       --json               print results as JSON
       --mode string        local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget (default "local")

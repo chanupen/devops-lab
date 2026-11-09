@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -86,7 +85,7 @@ func recommendNext(in guidedInput, deps guidedDeps, p engine.Plan, results []doc
 	}
 	diagnostic := func(r doctor.Result) nextStep {
 		return makeStep("doctor", "Review doctor instructions for "+r.Name+".",
-			guidedCommand("doctor", in, "--read-only", "--profile", in.cfg.Profile), "read-only")
+			guidedCommand("doctor", in, "--fix", "--profile", in.cfg.Profile), "read-only")
 	}
 	for _, r := range results {
 		if r.Status == doctor.Fail {
@@ -108,9 +107,7 @@ func recommendNext(in guidedInput, deps guidedDeps, p engine.Plan, results []doc
 		return start("Bring up the configured local profile.")
 	}
 	for _, r := range results {
-		marker, _, _ := strings.Cut(r.Fix, ":")
-		marker = strings.ToLower(strings.TrimSpace(marker))
-		if r.Status == doctor.Warn && marker != "allowed" && marker != "accepted" {
+		if r.Status == doctor.Warn && !doctor.AcceptedWarning(r) {
 			return diagnostic(r)
 		}
 	}

@@ -7,7 +7,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 )
+
+func TestObservationalSessionCache(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing", true: "existing"}[existing], func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "cache")
+			s := Session{CacheDir: dir, ReadOnly: true}
+			role := Role{ARN: "arn:aws:iam::111111111111:role/lab-admin"}
+			if existing {
+				if err := os.Mkdir(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(s.cachePath(role), []byte("unchanged fixture"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.writeCache(role, aws.Credentials{AccessKeyID: "FAKE", CanExpire: true, Expires: time.Now().Add(time.Hour)})
+			if !existing {
+				if _, err := os.Stat(dir); !os.IsNotExist(err) {
+					t.Fatalf("created cache directory: %v", err)
+				}
+			} else if b, err := os.ReadFile(s.cachePath(role)); err != nil || string(b) != "unchanged fixture" {
+				t.Fatalf("cache changed: %q, %v", b, err)
+			}
+		})
+	}
+}
 
 // TestBrokenProfileChain reproduces the 2026-11-05 failure: [profile
 // devops] gained source_profile = devops, so the SDK rejects the lab

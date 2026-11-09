@@ -156,24 +156,7 @@ func collectGuided(ctx context.Context, in guidedInput, deps guidedDeps, mem doc
 			return r
 		}
 	}
-	var runtimeChecks, remaining []doctor.Check
-	for _, check := range checks {
-		if guidedRuntimeCheck(check.Name) {
-			runtimeChecks = append(runtimeChecks, check)
-		} else {
-			remaining = append(remaining, check)
-		}
-	}
-	runtimeResults := doctor.Run(ctx, sys, opts, runtimeChecks)
-	opts.DeferClusterHealth = slices.ContainsFunc(runtimeResults, guidedRestart)
-	byName := make(map[string]doctor.Result, len(checks))
-	for _, r := range append(runtimeResults, doctor.Run(ctx, sys, opts, remaining)...) {
-		byName[r.Name] = r
-	}
-	results := make([]doctor.Result, len(checks))
-	for i, check := range checks {
-		results[i] = byName[check.Name]
-	}
+	results := doctor.RunObserved(ctx, sys, opts, checks)
 	for i := range results {
 		if results[i].Unavailable {
 			results[i].Status = doctor.Fail
@@ -183,11 +166,11 @@ func collectGuided(ctx context.Context, in guidedInput, deps guidedDeps, mem doc
 }
 
 func guidedRuntimeCheck(name string) bool {
-	return name == "lab cluster" || name == "image cache" || name == "lab registry" || name == "moto"
+	return doctor.RuntimeCheck(name)
 }
 
 func guidedRestart(r doctor.Result) bool {
-	return r.Status == doctor.Stopped && guidedRuntimeCheck(r.Name)
+	return doctor.RestartNeeded(r)
 }
 
 // Only the displayed copy changes: restarting nodes does not redeploy cached stacks.
@@ -232,10 +215,7 @@ func guidedCommand(name string, in guidedInput, more ...string) string {
 }
 
 func shellArg(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\r\n'\"\\$`;&|()<>*?![]{}~") {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+	return doctor.ShellArg(s)
 }
 
 func eligibleGuidedLab(l labs.Lab, in guidedInput, deps guidedDeps) bool {

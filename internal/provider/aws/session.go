@@ -75,6 +75,7 @@ type Session struct {
 	CacheDir string                                 // the AWS CLI cache, ~/.aws/cli/cache
 	Prompt   func(mfaSerial string) (string, error) // nil: never prompt
 	Now      func() time.Time
+	ReadOnly bool // observational doctor reports never write the role cache
 	// Role reads the profile's role settings; nil reads ~/.aws/config.
 	Role func(ctx context.Context, profile string) (Role, error)
 
@@ -269,7 +270,7 @@ func (s Session) readCache(r Role) (cachedCreds, bool) {
 // writeCache stores the session in the CLI's format. It is best effort: a
 // failed write only means the next command asks for the MFA code again.
 func (s Session) writeCache(r Role, creds aws.Credentials) {
-	if s.CacheDir == "" {
+	if s.CacheDir == "" || s.ReadOnly {
 		return
 	}
 	if err := os.MkdirAll(s.CacheDir, 0o700); err != nil {

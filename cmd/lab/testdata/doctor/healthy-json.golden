@@ -1,0 +1,13 @@
+{
+  "profile": "minimal",
+  "ok": true,
+  "results": [
+    {
+      "name": "lab registry",
+      "status": "ok",
+      "detail": "registry available on loopback; node mirror file present; write permission untested (read-only probe)"
+    }
+  ],
+  "remediations": []
+}
+--- stderr ---
