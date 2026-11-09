@@ -29,6 +29,8 @@ func TestGolden(t *testing.T) {
 
 	onMain := labState(7)
 	onMain.Revision = "main"
+	onMain.RecordLabCompletion("01-argocd-bootstrap", t0, 18*time.Minute, true)
+	onMain.Progress.Drills = state.FoldDrills([]state.DrillRun{{Drill: "bad-deploy", Started: t0, Recovered: t0.Add(4 * time.Minute), Outcome: state.DrillRecovered}}).Drills
 	failed := labState(3)
 	failed.Stacks["obs"] = state.StackState{Status: state.Failed, UpdatedAt: t0.Add(5 * time.Minute),
 		Error: "helm install loki: context deadline exceeded\nmore detail"}
@@ -80,6 +82,7 @@ func TestGolden(t *testing.T) {
 	drillHistory.Stacks["obs"] = state.StackState{Status: state.Applied}
 	drillHistory.Drills = []state.DrillRun{{Run: "r0", Drill: "bad-deploy", Started: t0.Add(-time.Hour), Acked: t0.Add(-58 * time.Minute),
 		Recovered: t0.Add(-55 * time.Minute), Outcome: state.DrillRecovered}}
+	drillHistory.Progress = state.FoldDrills(drillHistory.Drills)
 
 	tests := []struct {
 		name  string
@@ -102,6 +105,7 @@ func TestGolden(t *testing.T) {
 		{"home_empty", state.New(), cluster{known: true, reason: "no cluster"}, nil, nil},
 		{"home_down", labState(2), cluster{known: true, reason: "not reachable: connection refused"}, nil, nil},
 		{"home_up", onMain, upCluster, nil, nil},
+		{"home_narrow_progress", onMain, upCluster, nil, nil},
 		{"stacks_up", onMain, upCluster, []string{"2", "j", "j", "j"}, nil},
 		{"stacks_failed", failed, degraded, []string{"2", "/", "o", "b", "s", "enter"}, nil},
 		{"stacks_degraded_app", onMain, degraded, []string{"2", "G", "k", "k"}, nil},
@@ -125,6 +129,7 @@ func TestGolden(t *testing.T) {
 			m := newModel(tt.st)
 			m.d.live, m.d.ctx = tt.c, "kind-lab"
 			m.d.cfgPath = "/home/user/devops-lab/lab.yaml"
+			m.d.labs, m.d.drills = lab1, allDrills
 			if strings.Contains(tt.name, "labs") {
 				m.d.labs = lab1
 				m.opts.Now = func() time.Time { return t0 }
@@ -134,7 +139,11 @@ func TestGolden(t *testing.T) {
 				m.opts.Now = func() time.Time { return t0 }
 			}
 			var next tea.Model = m
-			next, _ = next.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+			width, height := 100, 30
+			if tt.name == "home_narrow_progress" {
+				width, height = 80, 24
+			}
+			next, _ = next.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			for _, k := range tt.keys {
 				next, _ = next.Update(key(k))
 			}
@@ -160,8 +169,8 @@ func TestGolden(t *testing.T) {
 				t.Errorf("%s differs (run with -update if the change is intended)\n--- got\n%s\n--- want\n%s",
 					path, got, want)
 			}
-			if lines := strings.Count(got, "\n"); lines != 30 {
-				t.Errorf("%d lines, want 30", lines)
+			if lines := strings.Count(got, "\n"); lines != height {
+				t.Errorf("%d lines, want %d", lines, height)
 			}
 		})
 	}

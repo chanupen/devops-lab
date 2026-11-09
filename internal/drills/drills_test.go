@@ -412,26 +412,48 @@ func TestExpire(t *testing.T) {
 // A restore that leaves an object changed keeps the run active, with the
 // error, so abort can try again; nothing is lost.
 func TestRestoreThatDoesNotStick(t *testing.T) {
-	ctx := context.Background()
-	m, dyn, runner, _ := testSetup(t)
-	if _, err := m.Start(ctx, "dns", false, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	runner.scripts["restore"] = runner.scripts["inject"] // something scales it down again
-	_, err := m.Abort(ctx, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "deployments/coredns: spec differ") {
-		t.Fatalf("abort: %v", err)
-	}
-	st, _ := m.Store.Load()
-	if st.ActiveDrill == nil || st.ActiveDrill.Phase != state.DrillRestoring || st.ActiveDrill.Error == "" {
-		t.Fatalf("active = %+v", st.ActiveDrill)
-	}
-	runner.scripts["restore"] = nil
-	if _, err := m.Abort(ctx, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	if replicas(t, dyn) != 2 {
-		t.Error("not restored")
+	for _, action := range []string{"abort", "verify"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			m, dyn, runner, c := testSetup(t)
+			if _, err := m.Start(ctx, "dns", false, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			c.advance(time.Minute)
+			runner.scripts["restore"] = runner.scripts["inject"] // scales it down again
+			var err error
+			if action == "verify" {
+				if _, err = runner.scripts["solution"](); err != nil {
+					t.Fatal(err)
+				}
+				var res Result
+				res, err = m.Verify(ctx, io.Discard)
+				if !res.Passed {
+					t.Fatal("fixture verify did not pass")
+				}
+			} else {
+				_, err = m.Abort(ctx, io.Discard)
+			}
+			if err == nil || !strings.Contains(err.Error(), "deployments/coredns: spec differ") {
+				t.Fatalf("%s: %v", action, err)
+			}
+			st, _ := m.Store.Load()
+			if st.ActiveDrill == nil || st.ActiveDrill.Phase != state.DrillRestoring || st.ActiveDrill.Error == "" || len(st.ActiveDrill.Snapshot) == 0 {
+				t.Fatalf("active = %+v", st.ActiveDrill)
+			}
+			if len(st.Progress.Drills) != 0 || len(st.Drills) != 0 {
+				t.Fatal("failed restoration counted a run/recovery")
+			}
+			runner.scripts["restore"] = nil
+			if _, err := m.Abort(ctx, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			st, _ = m.Store.Load()
+			b := st.Progress.Drills["dns"]
+			if replicas(t, dyn) != 2 || b.Runs != 1 || b.Recovered != 0 || b.BestRecovery != nil {
+				t.Fatalf("abort after failed restore: %+v", b)
+			}
+		})
 	}
 }
 

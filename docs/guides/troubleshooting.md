@@ -49,6 +49,25 @@ held lock or erase state to bypass a refusal.
 > up is still billed; collect brief evidence and run the approved cleanup
 > sequence immediately, not an open-ended debugging session.
 
+## State and progress migration
+
+State version 2 adds durable lab/drill summaries, separate from current steps
+and the bounded drill history. Reading version 1 migrates in memory only;
+lists, next and cached TUI views never save an upgrade. The next successful
+existing state mutation writes version 2 atomically with private permissions.
+Local and cloud files stay separate; migration never contacts AWS.
+
+Migration seeds one lab completion per retained legacy `Completed` timestamp,
+with unknown best time. Legacy in-progress timing stays unknown until a fresh
+attempt/reset; missing uptime or an unrecorded restart cannot earn a best.
+Retained non-test drill runs seed counts and bests. Earlier trimmed/reset runs
+or deleted scratch progress cannot be reconstructed. Future totals are durable.
+
+Corrupt, unversioned and future-version files are refused without replacement.
+Keep the original file and inspect the error with a compatible binary; never
+erase state to bypass a failure. Older binaries reject version 2. Do not edit
+the version number back or discard progress/recovery fields to downgrade.
+
 ## Host and tool checks
 
 | Symptom/check | Likely cause | Fix and what you will see |

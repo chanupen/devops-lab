@@ -516,31 +516,20 @@ func (m *Manager) restore(ctx context.Context, d Drill, r *state.DrillRun, outco
 }
 
 // Best is a drill's best times over its recovered runs.
-type Best struct {
-	Runs, Recovered      int
-	Alert, Detect, Fixed time.Duration // zero: none yet
-}
+type Best = state.DrillBest
 
 // BestTimes are the best times per drill from the history.
 func BestTimes(history []state.DrillRun) map[string]Best {
-	out := map[string]Best{}
-	better := func(cur *time.Duration, d time.Duration) {
-		if d > 0 && (*cur == 0 || d < *cur) {
-			*cur = d
-		}
+	return state.FoldDrills(history).DrillBests()
+}
+
+// CatalogIDs uses the catalog already selected by the provider boundary.
+func CatalogIDs(all []Drill) []string {
+	ids := make([]string, 0, len(all))
+	for _, d := range all {
+		ids = append(ids, d.ID)
 	}
-	for _, r := range history {
-		b := out[r.Drill]
-		b.Runs++
-		if r.Outcome == state.DrillRecovered {
-			b.Recovered++
-			better(&b.Alert, r.TimeTo(r.AlertFired))
-			better(&b.Detect, r.TimeTo(r.Acked))
-			better(&b.Fixed, r.TimeTo(r.Recovered))
-		}
-		out[r.Drill] = b
-	}
-	return out
+	return ids
 }
 
 func logf(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format+"\n", a...) }

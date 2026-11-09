@@ -64,9 +64,9 @@ Implementation uses small reviewed PRs; none is merged by the agent.
 
 | PR | Scope | Status |
 | --- | --- | --- |
-| B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Approved and merged (#53); state remains version 1 |
-| B1.1 | Ignore accepted doctor warnings in next; regression fixtures, goldens and docs | Draft for review |
-| B2 | Durable lab/drill completion, best times, migration and cached Home summary | Deferred until B1.1 is merged |
+| B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Approved and merged (#53); no schema change in B1 |
+| B1.1 | Ignore accepted doctor warnings in next; regression fixtures, goldens and docs | Approved and merged (#54) |
+| B2 | Durable lab/drill completion, best times, in-memory version-1 to 2 migration, list aliases and cached Home summary | Draft for review; fixture-only validation |
 | B3 | Print-only `doctor --fix`, exact commands and sudo labels | Deferred until B1 is merged and owner authorises it; not implemented |
 
 ## To rebuild from nothing

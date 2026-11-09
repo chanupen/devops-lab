@@ -5,11 +5,11 @@
                                                       │  ● Oct 31 02:31  lab up  core apply  41s    
   mode       local (minimal + obs profile)            │  ● Oct 31 02:30  lab up  core apply  41s    
   config     /home/user/devops-lab/lab.yaml           │  ● Oct 31 02:29  lab up  core apply  41s    
-  revision   main                                     │  ● Oct 31 02:28  lab up  core apply  41s    
-  nodes      ● 3/3 Ready                              │  ● Oct 31 02:27  lab up  core apply  41s    
-  apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed │                                             
-  stacks     ● 4 healthy  ◐ 1 progressing  ✕ 1 failed │ App URLs                                    
-                                                      │  https://grafana.localtest.me:8443          
+  progress   labs 1/5 complete | drills 1/7 recovered │  ● Oct 31 02:28  lab up  core apply  41s    
+  revision   main                                     │  ● Oct 31 02:27  lab up  core apply  41s    
+  nodes      ● 3/3 Ready                              │                                             
+  apps       ● 3/5 ready  ◐ 1 progressing  ✕ 1 failed │ App URLs                                    
+  stacks     ● 4 healthy  ◐ 1 progressing  ✕ 1 failed │  https://grafana.localtest.me:8443          
                                                       │  https://podinfo.localtest.me:8443          
                                                       │  on the Mac: ssh -N fedora-lab              
                                                       │                                             

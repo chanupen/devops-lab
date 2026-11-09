@@ -574,12 +574,14 @@ lab drills --help
 **What you will see:** the help below. No operation is executed.
 
 ```text
+Without a subcommand, lists readiness and durable progress; --help shows commands.
 Drills live in drills/ next to lab.yaml and run on the main lab (local mode). Each injects
 one fault into the sample app and times how long you take to find it (lab drills ack) and
 to fix it (lab drills verify). lab saves what the fault changes before it goes in, and puts
 it back when the drill ends, when you abort, at the time limit, or on the next lab up.
 
 Usage:
+  lab drills [flags]
   lab drills [command]
 
 Available Commands:
@@ -593,7 +595,9 @@ Available Commands:
   verify      Check the fix; a pass stops the recover timer and puts the lab back
 
 Flags:
-  -h, --help   help for drills
+      --config string   path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
+  -h, --help            help for drills
+      --state string    path to the state file (default ~/.lab/state.json)
 
 Use "lab drills [command] --help" for more information about a command.
 ```
@@ -678,7 +682,7 @@ lab drills history --help
 
 ```text
 Lists every finished run with its times and acks, then the best times per drill.
---reset deletes the history (of one drill with an ID) after a prompt.
+--reset deletes history and durable drill summaries (one drill with an ID) after a prompt.
 
 Usage:
   lab drills history [--reset [<id>]] [flags]
@@ -839,12 +843,12 @@ lab labs --help
 **What you will see:** the help below. No operation is executed.
 
 ```text
-Labs live in labs/ next to lab.yaml. A scratch lab gets its own single-node kind cluster,
-lab-scratch-<id>, which lab labs stop deletes with the lab's progress; the main lab is not
-touched. Progress is kept in ~/.lab/state.json. With --mode cloud, labs run on the EKS
-cluster and their progress is in ~/.lab/cloud/state.json.
+Without a subcommand, lists current and durable progress; --help shows commands.
+Labs live in labs/ next to lab.yaml. Scratch stop deletes its cluster and current steps,
+not lifetime completions/bests. Progress lives in ~/.lab/state.json (cloud: ~/.lab/cloud/state.json).
 
 Usage:
+  lab labs [flags]
   lab labs [command]
 
 Available Commands:
@@ -859,7 +863,10 @@ Available Commands:
   verify      Check a step (default: the current one); passing it moves you on
 
 Flags:
-  -h, --help   help for labs
+      --config string   path to lab.yaml (default ./lab.yaml, then ~/.lab/lab.yaml)
+  -h, --help            help for labs
+      --mode string     local or cloud (default: mode in lab.yaml); each mode keeps its own state
+      --state string    path to the state file (default ~/.lab/state.json)
 
 Use "lab labs [command] --help" for more information about a command.
 ```

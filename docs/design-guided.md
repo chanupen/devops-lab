@@ -1,8 +1,7 @@
 # Guided first run and daily use
 
 **Status:** design approved and merged in #52. B1 implemented sections 1 and 2 (#53).
-B1.1 fixes accepted-warning recommendations. Sections 3 and 4 remain future
-work; B2 starts only after B1.1 merges.
+B1.1 is merged (#54). B2 implements section 3; section 4 remains future work.
 Start/next examples below are fixture output, not live-run evidence.
 
 [Engineering reference](design.md) · [Documentation rules](contributing-docs.md)
@@ -239,8 +238,8 @@ re-checks and confirmations remain the responsibility of the printed command.
 Render exact supported commands, quote selected paths, and never add `--yes`.
 Before fix support lands, do not suggest a nonexistent `doctor --fix` flag.
 
-Until the B2 ledger exists, B1 reads version-1 session completion and bounded
-drill history only. Reset/scratch cleanup can make a lab eligible again.
+Next now uses the B2 ledger, so scratch cleanup does not lose completion.
+Imported totals cover retained version-1 evidence, not already-lost history.
 The existing `--random` selector can replay a completed eligible drill; next
 does not add a new selector or expose its choice.
 
@@ -269,8 +268,7 @@ $ lab next --json
 ```
 
 **What you will see:** one JSON object, with no banners or probe output on stdout.
-JSON schema version 1 is independent of the state schema. B1 retains state
-version 1; version 2 is planned in B2.
+JSON schema version 1 is independent of state schema version 2.
 Use effect values `read-only`, `writes-state`, `changes-lab` and `host-change`.
 
 Exit 0 means a valid suggestion, even if doctor found a blocking failure.
@@ -302,7 +300,7 @@ Current session progress and historical completion are different concepts.
 | --- | --- |
 | Lab summary | Completion count, last completion UTC timestamp, optional best active-attempt duration |
 | Drill summary | Ended-run count, recovered count, last completion UTC timestamp, optional best alert/detect/recovery durations |
-| Lab attempt timing | Elapsed active time and a known/unknown marker; reuse existing session and scratch uptime accounting |
+| Lab attempt timing | Elapsed active time, last-fold offset, attempt/reset origin and a known/unknown marker; reuse existing session and scratch uptime accounting |
 
 Persist durations as explicitly named nanosecond integer fields; timestamps use
 RFC 3339. Missing best duration means unknown, not a zero-second achievement.
@@ -361,13 +359,13 @@ flags without changing explicit list/status semantics.
 Lists distinguish current step/readiness from lifetime completions and bests.
 An off scratch lab can have a completed historical run.
 
-Abbreviated proposed output, with fixture catalogs:
+Abbreviated output, with fixture catalogs:
 
 ```text
 $ lab labs
-Progress: 1/5 eligible local labs completed
-ID                   CURRENT      COMPLETIONS  BEST
-01-argocd-bootstrap   not started  1            18m
+Progress: 1/5 local labs completed
+ID                   CURRENT      COMPLETIONS  BEST ACTIVE
+01-argocd-bootstrap   not started  1            18m0s
 
 $ lab drills
 Progress: 2/7 local drills recovered
@@ -483,7 +481,7 @@ Update their golden fixtures in the same PR.
 | --- | --- | --- |
 | Step A: this design | Only `docs/design-guided.md`; no code or other documentation changes | Open draft, send link, stop for approval |
 | Step B1: guided local use | Sections 1–2 only: start, next, shared doctor input/memory, observational registry/path flags, shared up preparation/apply, focused tests/goldens and docs | Design approved; open draft, stop, do not merge |
-| Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Only after B1.1 merges and owner authorises it; separate draft |
+| Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Authorised after #54 merged; separate draft for review |
 | Step B3: print-only fixes | Section 4: typed remediation, doctor fix text/JSON, exact-command/sudo coverage and next golden updates | Only after B1 merges and owner authorises it; separate draft |
 
 This split follows the owner's post-approval scope. B1 has no progress/schema

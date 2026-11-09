@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/engine"
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -25,6 +27,7 @@ func (homeModel) view(d *data) (left, right string) {
 	} else {
 		row("config", faint.Render(d.cfgPath))
 	}
+	row("progress", d.st.Progress.Counts(labs.CatalogIDs(d.labs, d.mode()), drills.CatalogIDs(d.drills)).String())
 	if len(d.st.Stacks) == 0 {
 		l.WriteString("\n  Nothing is deployed.\n\n  " + warn.Render(emptyHint) + ".\n")
 		return l.String(), homeRight(d)

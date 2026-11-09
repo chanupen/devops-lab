@@ -319,3 +319,8 @@ Record the UTC timeline, cleanup evidence and estimated session cost.
 Cost Explorer can lag a day; record the actual figure when it arrives.
 Baseline charges may remain.
 Do not extend automatically; an approved extension is another billed change.
+
+Exercise summaries stay in `~/.lab/cloud/state.json`, separate from local
+progress. Read-only lists/Home load older state without writing an upgrade.
+See [state migration](../guides/troubleshooting.md#state-and-progress-migration)
+before using a version-2 file with an older binary.

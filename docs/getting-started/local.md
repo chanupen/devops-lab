@@ -335,9 +335,11 @@ not a healthy lab. Bad input/report data exits 1; unsupported host/cloud exits 2
 Effects are `read-only`, `writes-state`, `changes-lab` or `host-change`.
 Review any mutating suggestion before running it.
 
-Completion selection currently uses saved session completion and bounded
-drill history. Scratch cleanup/reset can make a lab eligible again. Durable
-progress is a separate change, not part of these commands yet.
+Completion selection uses durable summaries. Scratch cleanup/reset clears
+current work, not historical completion. `lab labs` and `lab drills` are
+read-only list aliases; their counts and bests agree with the Home progress line.
+See [state migration](../guides/troubleshooting.md#state-and-progress-migration)
+for older files and the limits of imported history.
 
 ```sh
 lab labs list --mode local

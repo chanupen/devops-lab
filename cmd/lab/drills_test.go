@@ -42,7 +42,7 @@ func TestDrillHistory(t *testing.T) {
 		{Drill: "dns", Started: start, Alert: "CoreDNSDown", Outcome: state.DrillAborted},
 	}
 	var b bytes.Buffer
-	if err := writeDrillHistory(&b, runs); err != nil {
+	if err := writeDrillHistory(&b, state.State{Drills: runs, Progress: state.FoldDrills(runs)}); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -91,7 +91,7 @@ func TestDrillHistoryAcksAndReset(t *testing.T) {
 		{Drill: "oom", Outcome: state.DrillAborted, Started: t0},
 	}
 	var b strings.Builder
-	if err := writeDrillHistory(&b, runs); err != nil {
+	if err := writeDrillHistory(&b, state.State{Drills: runs, Progress: state.FoldDrills(runs)}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "✕ netpol, ● coredns-down") {

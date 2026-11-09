@@ -5,12 +5,12 @@
                                                        │  ● Oct 31 02:26  lab up  core apply  41s   
   mode       local (minimal + obs profile)             │  ● Oct 31 02:25  lab up  core apply  41s   
   config     /home/user/devops-lab/lab.yaml            │                                            
-  revision   feat/x (not main)                         │ App URLs                                   
-  cluster    ○ off (not reachable: connection refused) │  shown once the cluster is up              
+  progress   labs 0/5 complete | drills 0/7 recovered  │ App URLs                                   
+  revision   feat/x (not main)                         │  shown once the cluster is up              
+  cluster    ○ off (not reachable: connection refused) │                                            
   stacks     ○ off — cluster not running               │                                            
                                                        │                                            
   press U to bring the lab up.                         │                                            
-                                                       │                                            
                                                        │                                            
                                                        │                                            
                                                        │                                            

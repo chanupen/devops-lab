@@ -480,7 +480,7 @@ func (dm drillsModel) drillText(d *data, x drills.Drill, w int) string {
 	if x.Alert.Name != "" {
 		fmt.Fprintf(&b, " alert: %s\n", x.Alert.Name)
 	}
-	best := drills.BestTimes(d.st.Drills)[x.ID]
+	best := d.st.Progress.DrillBests()[x.ID]
 	if best.Runs > 0 {
 		fmt.Fprintf(&b, " %d run(s), %d recovered · best detect %s, recover %s\n", best.Runs, best.Recovered,
 			clockOrDash(best.Detect), clockOrDash(best.Fixed))

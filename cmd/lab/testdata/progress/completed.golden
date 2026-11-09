@@ -1,0 +1,18 @@
+Progress: 1/1 local labs completed
+   ID        TITLE  TIME  LEVEL  NEEDS    MODES  CURRENT            COMPLETIONS  BEST ACTIVE
+○  01-first  First               scratch  local  not started        1            18m0s
+○  02-cloud  Cloud               lab      cloud  not in local mode  0            -
+
+lab labs start <id> starts one (the number is enough: lab labs start 1).
+Progress: 1/1 local drills recovered
+   ID        TITLE     LEVEL  LIMIT  ALERT  RUNS  RECOVERED  BEST DETECT  BEST RECOVER
+○  incident  Incident         30m    -      1     1          1m0s         4m0s
+
+○ needs stacks that are not up: lab up --stacks core
+No drill can start until those stacks are up.
+no retained drill runs; durable summaries follow
+STARTED  DRILL  OUTCOME  ALERT  DETECT  RECOVER  HINTS  ACKS
+
+Best (recovered runs):
+  DRILL     RUNS  RECOVERED  ALERT  DETECT  RECOVER
+  incident  1     1          —      1m0s    4m0s

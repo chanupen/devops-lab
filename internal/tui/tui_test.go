@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +13,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/chanupen/devops-lab/internal/config"
+	"github.com/chanupen/devops-lab/internal/drills"
 	"github.com/chanupen/devops-lab/internal/engine"
 	"github.com/chanupen/devops-lab/internal/gitops"
 	"github.com/chanupen/devops-lab/internal/kube"
+	"github.com/chanupen/devops-lab/internal/labs"
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
@@ -55,7 +58,18 @@ func TestFirstFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(Options{Config: config.Default(), State: st, StatePath: path, Kubeconfig: filepath.Join(filepath.Dir(path), "kubeconfig"),
-		Catalog: engine.Catalog(), Connect: func(string) (*kube.Clients, error) { called = true; return nil, nil }})
+		Catalog: engine.Catalog(),
+		Labs:    []labs.Lab{{ID: "fixture", Modes: []string{"local"}}}, DrillList: []drills.Drill{{ID: "fixture"}},
+		Units: func(context.Context) ([]Unit, error) {
+			called = true
+			time.Sleep(time.Second)
+			return nil, fmt.Errorf("slow failed units")
+		},
+		Connect: func(string) (*kube.Clients, error) {
+			called = true
+			time.Sleep(time.Second)
+			return nil, fmt.Errorf("slow failed connection")
+		}})
 	view := m.View()
 	elapsed := time.Since(start)
 	t.Logf("first frame in %s", elapsed)
@@ -65,7 +79,7 @@ func TestFirstFrame(t *testing.T) {
 	if called {
 		t.Error("the first frame must not touch the cluster")
 	}
-	for _, want := range []string{"mode: local", "rev: feat/x", "1 Home", "2 Stacks", "Last operations", "lab up  core apply  41s"} {
+	for _, want := range []string{"mode: local", "rev: feat/x", "1 Home", "2 Stacks", "Last operations", "lab up  core apply  41s", "progress", "labs 0/1 complete | drills 0/1 recovered"} {
 		if !strings.Contains(ansi.Strip(view), want) {
 			t.Errorf("first frame lacks %q:\n%s", want, ansi.Strip(view))
 		}

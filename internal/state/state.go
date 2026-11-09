@@ -17,7 +17,7 @@ import (
 )
 
 // SchemaVersion is written to every state file. Bump it on incompatible changes.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // MaxOps is how many operations the log keeps; older ones are dropped.
 const MaxOps = 500
@@ -37,8 +37,8 @@ type State struct {
 	Revision string                `json:"revision,omitempty"`
 	Stacks   map[string]StackState `json:"stacks"`
 	Ops      []Op                  `json:"ops"`
-	// ActiveLab is the lab started with lab labs start, if any; Labs is the
-	// progress of every lab ever started, by lab ID.
+	// ActiveLab is the started lab; Labs holds current steps/sessions.
+	// Lifetime completion is separate in Progress.
 	ActiveLab string                 `json:"activeLab,omitempty"`
 	Labs      map[string]LabProgress `json:"labs,omitempty"`
 	// ActiveDrill is the drill whose fault is in the cluster, with what it
@@ -46,6 +46,7 @@ type State struct {
 	// history of finished runs, oldest first.
 	ActiveDrill *DrillRun  `json:"activeDrill,omitempty"`
 	Drills      []DrillRun `json:"drills,omitempty"`
+	Progress    Progress   `json:"progress"`
 }
 
 // MaxDrillRuns is how many finished drill runs the history keeps.
@@ -153,6 +154,7 @@ func (s *State) EndDrill(outcome string, at time.Time) DrillRun {
 	if r.Test {
 		return r
 	}
+	s.Progress.recordDrill(r)
 	s.Drills = append(s.Drills, r)
 	if n := len(s.Drills) - MaxDrillRuns; n > 0 {
 		s.Drills = append([]DrillRun(nil), s.Drills[n:]...)
@@ -171,6 +173,11 @@ func (s *State) ResetDrills(id string) int {
 	}
 	n := len(s.Drills) - len(kept)
 	s.Drills = kept
+	if id == "" {
+		s.Progress.Drills = nil
+	} else {
+		delete(s.Progress.Drills, id)
+	}
 	if len(s.Drills) == 0 {
 		s.Drills = nil
 	}
@@ -188,9 +195,13 @@ type LabProgress struct {
 	Started   time.Time   `json:"started"`
 	// Session is when the current session began (zero while stopped);
 	// Spent is the time of the sessions before it.
-	Session   time.Time     `json:"session,omitzero"`
-	Spent     time.Duration `json:"spent"`
-	Completed time.Time     `json:"completed,omitzero"`
+	Session        time.Time     `json:"session,omitzero"`
+	Spent          time.Duration `json:"spent"`
+	Completed      time.Time     `json:"completed,omitzero"`
+	AttemptElapsed time.Duration `json:"attemptElapsedNs,omitempty"`
+	AttemptOffset  time.Duration `json:"attemptOffsetNs,omitempty"` // TimeSpent at the last fold/reset
+	AttemptKnown   bool          `json:"attemptKnown"`
+	AttemptStarted time.Time     `json:"attemptStarted,omitzero"`
 }
 
 // TimeSpent is the time of every session, the open one up to now.
@@ -222,7 +233,9 @@ type Op struct {
 
 // New returns an empty state.
 func New() State {
-	return State{Version: SchemaVersion, Stacks: map[string]StackState{}}
+	s := State{Version: SchemaVersion, Stacks: map[string]StackState{}}
+	s.Progress.init()
+	return s
 }
 
 // AppendOp adds an op, trims the log to MaxOps and returns the dropped ops.
@@ -314,8 +327,16 @@ func (st *Store) Load() (State, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return State{}, fmt.Errorf("%s: %w", st.path, err)
 	}
-	if s.Version != SchemaVersion {
-		return State{}, fmt.Errorf("%s: schema version %d, this lab reads %d", st.path, s.Version, SchemaVersion)
+	switch s.Version {
+	case 1:
+		s.migrate()
+	case SchemaVersion:
+	default:
+		return State{}, fmt.Errorf("%s: schema version %d, this lab reads 1 or %d", st.path, s.Version, SchemaVersion)
+	}
+	s.Progress.init()
+	if err := s.validateProgress(); err != nil {
+		return State{}, fmt.Errorf("%s: %w", st.path, err)
 	}
 	if s.Stacks == nil {
 		s.Stacks = map[string]StackState{}
@@ -350,6 +371,9 @@ func (st *Store) save(s State) (err error) {
 		return err
 	}
 	s.Version = SchemaVersion
+	if err := s.validateProgress(); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err

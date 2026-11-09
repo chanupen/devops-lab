@@ -69,16 +69,29 @@ func TimeSpent(p state.LabProgress, up *Uptime, now time.Time) time.Duration {
 // With no cluster to ask (Podman unreachable) a scratch lab's open session
 // adds nothing: its cluster cannot be running.
 func (m *Manager) TimeSpent(l Lab, p state.LabProgress) time.Duration {
+	spent, _, _ := m.timeSpent(l, p)
+	return spent
+}
+
+// Availability and continuity differ: reset may start a known new attempt
+// even if a restart lost time from the previous one.
+func (m *Manager) timeSpent(l Lab, p state.LabProgress) (time.Duration, bool, bool) {
 	if l.Needs != NeedsScratch || p.Session.IsZero() {
-		return TimeSpent(p, nil, m.now())
+		return TimeSpent(p, nil, m.now()), true, true
 	}
 	up := &Uptime{}
+	known := false
 	if m.Clusters != nil {
 		if u, err := m.Clusters.Uptime(m.Scratch(l)); err == nil {
 			up = &u
+			known = u.Exists && (u.Running || !u.Stopped.IsZero())
 		}
 	}
-	return TimeSpent(p, up, m.now())
+	from := p.Session
+	if p.AttemptStarted.After(from) {
+		from = p.AttemptStarted
+	}
+	return TimeSpent(p, up, m.now()), known, known && !up.Started.After(from)
 }
 
 // Manager starts, verifies and stops labs, and keeps their progress in
@@ -217,7 +230,7 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 	}
 	// Before the cluster is touched: a node that was stopped (a reboot)
 	// counts only up to when it stopped.
-	spent := m.TimeSpent(l, st.Labs[l.ID])
+	spent, _, timeKnown := m.timeSpent(l, st.Labs[l.ID])
 	switch l.Needs {
 	case NeedsLab:
 		var down []string
@@ -278,7 +291,12 @@ func (m *Manager) Start(ctx context.Context, id string, log io.Writer) (Lab, err
 		p := s.Labs[l.ID]
 		if p.Step == 0 {
 			p.Step, p.Started = 1, now
+			p.AttemptElapsed, p.AttemptOffset, p.AttemptKnown = 0, max(0, spent), true
+			p.AttemptStarted = now
+		} else {
+			p.AttemptKnown = p.AttemptKnown && timeKnown
 		}
+		p.FoldAttempt(spent)
 		// The session so far is folded into Spent; a new one counts from now.
 		p.Spent, p.Session = spent, now
 		s.Labs[l.ID], s.ActiveLab = p, l.ID
@@ -342,12 +360,13 @@ func (m *Manager) Stop(ctx context.Context, log io.Writer) (Lab, state.LabProgre
 	if err != nil {
 		return l, p, err
 	}
-	p.Spent, p.Session = m.TimeSpent(l, p), time.Time{}
-	l, err = m.stop(ctx, l, log)
+	spent, _, known := m.timeSpent(l, p)
+	p.Spent, p.Session = spent, time.Time{}
+	l, err = m.stop(ctx, l, spent, known, log)
 	return l, p, err
 }
 
-func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
+func (m *Manager) stop(ctx context.Context, l Lab, spent time.Duration, known bool, log io.Writer) (Lab, error) {
 	if l.Needs == NeedsScratch && m.Clusters != nil {
 		name := m.Scratch(l)
 		exists, err := m.Clusters.Exists(name)
@@ -374,6 +393,9 @@ func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
 			return nil
 		}
 		p := s.Labs[l.ID]
+		p.AttemptKnown = p.AttemptKnown && known
+		p.FoldAttempt(spent)
+		p.AttemptOffset = 0
 		p.Spent, p.Session = 0, time.Time{}
 		s.Labs[l.ID] = p
 		return nil
@@ -383,7 +405,7 @@ func (m *Manager) stop(ctx context.Context, l Lab, log io.Writer) (Lab, error) {
 // Reset runs the active lab's reset.sh and starts its steps over. Time
 // spent and attempts are kept.
 func (m *Manager) Reset(ctx context.Context, log io.Writer) (Lab, error) {
-	l, _, err := m.active()
+	l, before, err := m.active()
 	if err != nil {
 		return l, err
 	}
@@ -398,9 +420,12 @@ func (m *Manager) Reset(ctx context.Context, log io.Writer) (Lab, error) {
 	if err != nil {
 		return l, fmt.Errorf("reset.sh: %w", err)
 	}
+	spent, known, _ := m.timeSpent(l, before)
 	return l, m.Store.Update(func(s *state.State) error {
 		p := s.Labs[l.ID]
 		p.Step, p.Hints, p.Completed = 1, nil, time.Time{}
+		p.AttemptElapsed, p.AttemptOffset, p.AttemptKnown = 0, max(0, spent), known
+		p.AttemptStarted = m.now()
 		s.Labs[l.ID] = p
 		return nil
 	})
@@ -438,6 +463,8 @@ func (m *Manager) Verify(ctx context.Context, n int) (Lab, Result, error) {
 	}
 	res := verify(ctx, m.Runner, l, n, m.Kubeconfig(l), timeout, env)
 	now := m.now()
+	before := p
+	spent, _, known := m.timeSpent(l, p)
 	return l, res, m.Store.Update(func(s *state.State) error {
 		p := s.Labs[l.ID]
 		if p.Attempts == nil {
@@ -447,7 +474,10 @@ func (m *Manager) Verify(ctx context.Context, n int) (Lab, Result, error) {
 		if res.Passed && n == p.Step {
 			p.Step++
 			if p.Step > len(l.Steps) && p.Completed.IsZero() {
+				p.AttemptKnown = p.AttemptKnown && known && p.Session.Equal(before.Session) && p.Spent == before.Spent
+				p.FoldAttempt(spent)
 				p.Completed = now
+				s.RecordLabCompletion(l.ID, now, p.AttemptElapsed, p.AttemptKnown)
 			}
 		}
 		s.Labs[l.ID] = p
@@ -564,3 +594,14 @@ func LabMark(l Lab, p state.LabProgress) Mark {
 
 // DoneSteps is how many steps of l progress p has done.
 func DoneSteps(l Lab, p state.LabProgress) int { return min(max(p.Step-1, 0), len(l.Steps)) }
+
+// CatalogIDs selects the mode's catalog, independent of current stack readiness.
+func CatalogIDs(all []Lab, mode string) []string {
+	var ids []string
+	for _, l := range all {
+		if slices.Contains(l.Modes, mode) {
+			ids = append(ids, l.ID)
+		}
+	}
+	return ids
+}

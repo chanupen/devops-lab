@@ -24,8 +24,11 @@ Views do not wait for operations. Output retains 5,000 lines, with at most
 
 Local doctor reports use the selected configuration/state paths and
 `--read-only`, so the registry is observed without an upload test. Reports
-still run in background commands. The cached first frame and Home layout
-are unchanged; a durable progress summary comes in a separate PR.
+still run in background commands. Home adds one cached `progress` line with
+unique completed labs and
+recovered drills from the mode's catalogs, even before anything is deployed.
+Unavailable drills show `n/a`. Counts match the read-only `lab labs` and
+`lab drills` views; cleanup does not erase lifetime lab completion.
 
 > **Danger and cost:** action keys really run operations. Local up changes
 > containers; down deletes stack data. A cloud TUI changes billed AWS resources.
@@ -37,7 +40,7 @@ are unchanged; a durable progress summary comes in a separate PR.
 
 | Key | Screen and what you will see | CLI equivalent |
 | --- | --- | --- |
-| `1` | Home: profile, containers, nodes, stack health, routes and active exercise | `lab status`; exercise status commands below |
+| `1` | Home: profile, containers, nodes, stack health, routes, active exercise and lifetime progress | `lab status`, `lab labs`, `lab drills`; exercise status commands below |
 | `2` | Stacks: catalog, saved/live state, dependencies and Argo CD apps | `lab plan`, `lab status`; selection is UI-only |
 | `3` | Labs: six entries, progress and the selected step's task/expected result | `lab labs list`, `lab labs status`; read the exercise README for step text |
 | `4` | Drills: seven entries, alerts, active timers, hints and latest recovery result | `lab drills list`, `lab drills status`, `lab drills history` |

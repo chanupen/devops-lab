@@ -180,15 +180,13 @@ func tuiDrillActions(m *drills.Manager) tui.DrillActions {
 }
 
 func newDrillsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "drills",
-		Short: "Break/fix drills: inject a fault, find it, fix it, against the clock",
-		Long: "Drills live in drills/ next to lab.yaml and run on the main lab (local mode). Each injects\n" +
-			"one fault into the sample app and times how long you take to find it (lab drills ack) and\n" +
-			"to fix it (lab drills verify). lab saves what the fault changes before it goes in, and puts\n" +
-			"it back when the drill ends, when you abort, at the time limit, or on the next lab up.",
-		Args: cobra.NoArgs,
-	}
+	cmd := newDrillsListCmd()
+	cmd.Use, cmd.Short = "drills", "Break/fix drills: inject a fault, find it, fix it, against the clock"
+	cmd.Long = "Without a subcommand, lists readiness and durable progress; --help shows commands.\n" +
+		"Drills live in drills/ next to lab.yaml and run on the main lab (local mode). Each injects\n" +
+		"one fault into the sample app and times how long you take to find it (lab drills ack) and\n" +
+		"to fix it (lab drills verify). lab saves what the fault changes before it goes in, and puts\n" +
+		"it back when the drill ends, when you abort, at the time limit, or on the next lab up."
 	start, verify, abort := newDrillsStartCmd(), newDrillsVerifyCmd(), newDrillsAbortCmd()
 	for _, c := range []*cobra.Command{start, verify, abort} {
 		withLabLock(c)
@@ -220,21 +218,26 @@ func newDrillsListCmd() *cobra.Command {
 }
 
 func writeDrillList(w io.Writer, all []drills.Drill, st state.State) error {
-	best := drills.BestTimes(st.Drills)
+	best := st.Progress.DrillBests()
+	c := st.Progress.Counts(nil, drills.CatalogIDs(all))
+	if _, err := fmt.Fprintf(w, "Progress: %d/%d local drills recovered\n", c.Drills, c.DrillTotal); err != nil {
+		return err
+	}
 	ready := map[string]bool{}
 	for _, d := range drills.Eligible(all, st) {
 		ready[d.ID] = true
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tLEVEL\tLIMIT\tALERT\tRUNS\tBEST DETECT\tBEST RECOVER")
+	_, _ = fmt.Fprintln(tw, "\tID\tTITLE\tLEVEL\tLIMIT\tALERT\tRUNS\tRECOVERED\tBEST DETECT\tBEST RECOVER")
 	for _, d := range all {
 		mark := "●"
 		if !ready[d.ID] {
 			mark = "○"
 		}
 		b := best[d.ID]
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", mark, d.ID, d.Title, d.Level, shortDuration(d.Limit()),
-			orDash(d.Alert.Name), b.Runs, clockOrDash(b.Detect), clockOrDash(b.Fixed))
+		summary := st.Progress.Drills[d.ID]
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", mark, d.ID, d.Title, d.Level, shortDuration(d.Limit()),
+			orDash(d.Alert.Name), b.Runs, b.Recovered, bestDuration(summary.BestDetect), bestDuration(summary.BestRecovery))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -273,6 +276,13 @@ func drillListFooter(all []drills.Drill, st state.State) string {
 
 // clock is a duration as 4m12s.
 func clock(d time.Duration) string { return d.Round(time.Second).String() }
+
+func bestDuration(d *time.Duration) string {
+	if d == nil {
+		return "-"
+	}
+	return clock(*d)
+}
 
 func clockOrDash(d time.Duration) string {
 	if d <= 0 {
@@ -580,7 +590,7 @@ func writeDrillResult(w io.Writer, m *drills.Manager, r state.DrillRun) error {
 	b.WriteString(runTimes(r))
 	st, err := m.Store.Load()
 	if err == nil {
-		if best := drills.BestTimes(st.Drills)[r.Drill]; best.Fixed > 0 {
+		if best := st.Progress.DrillBests()[r.Drill]; best.Fixed > 0 {
 			fmt.Fprintf(&b, "  best: detect %s, recover %s over %d run(s)\n", clockOrDash(best.Detect), clock(best.Fixed), best.Runs)
 		}
 	}
@@ -675,7 +685,7 @@ func newDrillsHistoryCmd() *cobra.Command {
 		Use:   "history [--reset [<id>]]",
 		Short: "List finished drill runs and the best times per drill",
 		Long: "Lists every finished run with its times and acks, then the best times per drill.\n" +
-			"--reset deletes the history (of one drill with an ID) after a prompt.",
+			"--reset deletes history and durable drill summaries (one drill with an ID) after a prompt.",
 		Example: "  lab drills history\n  lab drills history --reset dns",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -712,7 +722,7 @@ func newDrillsHistoryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeDrillHistory(cmd.OutOrStdout(), st.Drills)
+			return writeDrillHistory(cmd.OutOrStdout(), st)
 		},
 	}
 	f.register(cmd)
@@ -738,10 +748,16 @@ func ackColumn(r state.DrillRun) string {
 	return strings.Join(parts, ", ")
 }
 
-func writeDrillHistory(w io.Writer, runs []state.DrillRun) error {
-	if len(runs) == 0 {
+func writeDrillHistory(w io.Writer, st state.State) error {
+	runs := st.Drills
+	if len(runs) == 0 && len(st.Progress.Drills) == 0 {
 		_, err := fmt.Fprintln(w, "no drill has finished yet: lab drills start <id>")
 		return err
+	}
+	if len(runs) == 0 {
+		if _, err := fmt.Fprintln(w, "no retained drill runs; durable summaries follow"); err != nil {
+			return err
+		}
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "STARTED\tDRILL\tOUTCOME\tALERT\tDETECT\tRECOVER\tHINTS\tACKS")
@@ -767,7 +783,7 @@ func writeDrillHistory(w io.Writer, runs []state.DrillRun) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(w, "\nBest (recovered runs):")
-	best := drills.BestTimes(runs)
+	best := st.Progress.DrillBests()
 	tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "  DRILL\tRUNS\tRECOVERED\tALERT\tDETECT\tRECOVER")
 	ids := make([]string, 0, len(best))
