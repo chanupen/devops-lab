@@ -33,7 +33,7 @@ type CloudProbe struct {
 
 // CloudChecks returns the checks for lab doctor --mode cloud.
 func CloudChecks(p CloudProbe) []Check {
-	return []Check{
+	checks := []Check{
 		{"tofu", toolCheck("tofu")},
 		{"aws", toolCheck("aws")},
 		{"lab profile", func(ctx context.Context, _ System, _ Options) Result { return checkLabProfile(ctx, p) }},
@@ -43,6 +43,27 @@ func CloudChecks(p CloudProbe) []Check {
 		{"ttl reaper", func(ctx context.Context, _ System, _ Options) Result { return checkReaper(ctx, p) }},
 		{"teardown build", func(ctx context.Context, _ System, _ Options) Result { return checkTeardownBuild(ctx, p) }},
 	}
+	for i := range checks {
+		var command, explanation string
+		switch checks[i].Name {
+		case "lab profile":
+			command = "aws configure list --profile " + ShellArg(p.Profile)
+			explanation = "Review the role/source/MFA profile configuration manually; never print credentials."
+		case "state bucket":
+			command = "aws s3api list-buckets --profile " + ShellArg(p.Profile)
+			explanation = "Review baseline state bucket readiness; baseline apply is a billed cloud change requiring approval."
+		case "budget":
+			command = "aws sts get-caller-identity --profile " + ShellArg(p.Profile)
+			explanation = "Confirm the account and review its baseline budget; baseline apply requires cloud approval."
+		case "eks version", "ttl reaper", "teardown build":
+			command = "aws sts get-caller-identity --profile " + ShellArg(p.Profile)
+			explanation = "Review the reported cloud safety failure with the operator; do not bypass teardown, TTL or version gates."
+		default:
+			continue
+		}
+		checks[i].Run = inspect(checks[i].Run, inspection(command, explanation))
+	}
+	return checks
 }
 
 func checkTeardownBuild(ctx context.Context, p CloudProbe) Result {

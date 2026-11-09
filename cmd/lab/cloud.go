@@ -319,7 +319,7 @@ func orDefault(v, def string) string {
 
 // cloudProbe resolves the lab profile's session once, before doctor's
 // checks run, asking for the MFA code only when interactive.
-func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) doctor.CloudProbe {
+func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive, readOnly bool) doctor.CloudProbe {
 	p := doctor.CloudProbe{Profile: labaws.DefaultProfile, BucketName: labaws.StateBucket, BudgetName: labaws.BudgetName}
 	pin := ""
 	var active []string
@@ -334,7 +334,7 @@ func cloudProbe(ctx context.Context, cmd *cobra.Command, interactive bool) docto
 		p.SessionErr = err
 		return p
 	}
-	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: cache}
+	s := labaws.Session{Profile: labaws.DefaultProfile, CacheDir: cache, ReadOnly: readOnly}
 	if in, ok := cmd.InOrStdin().(*os.File); interactive && ok && isatty.IsTerminal(in.Fd()) {
 		s.Prompt = terminalMFA(in, cmd.ErrOrStderr())
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -23,10 +22,11 @@ import (
 	"github.com/chanupen/devops-lab/internal/state"
 )
 
-func newDoctorCmd() *cobra.Command {
+func newDoctorCmd(deps guidedDeps) *cobra.Command {
 	var (
 		asJSON   bool
 		readOnly bool
+		fix      bool
 		mode     string
 		opts     doctor.Options
 		flags    labFlags
@@ -37,20 +37,22 @@ func newDoctorCmd() *cobra.Command {
 		Long: "Checks Podman, cgroup delegation, kernel limits and modules, SELinux, the GPU stack,\n" +
 			"Ollama, tool versions and free memory. With --mode cloud it checks OpenTofu, that the\n" +
 			"lab AWS profile assumes lab-admin, and that the state bucket and budget exist. Exits\n" +
-			"non-zero if any check fails.",
+			"non-zero if any check fails.\n" +
+			"With --fix, print exact remediation commands and approval/sudo labels only; never\n" +
+			"execute them. Registry upload permission is untested. Supports --json.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			checks := doctor.Checks()
+			checks := deps.checks()
 			switch mode {
 			case "local":
-				if err := requireLinux(runtime.GOOS, cmd.ErrOrStderr()); err != nil {
+				if err := requireLinux(deps.goos, cmd.ErrOrStderr()); err != nil {
 					return err
 				}
 			case "cloud":
 				if readOnly || flags.cfgPath != "" || flags.statePath != "" {
 					return fmt.Errorf("--read-only, --config and --state apply to local doctor reports only")
 				}
-				checks = doctor.CloudChecks(cloudProbe(cmd.Context(), cmd, !asJSON))
+				checks = doctor.CloudChecks(cloudProbe(cmd.Context(), cmd, !asJSON && !fix, fix))
 			default:
 				return fmt.Errorf("--mode %q: want local or cloud", mode)
 			}
@@ -74,15 +76,49 @@ func newDoctorCmd() *cobra.Command {
 				if err != nil && flags.statePath != "" {
 					return err
 				}
-				sys = localDoctorSystem(filepath.Dir(path), readOnly)
+				sys = deps.system(filepath.Dir(path), readOnly || fix)
 				opts = localDoctorOptions(cfg, st, drillState(path, state.E2EPath(path)), opts)
+				if fix {
+					if err != nil {
+						return err
+					}
+					e2e, err := state.NewStore(state.E2EPath(path)).Load()
+					if err != nil {
+						return err
+					}
+					selected := guidedInput{cfg: cfg, st: st, e2e: e2e, store: state.NewStore(path)}
+					opts.Drill = selected.drillReport(deps.now())
+					opts.StatePath, err = filepath.Abs(path)
+					if err != nil {
+						return err
+					}
+					cfgPath, err := flags.configPath()
+					if err != nil {
+						return err
+					}
+					if cfgPath != "" {
+						opts.ConfigPath, err = filepath.Abs(cfgPath)
+						if err != nil {
+							return err
+						}
+					}
+					opts.Kubeconfig = filepath.Join(filepath.Dir(opts.StatePath), "kubeconfig")
+				}
 			}
-			results := doctor.Run(cmd.Context(), sys, opts, checks)
+			var results []doctor.Result
+			if fix && mode == "local" {
+				results = doctor.RunObserved(cmd.Context(), sys, opts, checks)
+			} else {
+				results = doctor.Run(cmd.Context(), sys, opts, checks)
+			}
 			out := cmd.OutOrStdout()
 			var err error
-			if asJSON {
+			switch {
+			case fix:
+				err = doctor.WriteFixes(out, opts, results, asJSON)
+			case asJSON:
 				err = doctor.WriteJSON(out, opts.Profile, results)
-			} else {
+			default:
 				err = doctor.WriteTable(out, lipgloss.NewRenderer(out), results)
 			}
 			if err != nil {
@@ -95,6 +131,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
+	cmd.Flags().BoolVar(&fix, "fix", false, "print fix commands only; never execute them (registry write permission untested)")
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "observe the local registry without testing upload permission")
 	cmd.Flags().StringVar(&mode, "mode", "local", "local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget")
 	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")

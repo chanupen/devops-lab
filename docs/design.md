@@ -87,7 +87,23 @@ Bare labs/drills are read-only list aliases with mode-catalog totals and
 current versus lifetime columns. Home adds one line from preloaded state and
 catalogs, including empty state and read-only TUI; no probe/write enters View.
 Next uses durable completion even after current scratch progress disappears.
-Legacy totals cover retained evidence only. B3 remains a separate future PR.
+Legacy totals cover retained evidence only.
+
+B3 adds print-only `lab doctor --fix`. Typed remediation metadata supplies
+exact commands, sudo/approval/effect labels and explicit manual prerequisites
+with read-only inspections. Legacy hints are never parsed as shell commands;
+ordinary doctor text/JSON remains unchanged. Accepted/allowed warnings are
+excluded using the same marker policy as next, whose diagnostic suggestions
+now use `--fix`.
+
+Fix reports use observational registry reads and the shared runtime-first
+collector. Stopped main nodes/Zot/Moto produce resolved `lab start` guidance
+instead of unreachable API health errors; real host failures still fail.
+`--json` retains profile/ok/results and adds structured remediations. Local
+config/state/kubeconfig paths are quoted in commands. There is no remediation
+runner, lock or state/migration write. Existing cloud checks provide manual
+inspection commands; fix reports do not prompt for MFA or save role-cache files.
+Validation is fixture-only; no live host, lab or cloud repair is performed.
 
 ## Summary
 

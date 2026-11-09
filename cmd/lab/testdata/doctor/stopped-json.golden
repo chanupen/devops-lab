@@ -1,0 +1,71 @@
+{
+  "profile": "minimal",
+  "ok": true,
+  "results": [
+    {
+      "name": "inotify",
+      "status": "ok",
+      "detail": "watches=524288 instances=512"
+    },
+    {
+      "name": "ollama in cluster",
+      "status": "skip",
+      "detail": "cluster health unverified until stopped lab containers restart"
+    },
+    {
+      "name": "ollama model",
+      "status": "skip",
+      "detail": "cluster health unverified until stopped lab containers restart"
+    },
+    {
+      "name": "langfuse",
+      "status": "skip",
+      "detail": "cluster health unverified until stopped lab containers restart"
+    },
+    {
+      "name": "gitops revision",
+      "status": "skip",
+      "detail": "cluster health unverified until stopped lab containers restart"
+    },
+    {
+      "name": "memory",
+      "status": "ok",
+      "detail": "8.0 GiB available of 24.0 GiB, minimal needs ~4 GiB"
+    },
+    {
+      "name": "lab cluster",
+      "status": "stopped",
+      "detail": "stopped",
+      "fix": "lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json"
+    },
+    {
+      "name": "image cache",
+      "status": "ok",
+      "detail": "running"
+    },
+    {
+      "name": "lab registry",
+      "status": "ok",
+      "detail": "registry available on loopback; node mirror file present; write permission untested (read-only probe)"
+    },
+    {
+      "name": "moto",
+      "status": "ok",
+      "detail": "running on 127.0.0.1:4566, 2 secret(s)"
+    }
+  ],
+  "remediations": [
+    {
+      "check": "lab cluster",
+      "status": "stopped",
+      "detail": "stopped",
+      "command": "lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json",
+      "requiresSudo": false,
+      "effect": "changes-lab",
+      "explanation": "Restart the configured local lab after confirmation.",
+      "manual": false,
+      "requiresApproval": true
+    }
+  ]
+}
+--- stderr ---

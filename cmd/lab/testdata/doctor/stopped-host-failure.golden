@@ -1,0 +1,15 @@
+Fix commands (PRINT ONLY; nothing below was executed):
+Registry write permission untested (read-only probe).
+FAIL inotify: watches=8192 instances=512, need ≥524288/≥512
+  sudo required; host-change; approval required
+  Raise runtime limits without lowering existing values; persistent host configuration needs separate review.
+  sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+STOPPED lab cluster: stopped
+  changes-lab; approval required
+  Restart the configured local lab after confirmation.
+  lab start --profile minimal --config <fixture>/lab.yaml --state <fixture>/state.json
+SKIP ollama in cluster: cluster health unverified until stopped lab containers restart
+SKIP ollama model: cluster health unverified until stopped lab containers restart
+SKIP langfuse: cluster health unverified until stopped lab containers restart
+SKIP gitops revision: cluster health unverified until stopped lab containers restart
+--- stderr ---

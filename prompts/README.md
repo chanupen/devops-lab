@@ -14,7 +14,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 ## Order and status
 
-| File | Phase | Builds | Status (8 Nov 2026) |
+| File | Phase | Builds | Status (9 Nov 2026) |
 | --- | --- | --- | --- |
 | `01-phase0-foundations.md` | 0 | Repo skeleton, Cobra CLI, `lab doctor` | Done (#1, #4) |
 | `02-phase1-local-core.md` | 1 | Engine, state, local provider, gitops, core, obs, sample-app | Done (#2–#7) |
@@ -66,8 +66,9 @@ Implementation uses small reviewed PRs; none is merged by the agent.
 | --- | --- | --- |
 | B1 | Local start/next, shared doctor memory, observational registry probe, fixture goldens and guides | Approved and merged (#53); no schema change in B1 |
 | B1.1 | Ignore accepted doctor warnings in next; regression fixtures, goldens and docs | Approved and merged (#54) |
-| B2 | Durable lab/drill completion, best times, in-memory version-1 to 2 migration, list aliases and cached Home summary | Draft for review; fixture-only validation |
-| B3 | Print-only `doctor --fix`, exact commands and sudo labels | Deferred until B1 is merged and owner authorises it; not implemented |
+| B2 | Durable lab/drill completion, best times, in-memory version-1 to 2 migration, list aliases and cached Home summary | Approved and merged (#55); fixture-only validation |
+| B1 recovery | Stopped-runtime detection, restart guidance and deferred API health without hiding host failures | Approved and merged (#56) |
+| B3 | Print-only `doctor --fix`, typed commands, sudo/approval labels, text/JSON and next suggestions | Implemented; draft review pending, fixture-only validation |
 
 ## To rebuild from nothing
 

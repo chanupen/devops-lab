@@ -1,0 +1,23 @@
+Fix commands (PRINT ONLY; nothing below was executed):
+Registry write permission untested (read-only probe).
+FAIL ollama in cluster: cannot read the ai stack: fixture API server unreachable
+  read-only
+  manual action required: Review Ollama's network address and GitOps-managed endpoints.
+  read-only inspection:
+  lab status --config <fixture>/lab.yaml --state <fixture>/state.json
+FAIL ollama model: cannot read the ai stack: fixture API server unreachable
+  read-only
+  manual action required: Inspect the AI stack before changing models.
+  read-only inspection:
+  lab status --config <fixture>/lab.yaml --state <fixture>/state.json
+FAIL langfuse: cannot read the ai stack: fixture API server unreachable
+  read-only
+  manual action required: Inspect AI workloads and GitOps health.
+  read-only inspection:
+  kubectl --namespace ai get pods --kubeconfig <fixture>/kubeconfig
+WARN gitops revision: cannot read gitops revision: fixture API server unreachable
+  read-only
+  manual action required: Review the tracked revision before reconciling GitOps.
+  read-only inspection:
+  kubectl --namespace argocd get application lab-bootstrap --kubeconfig <fixture>/kubeconfig
+--- stderr ---

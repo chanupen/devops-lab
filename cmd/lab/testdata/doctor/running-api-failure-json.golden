@@ -1,0 +1,107 @@
+{
+  "profile": "minimal",
+  "ok": false,
+  "results": [
+    {
+      "name": "inotify",
+      "status": "ok",
+      "detail": "watches=524288 instances=512"
+    },
+    {
+      "name": "ollama in cluster",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "fix": "lab status"
+    },
+    {
+      "name": "ollama model",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "fix": "lab status"
+    },
+    {
+      "name": "langfuse",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "fix": "lab status"
+    },
+    {
+      "name": "gitops revision",
+      "status": "warn",
+      "detail": "cannot read gitops revision: fixture API server unreachable",
+      "fix": "lab status; argocd app get lab-bootstrap"
+    },
+    {
+      "name": "memory",
+      "status": "ok",
+      "detail": "8.0 GiB available of 24.0 GiB, minimal needs ~4 GiB"
+    },
+    {
+      "name": "lab cluster",
+      "status": "ok",
+      "detail": "running (3 nodes), Kubernetes v1.36.0"
+    },
+    {
+      "name": "image cache",
+      "status": "ok",
+      "detail": "running"
+    },
+    {
+      "name": "lab registry",
+      "status": "ok",
+      "detail": "registry available on loopback; node mirror file present; write permission untested (read-only probe)"
+    },
+    {
+      "name": "moto",
+      "status": "ok",
+      "detail": "running on 127.0.0.1:4566, 2 secret(s)"
+    }
+  ],
+  "remediations": [
+    {
+      "check": "ollama in cluster",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "command": "lab status --config <fixture>/lab.yaml --state <fixture>/state.json",
+      "requiresSudo": false,
+      "effect": "read-only",
+      "explanation": "Review Ollama's network address and GitOps-managed endpoints.",
+      "manual": true,
+      "requiresApproval": false
+    },
+    {
+      "check": "ollama model",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "command": "lab status --config <fixture>/lab.yaml --state <fixture>/state.json",
+      "requiresSudo": false,
+      "effect": "read-only",
+      "explanation": "Inspect the AI stack before changing models.",
+      "manual": true,
+      "requiresApproval": false
+    },
+    {
+      "check": "langfuse",
+      "status": "fail",
+      "detail": "cannot read the ai stack: fixture API server unreachable",
+      "command": "kubectl --namespace ai get pods --kubeconfig <fixture>/kubeconfig",
+      "requiresSudo": false,
+      "effect": "read-only",
+      "explanation": "Inspect AI workloads and GitOps health.",
+      "manual": true,
+      "requiresApproval": false
+    },
+    {
+      "check": "gitops revision",
+      "status": "warn",
+      "detail": "cannot read gitops revision: fixture API server unreachable",
+      "command": "kubectl --namespace argocd get application lab-bootstrap --kubeconfig <fixture>/kubeconfig",
+      "requiresSudo": false,
+      "effect": "read-only",
+      "explanation": "Review the tracked revision before reconciling GitOps.",
+      "manual": true,
+      "requiresApproval": false
+    }
+  ]
+}
+--- stderr ---

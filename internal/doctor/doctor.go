@@ -46,11 +46,12 @@ func (s Status) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) 
 
 // Result is what a check reports.
 type Result struct {
-	Name        string `json:"name"`
-	Status      Status `json:"status"`
-	Detail      string `json:"detail"`
-	Fix         string `json:"fix,omitempty"`
-	Unavailable bool   `json:"unavailable,omitempty"` // observational data could not be read
+	Name        string        `json:"name"`
+	Status      Status        `json:"status"`
+	Detail      string        `json:"detail"`
+	Fix         string        `json:"fix,omitempty"`
+	Unavailable bool          `json:"unavailable,omitempty"` // observational data could not be read
+	Remediation []Remediation `json:"-"`
 }
 
 // System is the host surface the checks read from. Tests replace it with fakes.
@@ -125,8 +126,11 @@ func HostSystem() System {
 
 // Options select what the checks compare against.
 type Options struct {
-	Profile string
-	Memory  *Memory // reuse the memory preflight without reading it again
+	Profile    string
+	Memory     *Memory // reuse the memory preflight without reading it again
+	ConfigPath string
+	StatePath  string
+	Kubeconfig string
 	// RequestedStacks adds host prerequisites without claiming pods are deployed.
 	RequestedStacks []string
 	// DeferClusterHealth skips live API checks during guided stopped-container recovery.
@@ -153,21 +157,21 @@ type Check struct {
 // Checks returns every check in display order.
 func Checks() []Check {
 	return []Check{
-		{"podman", checkPodman},
-		{"podman.socket", checkPodmanSocket},
-		{"cgroup delegation", checkCgroups},
-		{"inotify", checkInotify},
-		{"iptables modules", checkIPTables},
-		{"selinux", checkSELinux},
-		{"nvidia driver", aiCheck(checkNvidiaDriver)},
-		{"gpu vram", aiCheck(checkVRAM)},
-		{"nvidia cdi", aiCheck(checkCDI)},
-		{"ollama", aiCheck(checkOllama)},
-		{"ollama in cluster", aiDeployed(checkOllamaInCluster)},
-		{"ollama model", aiDeployed(checkOllamaModel)},
-		{"langfuse", aiDeployed(checkLangfuse)},
-		{"gitops revision", checkGitOpsRevision},
-		{"lan listeners", checkLANListeners},
+		{"podman", inspect(checkPodman, inspection("podman info --debug", "Review rootless Podman and cgroup-v2 configuration."))},
+		{"podman.socket", inspect(checkPodmanSocket, inspection("systemctl --user status podman.socket", "Review the user socket."))},
+		{"cgroup delegation", inspect(checkCgroups, inspection("systemctl cat user@.service", "Review controller delegation with the host administrator, then re-login."))},
+		{"inotify", inspect(checkInotify, inspection("sysctl fs.inotify.max_user_watches fs.inotify.max_user_instances", "Inspect unreadable watch limits."))},
+		{"iptables modules", inspect(checkIPTables, inspection("lsmod", "Review kernel module availability."))},
+		{"selinux", inspect(checkSELinux, inspection("sestatus", "Review SELinux configuration; do not disable enforcement."))},
+		{"nvidia driver", inspect(aiCheck(checkNvidiaDriver), inspection("nvidia-smi", "Review the NVIDIA driver installation and reboot requirements."))},
+		{"gpu vram", inspect(aiCheck(checkVRAM), inspection("nvidia-smi", "Review GPU users; close competing applications manually."))},
+		{"nvidia cdi", inspect(aiCheck(checkCDI), inspection("nvidia-ctk cdi list", "Review NVIDIA CDI availability."))},
+		{"ollama", inspect(aiCheck(checkOllama), inspection("systemctl --user status ollama", "Review the pinned Quadlet and Ollama service; lab never edits it."))},
+		{"ollama in cluster", inspect(aiDeployed(checkOllamaInCluster), labInspection("lab status", "Review Ollama's network address and GitOps-managed endpoints."))},
+		{"ollama model", inspect(aiDeployed(checkOllamaModel), labInspection("lab status", "Inspect the AI stack before changing models."))},
+		{"langfuse", inspect(aiDeployed(checkLangfuse), kubeInspection("kubectl --namespace ai get pods", "Inspect AI workloads and GitOps health."))},
+		{"gitops revision", inspect(checkGitOpsRevision, kubeInspection("kubectl --namespace argocd get application lab-bootstrap", "Review the tracked revision before reconciling GitOps."))},
+		{"lan listeners", inspect(checkLANListeners, inspection("ss -ltnp", "Identify the owning service and configure loopback-only bindings."))},
 		{"go", toolCheck("go")},
 		{"kind", toolCheck("kind")},
 		{"kubectl", toolCheck("kubectl")},
@@ -175,15 +179,15 @@ func Checks() []Check {
 		{"k9s", toolCheck("k9s")},
 		{"tofu/terraform", checkIaC},
 		{"aws", toolCheck("aws")},
-		{"memory", checkMemory},
-		{"lab cluster", unitCheck("cluster", "lab")},
-		{"scratch clusters", checkScratchClusters},
-		{"image cache", unitCheck("image cache", "lab-zot")},
-		{"lab registry", checkLabRegistry},
-		{"moto", checkMoto},
-		{"ghcr.io download", checkGHCR},
-		{"drill", checkDrill},
-		{"k8s support", checkK8sSupport},
+		{"memory", inspect(checkMemory, inspection("free -h", "Close memory-heavy applications or choose a smaller profile; inspect unreadable memory data."))},
+		{"lab cluster", inspect(unitCheck("cluster", "lab"), labInspection("lab status", "Review the cluster version; recreation is destructive and requires approval."))},
+		{"scratch clusters", inspect(checkScratchClusters, labInspection("lab labs status", "Review the active scratch lab before restarting it."))},
+		{"image cache", inspect(unitCheck("image cache", "lab-zot"), inspection("podman inspect lab-zot", "Review the image cache."))},
+		{"lab registry", inspect(checkLabRegistry, inspection("podman inspect lab-zot", "Review loopback bindings and the selected lab's node mirror file; write permission was not tested."))},
+		{"moto", inspect(checkMoto, inspection("podman inspect lab-moto", "Review Moto and its saved secrets before authorizing a restart or re-seed."))},
+		{"ghcr.io download", inspect(checkGHCR, inspection("getent ahosts "+GHCRCDN, "Review DNS/network and the reported zot.addHosts guidance; never edit /etc/hosts."))},
+		{"drill", inspect(checkDrill, labInspection("lab doctor --read-only", "Review saved drill recovery guidance before authorizing restoration."))},
+		{"k8s support", inspect(checkK8sSupport, labInspection("lab status", "Review the component compatibility table."))},
 	}
 }
 

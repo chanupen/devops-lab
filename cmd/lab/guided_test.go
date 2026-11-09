@@ -735,7 +735,7 @@ func TestNextPrioritiesAndReadOnly(t *testing.T) {
 			if (tt.name == "running random drill" || tt.name == "drill") && strings.Contains(out, "dns") {
 				t.Fatal("identity leaked")
 			}
-			if tt.kind == "doctor" && !strings.Contains(step.Command, "--read-only") {
+			if tt.kind == "doctor" && !strings.Contains(step.Command, "--fix") {
 				t.Fatal("diagnostic uses active probe")
 			}
 			after, _ := os.ReadFile(f.statePath)

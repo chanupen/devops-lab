@@ -62,6 +62,40 @@ func TestCloudChecksList(t *testing.T) {
 	}
 }
 
+func TestCloudFixInspections(t *testing.T) {
+	p := probe("arn:aws:sts::111122223333:assumed-role/lab-admin/lab", false, false)
+	p.EKSVersion = func(context.Context) (string, []string, error) {
+		return "", nil, errors.New("unsupported version")
+	}
+	p.ReaperReady = func(context.Context, string) error { return errors.New("stale heartbeat") }
+	p.TeardownBuild = func(context.Context) (string, error) { return "fixture-running-build", nil }
+	for _, tt := range []struct {
+		name, command string
+	}{
+		{"state bucket", "aws s3api list-buckets --profile lab"},
+		{"budget", "aws sts get-caller-identity --profile lab"},
+		{"eks version", "aws sts get-caller-identity --profile lab"},
+		{"ttl reaper", "aws sts get-caller-identity --profile lab"},
+		{"teardown build", "aws sts get-caller-identity --profile lab"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, c := range CloudChecks(p) {
+				if c.Name != tt.name {
+					continue
+				}
+				results := Run(context.Background(), System{}, Options{}, []Check{c})
+				commands := FixCommands(results, Options{})
+				if !Failed(results) || len(commands) != 1 || commands[0].Command != tt.command ||
+					!commands[0].Manual || commands[0].Effect != "read-only" || commands[0].RequiresSudo {
+					t.Fatalf("results=%+v commands=%+v", results, commands)
+				}
+				return
+			}
+			t.Fatal("missing check")
+		})
+	}
+}
+
 func TestTofuNeedsNativeLocking(t *testing.T) {
 	sys := System{LookPath: func(string) (string, error) { return "/x/tofu", nil },
 		Run: func(context.Context, string, ...string) (string, error) {

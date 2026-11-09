@@ -1,0 +1,54 @@
+{
+  "profile": "minimal",
+  "ok": false,
+  "results": [
+    {
+      "name": "podman",
+      "status": "fail",
+      "detail": "podman not found",
+      "fix": "sudo dnf install podman"
+    },
+    {
+      "name": "memory",
+      "status": "warn",
+      "detail": "1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB",
+      "fix": "close memory-heavy apps or choose a smaller profile"
+    },
+    {
+      "name": "lab registry",
+      "status": "ok",
+      "detail": "registry available on loopback; node mirror file present; write permission untested (read-only probe)"
+    },
+    {
+      "name": "k8s support",
+      "status": "warn",
+      "detail": "Kyverno v1.19.2 is tested on 1.36 by its CI, but states support only up to 1.35",
+      "fix": "allowed: lab's table uses the tested range; move to a release that states 1.36 when there is one"
+    }
+  ],
+  "remediations": [
+    {
+      "check": "podman",
+      "status": "fail",
+      "detail": "podman not found",
+      "command": "sudo dnf install podman",
+      "requiresSudo": true,
+      "effect": "host-change",
+      "explanation": "Install rootless Podman after host approval.",
+      "manual": false,
+      "requiresApproval": true
+    },
+    {
+      "check": "memory",
+      "status": "warn",
+      "detail": "1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB",
+      "command": "free -h",
+      "requiresSudo": false,
+      "effect": "read-only",
+      "explanation": "Close memory-heavy applications or choose a smaller profile; inspect unreadable memory data.",
+      "manual": true,
+      "requiresApproval": false
+    }
+  ]
+}
+--- stderr ---

@@ -30,7 +30,8 @@ var profileGiB = map[string]float64{
 
 func checkPodman(ctx context.Context, sys System, _ Options) Result {
 	if _, err := sys.LookPath("podman"); err != nil {
-		return fail("sudo dnf install podman", "podman not found")
+		return withRemediation(fail("sudo dnf install podman", "podman not found"),
+			repair("sudo dnf install podman", "Install rootless Podman after host approval.", "host-change", true))
 	}
 	ver, err := sys.Run(ctx, "podman", "version", "--format", "{{.Client.Version}}")
 	if err != nil {
@@ -51,7 +52,8 @@ func checkPodman(ctx context.Context, sys System, _ Options) Result {
 		return fail("boot with cgroup v2 (systemd.unified_cgroup_hierarchy=1)", "podman %s uses cgroup %s", ver, f[1])
 	}
 	if v, ok := parseVersion(ver); ok && v.less(version{5, 0, 0}) {
-		return warn("upgrade podman to 5.x or later", "podman %s, rootless, cgroup v2", ver)
+		return withRemediation(warn("upgrade podman to 5.x or later", "podman %s, rootless, cgroup v2", ver),
+			repair("sudo dnf upgrade podman", "Upgrade Podman, then recheck its version.", "host-change", true))
 	}
 	return ok("%s, rootless, cgroup v2", ver)
 }
@@ -59,7 +61,8 @@ func checkPodman(ctx context.Context, sys System, _ Options) Result {
 func checkPodmanSocket(ctx context.Context, sys System, _ Options) Result {
 	out, _ := sys.Run(ctx, "systemctl", "--user", "is-active", "podman.socket")
 	if out != "active" {
-		return fail("systemctl --user enable --now podman.socket", "podman.socket is %q", out)
+		return withRemediation(fail("systemctl --user enable --now podman.socket", "podman.socket is %q", out),
+			repair("systemctl --user enable --now podman.socket", "Enable the rootless user socket.", "host-change", false))
 	}
 	return ok("active")
 }
@@ -95,8 +98,10 @@ func checkInotify(_ context.Context, sys System, _ Options) Result {
 	}
 	detail := fmt.Sprintf("watches=%d instances=%d", watches, instances)
 	if watches < minWatches || instances < minInstances {
-		return fail(fmt.Sprintf("sysctl fs.inotify.max_user_watches=%d fs.inotify.max_user_instances=%d (persist in /etc/sysctl.d)", minWatches, minInstances),
-			"%s, need ≥%d/≥%d", detail, minWatches, minInstances)
+		return withRemediation(fail(fmt.Sprintf("sysctl fs.inotify.max_user_watches=%d fs.inotify.max_user_instances=%d (persist in /etc/sysctl.d)", minWatches, minInstances),
+			"%s, need ≥%d/≥%d", detail, minWatches, minInstances),
+			repair(fmt.Sprintf("sudo sysctl -w fs.inotify.max_user_watches=%d fs.inotify.max_user_instances=%d", max(watches, minWatches), max(instances, minInstances)),
+				"Raise runtime limits without lowering existing values; persistent host configuration needs separate review.", "host-change", true))
 	}
 	return ok("%s", detail)
 }
@@ -111,8 +116,13 @@ func checkIPTables(_ context.Context, sys System, _ Options) Result {
 		}
 	}
 	if len(missing) > 0 {
-		return fail("list them in /etc/modules-load.d/iptables.conf and modprobe each",
-			"not loaded: %s", strings.Join(missing, " "))
+		commands := make([]string, len(missing))
+		for i, module := range missing {
+			commands[i] = "sudo modprobe " + module
+		}
+		return withRemediation(fail("list them in /etc/modules-load.d/iptables.conf and modprobe each",
+			"not loaded: %s", strings.Join(missing, " ")),
+			repair(strings.Join(commands, " && "), "Load missing modules; review persistent modules-load configuration separately.", "host-change", true))
 	}
 	return ok("ip_tables iptable_nat ip6_tables ip6table_nat")
 }
@@ -152,11 +162,13 @@ func checkSELinux(_ context.Context, sys System, _ Options) Result {
 	}
 	boolean, err := sys.ReadFile("/sys/fs/selinux/booleans/container_use_devices")
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(boolean)), "1") {
-		return fail("sudo setsebool -P container_use_devices on", "%s, container_use_devices off", mode)
+		return withRemediation(fail("sudo setsebool -P container_use_devices on", "%s, container_use_devices off", mode),
+			repair("sudo setsebool -P container_use_devices on", "Allow container device access without disabling SELinux.", "host-change", true))
 	}
 	// The host runs enforcing; warn so a drift back to permissive is noticed.
 	if mode != "enforcing" {
-		return warn("sudo setenforce 1 (and SELINUX=enforcing in /etc/selinux/config)", "%s, container_use_devices on", mode)
+		return withRemediation(warn("sudo setenforce 1 (and SELINUX=enforcing in /etc/selinux/config)", "%s, container_use_devices on", mode),
+			repair("sudo setenforce 1", "Restore runtime enforcement; review persistent SELINUX=enforcing separately.", "host-change", true))
 	}
 	return ok("enforcing, container_use_devices on")
 }
@@ -249,20 +261,23 @@ func aiCheck(run func(context.Context, System, Options) Result) func(context.Con
 func checkCDI(ctx context.Context, sys System, _ Options) Result {
 	out, err := sys.Run(ctx, "nvidia-ctk", "cdi", "list")
 	if err != nil {
-		return fail("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml", "nvidia-ctk cdi list: %v", err)
+		return withRemediation(fail("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml", "nvidia-ctk cdi list: %v", err),
+			inspection("nvidia-ctk cdi list", "Install or repair NVIDIA Container Toolkit before generating CDI configuration."))
 	}
 	for _, l := range strings.Split(out, "\n") {
 		if strings.TrimSpace(l) == "nvidia.com/gpu=all" {
 			return ok("nvidia.com/gpu=all")
 		}
 	}
-	return fail("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml", "nvidia.com/gpu=all not listed")
+	return withRemediation(fail("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml", "nvidia.com/gpu=all not listed"),
+		repair("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml", "Generate the NVIDIA CDI specification after host approval.", "host-change", true))
 }
 
 func checkOllama(ctx context.Context, sys System, _ Options) Result {
 	code, body, err := sys.HTTPGet(ctx, ollamaVersion)
 	if err != nil {
-		return fail("systemctl --user start ollama", "no answer on :11434: %v", err)
+		return withRemediation(fail("systemctl --user start ollama", "no answer on :11434: %v", err),
+			repair("systemctl --user start ollama", "Start the existing pinned Ollama user service.", "host-change", false))
 	}
 	if code != 200 {
 		return fail("", "HTTP %d from :11434", code)
@@ -309,26 +324,43 @@ func toolCheck(name string) func(context.Context, System, Options) Result {
 	}
 }
 
-func runTool(ctx context.Context, sys System, name string) Result {
+func runTool(ctx context.Context, sys System, name string) (r Result) {
 	t := tools[name]
+	defer func() {
+		if len(r.Remediation) == 0 && (r.Status == Fail || r.Status == Warn) {
+			r.Remediation = []Remediation{inspection("command -v "+name, "Review PATH and the required tool version. "+t.fix)}
+		}
+	}()
 	if _, err := sys.LookPath(name); err != nil {
-		return fail(t.fix, "%s not found", name)
+		return toolInstall(name, fail(t.fix, "%s not found", name))
 	}
 	out, err := sys.Run(ctx, name, t.args...)
 	if err != nil {
 		return fail("", "%s %s: %v", name, strings.Join(t.args, " "), err)
 	}
 	if name == "go" && strings.Contains(out, "gccgo") {
-		return fail("sudo alternatives --set go /usr/lib/golang/bin/go", "gccgo is first on PATH: %s", firstLine(out))
+		return withRemediation(fail("sudo alternatives --set go /usr/lib/golang/bin/go", "gccgo is first on PATH: %s", firstLine(out)),
+			repair("sudo alternatives --set go /usr/lib/golang/bin/go", "Select the installed Go compiler after host approval.", "host-change", true))
 	}
 	v, found := parseVersion(out)
 	if !found {
 		return warn("", "%s: version not recognised in %q", name, firstLine(out))
 	}
 	if v.less(t.min) {
-		return warn(t.fix, "%s %s, want ≥ %s", name, v, t.min)
+		return toolInstall(name, warn(t.fix, "%s %s, want ≥ %s", name, v, t.min))
 	}
 	return ok("%s %s", name, v)
+}
+
+func toolInstall(name string, r Result) Result {
+	switch name {
+	case "go":
+		return withRemediation(r, repair("sudo dnf install golang", "Install or update Go, then verify its version.", "host-change", true))
+	case "helm":
+		return withRemediation(r, repair("sudo dnf install helm", "Install or update Helm, then verify its version.", "host-change", true))
+	default:
+		return r
+	}
 }
 
 // checkIaC passes if either OpenTofu or Terraform is usable; tofu is preferred.

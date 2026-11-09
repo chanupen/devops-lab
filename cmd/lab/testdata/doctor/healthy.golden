@@ -1,0 +1,4 @@
+Fix commands (PRINT ONLY; nothing below was executed):
+Registry write permission untested (read-only probe).
+No fix commands needed
+--- stderr ---

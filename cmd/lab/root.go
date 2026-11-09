@@ -35,7 +35,7 @@ func newRootCmdWithGuided(newProvider providerFactory, deps guidedDeps) *cobra.C
 	withLabLock(down)
 	withLabLock(extend)
 	// tunnel only reads the lab and forwards ports: it never takes the lock.
-	root.AddCommand(newDoctorCmd(), newStartCmd(newProvider, deps), newNextCmd(deps), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newAssistCmd(), newVersionCmd())
+	root.AddCommand(newDoctorCmd(deps), newStartCmd(newProvider, deps), newNextCmd(deps), newPlanCmd(), up, down, extend, newTunnelCmd(), newStatusCmd(newProvider), newCloudCmd(), newLabsCmd(), newDrillsCmd(), newAssistCmd(), newVersionCmd())
 	return root
 }
 

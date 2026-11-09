@@ -1,7 +1,8 @@
 # Guided first run and daily use
 
 **Status:** design approved and merged in #52. B1 implemented sections 1 and 2 (#53).
-B1.1 is merged (#54). B2 implements section 3; section 4 remains future work.
+B1.1 is merged (#54). B2 implements section 3 (#55); section 4 is implemented
+in B3. Stopped-runtime recovery is merged in #56.
 Start/next examples below are fixture output, not live-run evidence.
 
 [Engineering reference](design.md) · [Documentation rules](contributing-docs.md)
@@ -20,7 +21,7 @@ Existing code is the starting point:
 | Plans and execution | [internal/engine](../internal/engine/plan.go) | Reuse dependency ordering, skips, retries, revision handling and execution |
 | CLI apply orchestration | [cmd/lab/up.go](../cmd/lab/up.go) | Share preparation/apply with start; do not shell out to `lab up` |
 | Provider support and locks | [cmd/lab/common.go](../cmd/lab/common.go) | Reuse support lookup and the non-blocking lab lock |
-| Doctor results | [internal/doctor](../internal/doctor/doctor.go) | Share collection; expose structured memory and, later, fix commands |
+| Doctor results | [internal/doctor](../internal/doctor/doctor.go) | Share collection, structured memory and typed print-only fix commands |
 | State | [internal/state/state.go](../internal/state/state.go) | Migrate existing `version: 1` to version 2, not a second version field |
 | Lab progress | [internal/labs/manager.go](../internal/labs/manager.go) | Extend completion recording and attempt timing |
 | Drill progress | [internal/drills/manager.go](../internal/drills/manager.go) | Retain best times beyond the bounded run history |
@@ -223,11 +224,11 @@ Recommendations are deterministic. Choose one row, in this priority order:
 | --- | --- | --- |
 | Interrupted/restoring/expired drill, including e2e state | Explicit recovery with `lab drills abort` and the correct state path | Changes the lab |
 | Running drill | Inspect symptoms/timers with `lab drills status`; hide a random drill's identity | May record drill observations |
-| Failed host/readiness check (API-dependent health is deferred while runtime containers are stopped) | Inspect its instructions with `lab doctor --read-only --profile <configured>` | Read-only |
+| Failed host/readiness check (API-dependent health is deferred while runtime containers are stopped) | Inspect its instructions with `lab doctor --fix --profile <configured>` | Read-only |
 | Active lab, including a completed one awaiting cleanup | `lab labs status` | Read-only; shows the existing cleanup guidance |
 | Stopped main nodes/cache, registry or Moto | `lab start --profile <configured>` | Changes the lab after confirmation |
 | Empty state or engine plan needs apply/retry | `lab start --profile <configured>` | Changes the lab after confirmation |
-| Remaining actionable doctor warning | Inspect it with `lab doctor --read-only --profile <configured>` | Read-only |
+| Remaining actionable doctor warning | Inspect it with `lab doctor --fix --profile <configured>` | Read-only |
 | Ready lab, eligible incomplete exercise | Start the lowest-numbered eligible lab; after those, an eligible random drill | Changes the lab; never injects automatically |
 | No eligible incomplete exercise | `lab labs list` to review progress/replay options | Read-only |
 
@@ -247,7 +248,7 @@ A completed run in the progress ledger counts for exercise selection even if
 scratch cleanup removed its current session. Recommendations are advisory:
 re-checks and confirmations remain the responsibility of the printed command.
 Render exact supported commands, quote selected paths, and never add `--yes`.
-Before fix support lands, do not suggest a nonexistent `doctor --fix` flag.
+Doctor-failure/warning suggestions now use print-only `doctor --fix`.
 
 Next now uses the B2 ledger, so scratch cleanup does not lose completion.
 Imported totals cover retained version-1 evidence, not already-lost history.
@@ -422,6 +423,9 @@ the engineering reference.
 
 ## 4. `lab doctor --fix`
 
+**Implemented in B3.** Validation uses fake probes, temporary files and golden
+text/JSON reports only; no remediation or live lab/cloud operation is run.
+
 **Print only.** Use the same check catalog and thresholds as ordinary doctor,
 with the observational registry variant described above, then print copyable
 commands for every failed or warned result. Label the unperformed write probe.
@@ -435,7 +439,8 @@ Add typed remediation metadata next to each check: command, requires-sudo flag,
 effect, explanation and whether it is a diagnostic/manual prerequisite.
 Keep the legacy hint and ordinary doctor output compatible.
 
-Every fail/warn must have an actionable entry, in check order. Prefer an exact
+Every fail/warn except an accepted/allowed warning has an actionable entry,
+in check order. The shared marker policy is the same as next. Prefer an exact
 repair command when safe and fully known. Otherwise explicitly say
 `manual action required` and give an exact read-only inspection command.
 There is no universal shell repair for low RAM, unreadable data or unknown
@@ -449,26 +454,45 @@ approval requirements. Printing a command is not consent to run it.
 Keep existing cloud doctor behavior; this feature adds no cloud workflow.
 Cloud remediation data belongs with existing provider probes; test it with fakes.
 
-### Proposed output
+The implementation keeps typed commands on results, with per-check diagnostic
+fallbacks in the check catalog. It never parses legacy hints into commands or
+infers privilege from their text. Local fix reports share the runtime-first
+collector with start/next: stopped nodes, Zot or Moto defer API-dependent
+AI/GitOps health and print `lab start --profile <configured>` with selected
+paths. Real host failures still appear and fail the report. Scratch clusters
+keep their existing guidance and never trigger main-runtime recovery.
+
+Existing cloud checks use typed read-only inspections, not a new provisioning
+workflow. Fix reports never prompt for MFA or write the AWS role cache; plain
+cloud doctor keeps its existing session behavior.
+
+### Fixture output
 
 ```text
 $ lab doctor --fix
 Fix commands (PRINT ONLY; nothing below was executed):
-FAIL podman: not found
-  sudo required; changes host; approval required
+Registry write permission untested (read-only probe).
+FAIL podman: podman not found
+  sudo required; host-change; approval required
+  Install rootless Podman after host approval.
   sudo dnf install podman
-WARN memory: insufficient available memory
-  manual action required: close memory-heavy applications
-  read-only inspection: free -h
+WARN memory: 1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB
+  read-only
+  manual action required: Close memory-heavy applications or choose a smaller profile; inspect unreadable memory data.
+  read-only inspection:
+  free -h
 ```
 
 **What you will see:** per-check commands and safety labels. The second command
 inspects memory; it does not claim to free it. Re-run doctor after manual fixes.
 
-Allow `--fix --json`: retain profile/ok/results and attach structured remediation
+Allow `--fix --json`: retain profile/ok/results and attach structured `remediations`
 entries without human banners on stdout. For all-healthy reports, text says
 `No fix commands needed`. Stopped/skip results retain their existing hints;
 they are not promoted to failed/warned checks just to produce fixes.
+Main-runtime stopped hints use the resolved start command. Each remediation
+has `check`, `status`, `detail`, `command`, `requiresSudo`, `effect`,
+`explanation`, `manual` and `requiresApproval`. An empty list is `[]`.
 
 Exit 0 means no failed checks, including warnings with printed fixes.
 Exit 1 means a failed check, invalid flags or report/output failure.
@@ -493,7 +517,7 @@ Update their golden fixtures in the same PR.
 | Step A: this design | Only `docs/design-guided.md`; no code or other documentation changes | Open draft, send link, stop for approval |
 | Step B1: guided local use | Sections 1–2 only: start, next, shared doctor input/memory, observational registry/path flags, shared up preparation/apply, focused tests/goldens and docs | Design approved; open draft, stop, do not merge |
 | Step B2: durable progress | Section 3: completion/best times, version-2 migration, exercise summaries and cached Home line | Authorised after #54 merged; separate draft for review |
-| Step B3: print-only fixes | Section 4: typed remediation, doctor fix text/JSON, exact-command/sudo coverage and next golden updates | Only after B1 merges and owner authorises it; separate draft |
+| Step B3: print-only fixes | Section 4: typed remediation, doctor fix text/JSON, exact-command/sudo coverage and next golden updates | Implemented after owner authorisation; separate draft for review |
 
 This split follows the owner's post-approval scope. B1 has no progress/schema
 or exercise-lifecycle changes and no doctor fix flag. Stop after its draft PR.
