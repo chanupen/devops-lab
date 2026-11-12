@@ -34,8 +34,22 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 ## Current release
 
-v1.0.0 was released on 2026-11-08. The repository remains private.
-All four downloaded release assets passed `sha256sum --check SHA256SUMS`:
+[v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) was released
+on 2026-11-12 from ebe0ce1 (#59); see [CHANGELOG.md](../CHANGELOG.md). The
+repository remains private. The release has all five assets. All four
+downloaded copies passed `sha256sum --check SHA256SUMS`:
+
+```text
+d934d0fb67b0e56087dd1feeaf3c2036d4ce32a2a7cb1bc8ffa1e226cd4cba48  lab-linux-amd64
+01caf18b80a13829c1c9853a03a5a165748b387a34a77b1ef4eb9a9216d9af82  lab-darwin-amd64
+47645d336159ac26585408aae879dbc64ed4fe0a1b6a0488dcdf768fcd190e71  LICENSE
+bad535c73e2b4440012f1d61338836c47fd45f1c3d1b536151dc7fb70d2283a0  THIRD_PARTY_NOTICES.txt
+```
+
+The downloaded linux binary prints `v1.1.0` for `lab version`, and
+`lab start --help` and `lab doctor --fix --help` exit 0.
+
+v1.0.0 was released on 2026-11-08. Its verified hashes:
 
 ```text
 ef22df3d083f66ded69d086c43e42eeb35c44320b04e49d1733a1eb717642447  lab-linux-amd64
@@ -77,7 +91,7 @@ From the 10 Nov end-to-end review. Small reviewed PRs; none is merged by the age
 | PR | Scope | Status |
 | --- | --- | --- |
 | Accuracy | Refuse `gitops: flux` (planned, not built); doctor reads profile and extraStacks from `lab.yaml`; CLAUDE.md, design and reader docs match the code; delivered-vs-planned table | Approved and merged (#58) |
-| v1.1.0 | CHANGELOG for everything after v1.0.0, version references and install examples, doctor memory threshold per extra stack; the owner tags, then the release assets are verified | Open for review; tag and asset verification follow the merge |
+| v1.1.0 | CHANGELOG for everything after v1.0.0, version references and install examples, doctor memory threshold per extra stack; the owner tags, then the release assets are verified | Approved and merged (#59); released 2026-11-12, assets verified |
 
 ## To rebuild from nothing
 
