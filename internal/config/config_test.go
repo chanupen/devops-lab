@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -198,5 +199,34 @@ func TestDefaultTTL(t *testing.T) {
 		if (CheckTTL(d) == nil) != ok {
 			t.Errorf("CheckTTL(%s) ok = %v, want %v", d, !ok, ok)
 		}
+	}
+}
+
+func TestCheckBuilt(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr error
+	}{
+		{"default argocd", "", nil},
+		{"explicit argocd", "gitops: argocd\n", nil},
+		{"flux is known but planned", "gitops: flux\n", ErrFluxPlanned},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatalf("Parse: %v (flux must stay a known value)", err)
+			}
+			if err := cfg.CheckBuilt(); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("CheckBuilt = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+	if _, err := Parse([]byte("gitops: weave\n")); err == nil || errors.Is(err, ErrFluxPlanned) {
+		t.Errorf("unknown gitops value: err = %v, want a validation error", err)
+	}
+	if got := ErrFluxPlanned.Error(); got != "gitops: flux is planned, not built; use argocd" {
+		t.Errorf("message = %q", got)
 	}
 }

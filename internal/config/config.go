@@ -33,8 +33,24 @@ var hostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-
 var (
 	Modes    = []string{"local", "cloud"}
 	Profiles = []string{"minimal", "standard", "full"}
-	GitOps   = []string{"argocd", "flux"}
+	// GitOps keeps flux a known value so CheckBuilt can name it; only
+	// argocd is built.
+	GitOps = []string{"argocd", "flux"}
 )
+
+// ErrFluxPlanned is what lab up, lab plan, lab start and lab doctor say
+// for gitops: flux until Flux exists.
+var ErrFluxPlanned = errors.New("gitops: flux is planned, not built; use argocd")
+
+// CheckBuilt refuses values Validate accepts but lab cannot run yet.
+// Commands that plan or deploy call it; status and down do not, so a
+// lab can still be read and removed.
+func (c Config) CheckBuilt() error {
+	if c.GitOps == "flux" {
+		return ErrFluxPlanned
+	}
+	return nil
+}
 
 // CloudRegion is the only AWS region the lab uses.
 const CloudRegion = "ap-south-1"

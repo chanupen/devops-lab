@@ -65,6 +65,9 @@ func loadGuided(cmd *cobra.Command, flags labFlags, deps guidedDeps) (guidedInpu
 	if err != nil {
 		return guidedInput{}, err
 	}
+	if err := cfg.CheckBuilt(); err != nil {
+		return guidedInput{}, err
+	}
 	if cfg.Mode != "local" {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "this command is local-only; use a local lab.yaml, not a cloud configuration")
 		return guidedInput{}, exitError{code: 2}

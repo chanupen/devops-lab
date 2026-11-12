@@ -359,3 +359,70 @@ func TestDoctorAIModel(t *testing.T) {
 		t.Errorf("doctor expects %s, the ai stack uses %s", doctor.AIModel, local.OllamaModel)
 	}
 }
+
+// lab doctor reads --config and --state like plan, and takes its profile
+// and extra stacks from lab.yaml unless --profile overrides them.
+func TestDoctorConfigProfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      string
+		args        []string
+		wantProfile string // JSON profile
+		wantDetail  string // memory check detail
+	}{
+		{"profile and extras from lab.yaml", "profile: minimal\nextraStacks: [obs]\n", nil, "minimal", "minimal + obs needs ~4 GiB"},
+		{"standard from lab.yaml", "profile: standard\nextraStacks: []\n", nil, "standard", "standard needs ~12 GiB"},
+		{"defaults when lab.yaml leaves them out", "mode: local\n", nil, "minimal", "minimal + obs needs ~4 GiB"},
+		{"--profile overrides lab.yaml", "profile: minimal\nextraStacks: [obs]\n", []string{"--profile", "full"}, "full", "full needs ~19 GiB"},
+		{"--profile drops lab.yaml extras", "profile: standard\nextraStacks: [ai]\n", []string{"--profile", "minimal"}, "minimal", "minimal needs ~4 GiB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newGuidedFixture(t)
+			if err := os.WriteFile(f.cfgPath, []byte(tt.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			st := fixtureReadyState()
+			st.Stacks["policy"] = state.StackState{Status: state.Applied}
+			f.save(t, st, false)
+			fixture := f.deps.system
+			f.deps.system = func(home string, _ bool) doctor.System {
+				return fixture(home, true) // asserts home is --state's directory
+			}
+			var gotStacks []string
+			f.deps.checks = func() []doctor.Check {
+				spy := doctor.Check{Name: "stacks", Run: func(_ context.Context, _ doctor.System, o doctor.Options) doctor.Result {
+					gotStacks = o.Stacks
+					return doctor.Result{Status: doctor.OK}
+				}}
+				for _, c := range doctor.Checks() {
+					if c.Name == "memory" {
+						return []doctor.Check{c, spy}
+					}
+				}
+				t.Fatal("no memory check")
+				return nil
+			}
+			out, _, err := f.execute(append([]string{"doctor", "--json"}, tt.args...)...)
+			if err != nil {
+				t.Fatalf("err=%v\n%s", err, out)
+			}
+			var report struct {
+				Profile string
+				Results []struct{ Name, Detail string }
+			}
+			if err := json.Unmarshal([]byte(out), &report); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if report.Profile != tt.wantProfile {
+				t.Errorf("profile = %q, want %q", report.Profile, tt.wantProfile)
+			}
+			if len(report.Results) == 0 || !strings.Contains(report.Results[0].Detail, tt.wantDetail) {
+				t.Errorf("memory = %+v, want detail %q", report.Results, tt.wantDetail)
+			}
+			if !slices.Contains(gotStacks, "policy") {
+				t.Errorf("stacks = %v: --state was not read", gotStacks)
+			}
+		})
+	}
+}

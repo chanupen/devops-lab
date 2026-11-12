@@ -126,11 +126,14 @@ func HostSystem() System {
 
 // Options select what the checks compare against.
 type Options struct {
-	Profile    string
-	Memory     *Memory // reuse the memory preflight without reading it again
-	ConfigPath string
-	StatePath  string
-	Kubeconfig string
+	Profile string
+	// ExtraStacks are lab.yaml's extraStacks on top of Profile; nil when
+	// --profile overrides the selection.
+	ExtraStacks []string
+	Memory      *Memory // reuse the memory preflight without reading it again
+	ConfigPath  string
+	StatePath   string
+	Kubeconfig  string
 	// RequestedStacks adds host prerequisites without claiming pods are deployed.
 	RequestedStacks []string
 	// DeferClusterHealth skips live API checks during guided stopped-container recovery.

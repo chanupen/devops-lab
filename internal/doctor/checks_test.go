@@ -221,6 +221,12 @@ func TestChecks(t *testing.T) {
 			"/proc/meminfo": "MemTotal:       8388608 kB\nMemAvailable:   8000000 kB\n",
 		}}, Options{Profile: "standard"}, Fail, "8.0 GiB"},
 		{"memory bad profile", checkMemory, fake{}, Options{Profile: "huge"}, Fail, "unknown profile"},
+		{"memory names extra stacks", checkMemory, fake{files: map[string]string{
+			"/proc/meminfo": "MemTotal:       23977632 kB\nMemAvailable:   20359980 kB\n",
+		}}, Options{Profile: "minimal", ExtraStacks: []string{"obs", "core", "obs"}}, OK, "minimal + obs needs ~4 GiB"},
+		{"memory extra already in profile", checkMemory, fake{files: map[string]string{
+			"/proc/meminfo": "MemTotal:       23977632 kB\nMemAvailable:   20359980 kB\n",
+		}}, Options{Profile: "standard", ExtraStacks: []string{"obs"}}, OK, "standard needs ~12 GiB"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,18 +249,21 @@ func TestAICheckProfiles(t *testing.T) {
 		name    string
 		check   func(context.Context, System, Options) Result
 		profile string
+		extra   []string // lab.yaml extraStacks
 		want    Status
 		note    bool // detail mentions the full profile
 	}{
-		{"fail on full stays fail", failing, "full", Fail, false},
-		{"fail on standard becomes warn", failing, "standard", Warn, true},
-		{"fail on minimal becomes warn", failing, "minimal", Warn, true},
-		{"warn is unchanged", warning, "standard", Warn, false},
-		{"ok is unchanged", passing, "minimal", OK, false},
+		{"fail on full stays fail", failing, "full", nil, Fail, false},
+		{"fail on standard becomes warn", failing, "standard", nil, Warn, true},
+		{"fail on minimal becomes warn", failing, "minimal", nil, Warn, true},
+		{"fail with ai in extraStacks stays fail", failing, "minimal", []string{"obs", "ai"}, Fail, false},
+		{"fail with other extraStacks becomes warn", failing, "minimal", []string{"obs"}, Warn, true},
+		{"warn is unchanged", warning, "standard", nil, Warn, false},
+		{"ok is unchanged", passing, "minimal", nil, OK, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := aiCheck(tt.check)(context.Background(), fake{}.system(), Options{Profile: tt.profile})
+			got := aiCheck(tt.check)(context.Background(), fake{}.system(), Options{Profile: tt.profile, ExtraStacks: tt.extra})
 			if got.Status != tt.want {
 				t.Fatalf("status = %s, want %s", got.Status, tt.want)
 			}

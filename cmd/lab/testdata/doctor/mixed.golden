@@ -4,7 +4,7 @@ FAIL podman: podman not found
   sudo required; host-change; approval required
   Install rootless Podman after host approval.
   sudo dnf install podman
-WARN memory: 1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB
+WARN memory: 1.0 GiB available of 24.0 GiB, minimal + obs needs ~4 GiB
   read-only
   manual action required: Close memory-heavy applications or choose a smaller profile; inspect unreadable memory data.
   read-only inspection:

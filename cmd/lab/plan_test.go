@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chanupen/devops-lab/internal/config"
 )
 
 func TestPlanCmd(t *testing.T) {
@@ -206,5 +209,39 @@ func TestModeStatePaths(t *testing.T) {
 		if store.Path() != want {
 			t.Errorf("%s state = %s, want %s", mode, store.Path(), want)
 		}
+	}
+}
+
+// gitops: flux stays a known value, so commands that plan or deploy refuse
+// it by name instead of silently skipping the gitops stack. status and down
+// still read the lab, so a flux config can be removed.
+func TestFluxRefused(t *testing.T) {
+	tests := []struct {
+		args    []string
+		refused bool
+	}{
+		{[]string{"plan"}, true},
+		{[]string{"plan", "--destroy"}, true},
+		{[]string{"up", "--yes"}, true},
+		{[]string{"doctor"}, true},
+		{[]string{"doctor", "--json"}, true},
+		{[]string{"doctor", "--fix"}, true},
+		{[]string{"start", "--yes"}, true},
+		{[]string{"status"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			f := newGuidedFixture(t)
+			if err := os.WriteFile(f.cfgPath, []byte("profile: minimal\ngitops: flux\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := f.execute(tt.args...)
+			if refused := errors.Is(err, config.ErrFluxPlanned); refused != tt.refused {
+				t.Fatalf("err = %v, want refused=%v", err, tt.refused)
+			}
+			if tt.refused && f.factories != 0 {
+				t.Errorf("provider built %d times before the refusal", f.factories)
+			}
+		})
 	}
 }
