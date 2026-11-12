@@ -183,7 +183,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | 7.47 GiB median of three `podman stats` runs for the **currently deployable full profile**, plus retained sample-db, on 2026-11-07. The plan skips CI, chaos and scaling because they are unsupported; this is not a measurement of those stacks. The three consecutive `kubectl top pods -n ai` readings each totaled 1,664 MiB, included in the node container totals, not added. Ollama was idle with no model loaded. |
 
-Harbor adds about 2 GiB, so it runs only in labs that need it. Flux is planned, not built; once it exists, Argo CD and Flux never run together except in a comparison lab.
+`lab doctor` checks free memory against the profile's figure plus each extra stack the profile lacks, from the measurements above: obs 0.6 GiB, policy 0.8, secrets 0.16 and sample-db 0.03 (about 0.2 together), ai 1.7. Harbor adds about 2 GiB, so it runs only in labs that need it. Flux is planned, not built; once it exists, Argo CD and Flux never run together except in a comparison lab.
 
 ci, scaling and chaos are planned, not built, so the standard and full rows list stacks that plans skip today.
 

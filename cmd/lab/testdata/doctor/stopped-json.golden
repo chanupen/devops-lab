@@ -30,7 +30,7 @@
     {
       "name": "memory",
       "status": "ok",
-      "detail": "8.0 GiB available of 24.0 GiB, minimal + obs needs ~4 GiB"
+      "detail": "8.0 GiB available of 24.0 GiB, minimal + obs needs ~4.6 GiB"
     },
     {
       "name": "lab cluster",

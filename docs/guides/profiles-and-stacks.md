@@ -31,6 +31,10 @@ Doctor reads `profile` and `extraStacks` from `lab.yaml` (or `--config`).
 Its `--profile` overrides both for that report: it selects a readiness
 threshold and does not change `lab.yaml` or deploy a profile. There is no up
 `--profile` flag.
+Each extra stack the profile lacks adds its measured memory to the threshold:
+obs 0.6 GiB, policy 0.8, secrets 0.16, sample-db 0.03, ai 1.7. For example,
+`minimal + ai` is checked against about 5.7 GiB, not 4. Dependencies that
+`lab up` adds on its own are not counted.
 Total RAM below the profile threshold fails. Available RAM below it warns,
 even when total RAM is sufficient; a zero exit status can still need review.
 

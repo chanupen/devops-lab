@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -221,9 +222,6 @@ func TestChecks(t *testing.T) {
 			"/proc/meminfo": "MemTotal:       8388608 kB\nMemAvailable:   8000000 kB\n",
 		}}, Options{Profile: "standard"}, Fail, "8.0 GiB"},
 		{"memory bad profile", checkMemory, fake{}, Options{Profile: "huge"}, Fail, "unknown profile"},
-		{"memory names extra stacks", checkMemory, fake{files: map[string]string{
-			"/proc/meminfo": "MemTotal:       23977632 kB\nMemAvailable:   20359980 kB\n",
-		}}, Options{Profile: "minimal", ExtraStacks: []string{"obs", "core", "obs"}}, OK, "minimal + obs needs ~4 GiB"},
 		{"memory extra already in profile", checkMemory, fake{files: map[string]string{
 			"/proc/meminfo": "MemTotal:       23977632 kB\nMemAvailable:   20359980 kB\n",
 		}}, Options{Profile: "standard", ExtraStacks: []string{"obs"}}, OK, "standard needs ~12 GiB"},
@@ -387,5 +385,44 @@ func TestWriteTable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("table missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// Extra stacks add their measured memory to the profile's threshold.
+func TestMemoryThresholdExtraStacks(t *testing.T) {
+	meminfo := func(totalGiB, availGiB float64) fake {
+		return fake{files: map[string]string{"/proc/meminfo": fmt.Sprintf(
+			"MemTotal: %d kB\nMemAvailable: %d kB\n", int(totalGiB*(1<<20)), int(availGiB*(1<<20)))}}
+	}
+	tests := []struct {
+		name    string
+		profile string
+		extra   []string
+		avail   float64 // GiB available of 22 GiB
+		want    Status
+		detail  string
+	}{
+		{"minimal alone", "minimal", nil, 5, OK, "minimal needs ~4 GiB"},
+		{"minimal + obs", "minimal", []string{"obs"}, 5, OK, "minimal + obs needs ~4.6 GiB"},
+		{"minimal + ai is about 6 GiB", "minimal", []string{"ai"}, 5, Warn, "minimal + ai needs ~5.7 GiB"},
+		{"minimal + ai with room", "minimal", []string{"ai"}, 6, OK, "minimal + ai needs ~5.7 GiB"},
+		{"minimal + policy", "minimal", []string{"obs", "policy"}, 5, Warn, "minimal + obs, policy needs ~5.4 GiB"},
+		{"secrets and sample-db add ~0.2", "minimal", []string{"obs", "secrets", "sample-db"}, 5, OK, "minimal + obs, secrets, sample-db needs ~4.8 GiB"},
+		{"stacks already in the profile add nothing", "standard", []string{"obs", "policy", "secrets"}, 13, OK, "standard needs ~12 GiB"},
+		{"ai on standard", "standard", []string{"ai"}, 13, Warn, "standard + ai needs ~13.7 GiB"},
+		{"ai already in full", "full", []string{"ai"}, 20, OK, "full needs ~19 GiB"},
+		{"duplicates count once", "minimal", []string{"ai", "ai", "core"}, 6, OK, "minimal + ai needs ~5.7 GiB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkMemory(context.Background(), meminfo(22, tt.avail).system(), Options{Profile: tt.profile, ExtraStacks: tt.extra})
+			if got.Status != tt.want || !strings.Contains(got.Detail, tt.detail) {
+				t.Fatalf("got %s %q, want %s %q", got.Status, got.Detail, tt.want, tt.detail)
+			}
+		})
+	}
+	got := checkMemory(context.Background(), meminfo(5, 5).system(), Options{Profile: "minimal", ExtraStacks: []string{"ai"}})
+	if got.Status != Fail {
+		t.Errorf("5 GiB total for minimal + ai: %s %q, want fail", got.Status, got.Detail)
 	}
 }

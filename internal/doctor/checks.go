@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -377,9 +378,14 @@ func checkIaC(ctx context.Context, sys System, _ Options) Result {
 }
 
 func checkMemory(_ context.Context, sys System, opts Options) Result {
-	need, known := profileGiB[opts.Profile]
+	base, known := profileGiB[opts.Profile]
 	if !known {
 		return fail("use minimal, standard or full", "unknown profile %q", opts.Profile)
+	}
+	extra := extraStacks(opts)
+	need := base
+	for _, s := range extra {
+		need += extraStackGiB[s]
 	}
 	mem := opts.Memory
 	if mem == nil {
@@ -390,7 +396,7 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 		mem = &m
 	}
 	total, avail := float64(mem.Total)/(1<<30), float64(mem.Available)/(1<<30)
-	detail := fmt.Sprintf("%.1f GiB available of %.1f GiB, %s needs ~%.0f GiB", avail, total, profileName(opts), need)
+	detail := fmt.Sprintf("%.1f GiB available of %.1f GiB, %s needs ~%s GiB", avail, total, profileName(opts.Profile, extra), gib(need))
 	switch {
 	case total < need:
 		return fail("choose a smaller profile", "%s", detail)
@@ -400,10 +406,21 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 	return ok("%s", detail)
 }
 
-// profileName is the profile with the extra stacks it lacks, e.g.
-// "minimal + obs", as lab plan names it. The memory threshold stays the
-// profile's: extra stacks were measured inside the profile budgets.
-func profileName(opts Options) string {
+// extraStackGiB is what each stack adds on top of a profile that lacks
+// it, measured on the G14 (docs/design.md, "Memory budget"): obs from
+// minimal to minimal + obs, policy, secrets (ESO and Moto) and sample-db
+// (Postgres and its app) from their own runs, ai by podman stats medians.
+// A stack not listed (core, registry: already in every profile) adds 0.
+var extraStackGiB = map[string]float64{
+	"obs":       0.6,
+	"policy":    0.8,
+	"secrets":   0.16, // with sample-db: ~0.2
+	"sample-db": 0.03,
+	"ai":        1.7,
+}
+
+// extraStacks are opts.ExtraStacks the profile lacks, without duplicates.
+func extraStacks(opts Options) []string {
 	in, _ := engine.ProfileStacks(opts.Profile)
 	var extra []string
 	for _, s := range opts.ExtraStacks {
@@ -411,10 +428,21 @@ func profileName(opts Options) string {
 			extra = append(extra, s)
 		}
 	}
+	return extra
+}
+
+// profileName is the profile with its extra stacks, e.g. "minimal + obs",
+// as lab plan names it.
+func profileName(profile string, extra []string) string {
 	if len(extra) == 0 {
-		return opts.Profile
+		return profile
 	}
-	return opts.Profile + " + " + strings.Join(extra, ", ")
+	return profile + " + " + strings.Join(extra, ", ")
+}
+
+// gib prints a threshold with at most one decimal: 4, 4.6, 5.7.
+func gib(v float64) string {
+	return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64)
 }
 
 // Memory is a validated host memory snapshot in bytes. Swap is not capacity.
