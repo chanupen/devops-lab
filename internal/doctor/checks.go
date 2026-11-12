@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/chanupen/devops-lab/internal/compat"
+	"github.com/chanupen/devops-lab/internal/engine"
 )
 
 const (
@@ -249,10 +250,10 @@ func aiCheck(run func(context.Context, System, Options) Result) func(context.Con
 	return func(ctx context.Context, sys System, opts Options) Result {
 		r := run(ctx, sys, opts)
 		required := slices.Contains(opts.Stacks, "ai") || slices.Contains(opts.RequestedStacks, "ai") ||
-			(opts.RequestedStacks == nil && opts.Profile == "full")
+			(opts.RequestedStacks == nil && (opts.Profile == "full" || slices.Contains(opts.ExtraStacks, "ai")))
 		if r.Status == Fail && !required {
 			r.Status = Warn
-			r.Detail += " (only the full profile needs it)"
+			r.Detail += " (only the full profile or the ai stack needs it)"
 		}
 		return r
 	}
@@ -389,7 +390,7 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 		mem = &m
 	}
 	total, avail := float64(mem.Total)/(1<<30), float64(mem.Available)/(1<<30)
-	detail := fmt.Sprintf("%.1f GiB available of %.1f GiB, %s needs ~%.0f GiB", avail, total, opts.Profile, need)
+	detail := fmt.Sprintf("%.1f GiB available of %.1f GiB, %s needs ~%.0f GiB", avail, total, profileName(opts), need)
 	switch {
 	case total < need:
 		return fail("choose a smaller profile", "%s", detail)
@@ -397,6 +398,23 @@ func checkMemory(_ context.Context, sys System, opts Options) Result {
 		return warn("close memory-heavy apps or choose a smaller profile", "%s", detail)
 	}
 	return ok("%s", detail)
+}
+
+// profileName is the profile with the extra stacks it lacks, e.g.
+// "minimal + obs", as lab plan names it. The memory threshold stays the
+// profile's: extra stacks were measured inside the profile budgets.
+func profileName(opts Options) string {
+	in, _ := engine.ProfileStacks(opts.Profile)
+	var extra []string
+	for _, s := range opts.ExtraStacks {
+		if !slices.Contains(in, s) && !slices.Contains(extra, s) {
+			extra = append(extra, s)
+		}
+	}
+	if len(extra) == 0 {
+		return opts.Profile
+	}
+	return opts.Profile + " + " + strings.Join(extra, ", ")
 }
 
 // Memory is a validated host memory snapshot in bytes. Swap is not capacity.

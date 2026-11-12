@@ -528,7 +528,7 @@ Flags:
   -h, --help               help for doctor
       --json               print results as JSON
       --mode string        local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget (default "local")
-      --profile string     memory profile to check against: minimal, standard, full (default "minimal")
+      --profile string     memory profile to check against: minimal, standard, full (default: lab.yaml's profile and extraStacks)
       --read-only          observe the local registry without testing upload permission
       --state string       path to the state file (default ~/.lab/state.json)
       --timeout duration   timeout per check (default 10s)

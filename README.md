@@ -4,7 +4,7 @@ A DevOps/SRE home lab driven by one Go binary, `lab`. The CLI and Bubble Tea
 TUI share an engine. Run Kubernetes locally with kind and rootless Podman,
 or in AWS with EKS and expiring resources.
 
-After bootstrap, Argo CD owns workloads; Flux is the alternative.
+After bootstrap, Argo CD owns workloads. Flux is planned, not built.
 Six labs teach deployment, observability and recovery. Seven local drills
 inject bounded faults and restore saved state.
 

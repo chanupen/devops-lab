@@ -11,7 +11,7 @@
     {
       "name": "memory",
       "status": "warn",
-      "detail": "1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB",
+      "detail": "1.0 GiB available of 24.0 GiB, minimal + obs needs ~4 GiB",
       "fix": "close memory-heavy apps or choose a smaller profile"
     },
     {
@@ -41,7 +41,7 @@
     {
       "check": "memory",
       "status": "warn",
-      "detail": "1.0 GiB available of 24.0 GiB, minimal needs ~4 GiB",
+      "detail": "1.0 GiB available of 24.0 GiB, minimal + obs needs ~4 GiB",
       "command": "free -h",
       "requiresSudo": false,
       "effect": "read-only",

@@ -43,6 +43,9 @@ func newDoctorCmd(deps guidedDeps) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			checks := deps.checks()
+			if opts.Profile == "" {
+				opts.Profile = config.Default().Profile // cloud reports; local mode reads lab.yaml below
+			}
 			switch mode {
 			case "local":
 				if err := requireLinux(deps.goos, cmd.ErrOrStderr()); err != nil {
@@ -51,6 +54,13 @@ func newDoctorCmd(deps guidedDeps) *cobra.Command {
 			case "cloud":
 				if readOnly || flags.cfgPath != "" || flags.statePath != "" {
 					return fmt.Errorf("--read-only, --config and --state apply to local doctor reports only")
+				}
+				// Cloud doctor takes no --config, but a flux lab.yaml is
+				// refused in both modes.
+				if cfg, err := flags.loadConfigOnly(); err == nil {
+					if err := cfg.CheckBuilt(); err != nil {
+						return err
+					}
 				}
 				checks = doctor.CloudChecks(cloudProbe(cmd.Context(), cmd, !asJSON && !fix, fix))
 			default:
@@ -64,6 +74,14 @@ func newDoctorCmd(deps guidedDeps) *cobra.Command {
 						return err
 					}
 					cfg = config.Default()
+				}
+				if err := cfg.CheckBuilt(); err != nil {
+					return err
+				}
+				// lab.yaml's profile and extraStacks, unless --profile overrides
+				// the selection (then without lab.yaml's extra stacks).
+				if !cmd.Flags().Changed("profile") {
+					opts.Profile, opts.ExtraStacks = cfg.Profile, cfg.ExtraStacks
 				}
 				path := flags.statePath
 				if path == "" {
@@ -134,7 +152,7 @@ func newDoctorCmd(deps guidedDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&fix, "fix", false, "print fix commands only; never execute them (registry write permission untested)")
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "observe the local registry without testing upload permission")
 	cmd.Flags().StringVar(&mode, "mode", "local", "local: this host; cloud: OpenTofu, the lab profile, the state bucket and the budget")
-	cmd.Flags().StringVar(&opts.Profile, "profile", config.Default().Profile, "memory profile to check against: minimal, standard, full")
+	cmd.Flags().StringVar(&opts.Profile, "profile", "", "memory profile to check against: minimal, standard, full (default: lab.yaml's profile and extraStacks)")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 10*time.Second, "timeout per check")
 	flags.register(cmd)
 	return cmd

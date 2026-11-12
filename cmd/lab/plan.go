@@ -32,6 +32,9 @@ func newPlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := cfg.CheckBuilt(); err != nil {
+				return err
+			}
 			eng := engine.New(g, store, nil)
 			var p engine.Plan
 			if destroy {

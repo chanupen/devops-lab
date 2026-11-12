@@ -183,7 +183,9 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | 7.47 GiB median of three `podman stats` runs for the **currently deployable full profile**, plus retained sample-db, on 2026-11-07. The plan skips CI, chaos and scaling because they are unsupported; this is not a measurement of those stacks. The three consecutive `kubectl top pods -n ai` readings each totaled 1,664 MiB, included in the node container totals, not added. Ollama was idle with no model loaded. |
 
-Harbor adds about 2 GiB, so it runs only in labs that need it. Argo CD and Flux never run together except in the comparison lab.
+Harbor adds about 2 GiB, so it runs only in labs that need it. Flux is planned, not built; once it exists, Argo CD and Flux never run together except in a comparison lab.
+
+ci, scaling and chaos are planned, not built, so the standard and full rows list stacks that plans skip today.
 
 ### After a reboot
 
@@ -202,7 +204,12 @@ The TUI is a thin view over one engine; the engine hands work to a local or an A
 > Diagram: lab architecture · one engine, two providers (see the live design doc)
 
 - **Engine** resolves stack dependencies, runs plan, apply and destroy in order, and writes state to `~/.lab/state.json`. The CLI and the TUI both call it, so they never disagree.
-- **Providers** implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`. Adding a third target later (for example k3s on a spare machine) means one new provider.
+- **Runners.** The engine runs each stack through an `engine.Runner` (`Apply`, `Destroy`). A runner whose stack keeps something outside the cluster (sample-db's secrets in AWS) also implements `engine.Releaser`: when the stack goes with the cluster, the engine calls `Release` instead of `Destroy`. `cmd/lab` builds one `engine.Router` (stack → runner) per mode:
+  - `internal/provider/local` runs registry and cluster (Zot, kind on rootless Podman) and adds Moto and the sample-db image build around the GitOps runner.
+  - `internal/provider/aws` runs registry and cluster through OpenTofu (terraform-exec) and AWS SDK v2: VPC, EKS, ECR, Pod Identity, with Karpenter and the Load Balancer Controller installed alongside the cluster.
+  - `internal/gitops` runs the gitops stack (Argo CD via the Helm SDK) and every in-cluster stack as an Argo CD Application, in both modes.
+
+  There is no cost interface yet; the Cost screen is planned. A third target later (for example k3s on a spare machine) means one new provider package that runs registry and cluster.
 - **Remote use:** the binary runs on Fedora; from the Mac, `ssh -t fedora lab` opens it. A later option is serving the TUI over SSH with Charm's Wish, so no shell login is needed.
 
 ### Reaching lab apps from the Mac
@@ -318,14 +325,14 @@ Chart values live in `gitops/stacks/<stack>/` and each mode's differences in `gi
 | --- | --- | --- | --- |
 | registry | Zot pull-through cache (Harbor optional) locally, ECR in cloud | — | Image build, scan, retag-to-promote |
 | cluster | kind (1 control plane, 2 workers, containerd mirrors to Zot) or EKS; CNI, StorageClass | registry | Cluster bootstrap, CKA topics |
-| gitops | Argo CD (app-of-apps) via the Helm SDK; Flux as the second option, chosen per lab | cluster | GitOps, promotion between environments |
+| gitops | Argo CD (app-of-apps) via the Helm SDK. Flux as the second option is **planned, not built**; `gitops: flux` is refused by `lab up`, `lab plan`, `lab start` and `lab doctor` | cluster | GitOps, promotion between environments |
 | core | metrics-server, Envoy Gateway (Gateway API), cert-manager, as Argo CD apps | gitops | Cluster add-ons, ingress, TLS |
-| ci | GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
+| ci | **Planned, not built.** GitHub Actions self-hosted runners (Actions Runner Controller); Jenkins as an option | gitops, registry, secrets | Pipelines, shared libraries, runners on Kubernetes |
 | secrets | External Secrets Operator; Secrets Manager from Moto locally, AWS in cloud | gitops | Secret sync, rotation, Pod Identity |
-| obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`; plus the drills' alerts), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki; Tempo, traces and Sloth come later | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
+| obs | kube-prometheus-stack (Prometheus with 24 h retention, Alertmanager, node-exporter, kube-state-metrics, Grafana at `grafana.localtest.me`; plus the drills' alerts), Loki single binary on filesystem storage, the OpenTelemetry Collector shipping pod logs to Loki. **Planned, not built:** Tempo (traces) and Sloth as part of the stack; lab 3 runs the Sloth CLI as a pinned image | gitops, core | Metrics, logs, dashboards and alerts; traces and SLOs with burn-rate alerts later |
 | policy | Kyverno 1.19 (chart 3.9.2, one replica per controller, policy exceptions on) and the Pod Security Standards "baseline" policies in Audit mode: they report, never block. Labs add Enforce policies scoped to their own namespaces. Not in the minimal profile: `extraStacks: [obs, policy]` or `lab up --stacks policy` | gitops | Admission control, policy as code |
-| scaling | KEDA locally; Karpenter in cloud | gitops, obs | Autoscaling, spot handling |
-| chaos | Chaos Mesh | obs | Fault injection for drills |
+| scaling | **Planned, not built.** KEDA locally; Karpenter in cloud (cloud clusters already get Karpenter with the cluster stack) | gitops, obs | Autoscaling, spot handling |
+| chaos | **Planned, not built.** Chaos Mesh | obs | Fault injection for drills |
 | ai | Local host Ollama and Langfuse; cloud is an intentional stub | obs, secrets | Model serving, LLM observability, the AI On-Call Assistant |
 | sample-app | podinfo as a frontend calling a backend, pulled through the Zot cache, at `podinfo.localtest.me`; ServiceMonitors only when obs is present. The DB-backed app for the drills is the sample-db stack | core, registry | Target for every lab and drill |
 | sample-db | Postgres 18 and a small Go app (`apps/sample-db`) that reads its database credentials from a mounted Secret file (no env vars, no subPath), reloads them when the file changes and reconnects; `/healthz`, `/readyz`, Prometheus metrics (DB errors, reconnects, credential reloads, request latency for an SLO); HTTPS on 8443 with a certificate from a cert-manager CA of its own, reloaded on renewal; a small client that calls it twice a second. The credentials come from Secrets Manager through ESO: a superuser (`lab/sample-db/admin`, never rotated) and the app's login (`lab/sample-db/app`, `app_v1`, a member of the NOLOGIN group role `app`). lab builds the image from the repo through Podman's API, pushes it to the lab registry and sets it by digest (`lab-zot:5000/lab/sample-db@sha256:...`), so the cluster needs no registry credentials. Postgres ships its own `pg_hba.conf`: `scram-sha-256` for every TCP connection, trust only on the local Unix socket (the init script, admin `kubectl exec`); the image's default also trusts 127.0.0.1 | core (cert-manager for its TLS), secrets, registry | Secret rotation without restarts, the app the drills break |
@@ -700,7 +707,7 @@ lab:
   mode: local              # local | cloud
   profile: minimal         # minimal | standard | full
   extraStacks: [obs]       # applied on top of the profile
-  gitops: argocd           # argocd | flux
+  gitops: argocd           # argocd (flux: planned, not built; refused)
 
 profiles:
   local:
@@ -850,6 +857,26 @@ Local mode comes first and must work end to end by week 3; the TUI, cloud mode a
 Each gate must pass before the next phase starts. If a phase slips, cut TUI screens before labs: the labs and drills are what interviewers will ask about.
 
 **Phase 4 gate: passed on 6 Nov 2026.** Every lab passes its e2e in each mode it supports. Lab 1 is local only, labs 2–5 run in both modes and lab 6 in cloud only. Labs 1–5 pass locally. In cloud mode, labs 2–5 passed in the #32 session. Lab 6 passed in a separate run on EKS 1.36 with only the cluster stack: steps 1–6 and reset in 8m50s. That run confirmed the step 6 fix, which counts only events newer than the `lab06` NodePool. `lab down` left nothing behind.
+
+### Delivered vs planned
+
+Recorded on 12 Nov 2026 from merged PRs. "Deferred" items are planned, not built.
+
+| Phase | Gate | Evidence | Deferred |
+| --- | --- | --- | --- |
+| 0 Foundations | `lab doctor` all green | #1, #4 (30 Oct): 18 ok, 0 warn, 0 fail on the host, SELinux enforcing | — |
+| 1 Local core | Healthy in under 5 min | #2–#7 (30 Oct–1 Nov): three runs from `lab down` with a warm Zot cache, 5m41s, 4m19s, 4m11s; median 4m19s. One later run on 3 Nov took 5m11s, over the gate (10 Nov review). Not re-measured: that needs a `lab down`/`lab up` of the main lab | Flux; Tempo and Sloth in obs |
+| 2 TUI v1 | First frame under 100 ms | #8–#10 (1 Nov): warm, over SSH from the Mac, 37–47 ms over five runs | Cost screen (`6` shows a later-release message) |
+| 3 Cloud mode | No leftovers after down | #12–#16 (1–2 Nov); a clean `lab down` with nothing tagged `lab=true` left outside the baseline in #16 and again in #32/#33 (6 Nov) | Cost screen |
+| 4 Labs and drills | Labs pass in both modes | #17–#33; passed 6 Nov (above). 6 labs, 7 drills | chaos (drills inject faults without Chaos Mesh) |
+| 5 AI and release | v1.0 tag | #35–#47; v1.0.0 released 8 Nov | — |
+| After v1.0 | — | Docs #48–#52 (9 Nov); guided `lab start`/`lab next` #53, #56; durable progress #55; accepted doctor warnings #54; print-only `doctor --fix` #57 (9 Nov); accuracy fixes (this release) | — |
+
+Planned, not built, in total: the Cost screen, Flux, the ci, scaling (KEDA) and chaos stacks, Tempo, and Sloth as an obs component. ci and scaling had no phase of their own. Plans skip ci, scaling and chaos; `gitops: flux` is refused.
+
+**Follow-ups**
+
+- Re-measure the phase 1 gate (time to healthy for minimal + obs) on a fresh `lab down`/`lab up` of the main lab; the last single run (3 Nov, 5m11s) was over 5 minutes.
 
 ## GPU setup for Ollama (Fedora 45, G14)
 
@@ -1009,7 +1036,7 @@ The biggest risk is spending the time on TUI polish instead of labs; build the C
 | --- | --- |
 | Repo | Private repo `github.com/chanupen/devops-lab`; kept generic so it can go public later |
 | Container runtime | Rootless Podman on Fedora, always; no Docker |
-| GitOps | Argo CD by default; Flux as the second option |
+| GitOps | Argo CD by default; Flux as the second option (planned, not built as of 12 Nov 2026) |
 | Fedora RAM | 22 GiB + 8 GiB swap; default profile `minimal` + obs |
 | AWS | Existing account through IAM user `devops`; move to an MFA-assumed role in phase 3 |
 | Tool name | `lab` |

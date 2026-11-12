@@ -44,6 +44,9 @@ func newUpCmd(newProvider providerFactory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := cfg.CheckBuilt(); err != nil {
+				return err
+			}
 			if err := restoreDrill(cmd, flags, cfg.Mode, store); err != nil {
 				return err
 			}
