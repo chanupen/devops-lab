@@ -79,7 +79,7 @@ lab version
 ```
 
 **What you will see:** the installed build's version. A source build may show a
-Git suffix after `v1.0.0`. Re-run installation after updating source.
+Git suffix after `v1.1.0`. Re-run installation after updating source.
 
 Enable the user Podman API socket if it is not already enabled:
 

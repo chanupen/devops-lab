@@ -183,7 +183,7 @@ The G14 has 22 GiB of RAM and 8 GiB of swap. The default is `minimal` plus obs (
 | standard | minimal + secrets (with Moto), obs, policy, scaling | About 10 to 12 GiB |
 | full | standard + ci, chaos, ai (Ollama with a 3B model on the 4 GB GPU) | 7.47 GiB median of three `podman stats` runs for the **currently deployable full profile**, plus retained sample-db, on 2026-11-07. The plan skips CI, chaos and scaling because they are unsupported; this is not a measurement of those stacks. The three consecutive `kubectl top pods -n ai` readings each totaled 1,664 MiB, included in the node container totals, not added. Ollama was idle with no model loaded. |
 
-Harbor adds about 2 GiB, so it runs only in labs that need it. Flux is planned, not built; once it exists, Argo CD and Flux never run together except in a comparison lab.
+`lab doctor` checks free memory against the profile's figure plus each extra stack the profile lacks, from the measurements above: obs 0.6 GiB, policy 0.8, secrets 0.16 and sample-db 0.03 (about 0.2 together), ai 1.7. Harbor adds about 2 GiB, so it runs only in labs that need it. Flux is planned, not built; once it exists, Argo CD and Flux never run together except in a comparison lab.
 
 ci, scaling and chaos are planned, not built, so the standard and full rows list stacks that plans skip today.
 
@@ -870,7 +870,7 @@ Recorded on 12 Nov 2026 from merged PRs. "Deferred" items are planned, not built
 | 3 Cloud mode | No leftovers after down | #12–#16 (1–2 Nov); a clean `lab down` with nothing tagged `lab=true` left outside the baseline in #16 and again in #32/#33 (6 Nov) | Cost screen |
 | 4 Labs and drills | Labs pass in both modes | #17–#33; passed 6 Nov (above). 6 labs, 7 drills | chaos (drills inject faults without Chaos Mesh) |
 | 5 AI and release | v1.0 tag | #35–#47; v1.0.0 released 8 Nov | — |
-| After v1.0 | — | Docs #48–#52 (9 Nov); guided `lab start`/`lab next` #53, #56; durable progress #55; accepted doctor warnings #54; print-only `doctor --fix` #57 (9 Nov); accuracy fixes (this release) | — |
+| After v1.0 | — | Docs #48–#52 (9 Nov); guided `lab start`/`lab next` #53, #56; durable progress #55; accepted doctor warnings #54; print-only `doctor --fix` #57 (9 Nov); accuracy fixes #58 and the doctor memory threshold, released as v1.1.0 | — |
 
 Planned, not built, in total: the Cost screen, Flux, the ci, scaling (KEDA) and chaos stacks, Tempo, and Sloth as an obs component. ci and scaling had no phase of their own. Plans skip ci, scaling and chaos; `gitops: flux` is refused.
 
@@ -966,6 +966,8 @@ Sources: [RPM Fusion NVIDIA howto](https://rpmfusion.org/Howto/NVIDIA), [RPM Fus
 
 ## Public readiness and release
 
+[v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
+release ([CHANGELOG](../CHANGELOG.md)).
 [v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
 on 2026-11-08. The repository remains private. Both binaries, LICENSE and
 THIRD_PARTY_NOTICES.txt passed verification against the release's

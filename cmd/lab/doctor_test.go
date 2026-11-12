@@ -370,9 +370,9 @@ func TestDoctorConfigProfile(t *testing.T) {
 		wantProfile string // JSON profile
 		wantDetail  string // memory check detail
 	}{
-		{"profile and extras from lab.yaml", "profile: minimal\nextraStacks: [obs]\n", nil, "minimal", "minimal + obs needs ~4 GiB"},
+		{"profile and extras from lab.yaml", "profile: minimal\nextraStacks: [obs]\n", nil, "minimal", "minimal + obs needs ~4.6 GiB"},
 		{"standard from lab.yaml", "profile: standard\nextraStacks: []\n", nil, "standard", "standard needs ~12 GiB"},
-		{"defaults when lab.yaml leaves them out", "mode: local\n", nil, "minimal", "minimal + obs needs ~4 GiB"},
+		{"defaults when lab.yaml leaves them out", "mode: local\n", nil, "minimal", "minimal + obs needs ~4.6 GiB"},
 		{"--profile overrides lab.yaml", "profile: minimal\nextraStacks: [obs]\n", []string{"--profile", "full"}, "full", "full needs ~19 GiB"},
 		{"--profile drops lab.yaml extras", "profile: standard\nextraStacks: [ai]\n", []string{"--profile", "minimal"}, "minimal", "minimal needs ~4 GiB"},
 	}
