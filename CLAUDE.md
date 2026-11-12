@@ -26,18 +26,22 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
   - Only one lab changes things at a time: `up`, `down` and a TUI that can act take a non-blocking flock on `~/.lab/state.json.lab.lock` (a TUI for as long as it is open). A second `up`/`down` exits at once with "lab and its components are already running: <holder> (pid, terminal, since)". Read-only commands (`status`, `plan`, `doctor`) and the TUI's views and reports never take it. A TUI that cannot get the lock opens read-only ("read-only: another lab is running (pid …)" in the header, actions refused) and takes over once the holder is done. Inside a TUI, actions run one at a time.
   - Stacks a provider cannot run yet are skipped at plan time (`- <stack>  skip: …`, one warning), never failed at run time.
   - Without `--config`, `lab` reads `./lab.yaml`, then `~/.lab/lab.yaml` (on Fedora a symlink to the repo's file, so `ssh -t fedora lab` gets the real config).
-- Providers implement one Go interface: `Cluster()`, `Registry()`, `Secrets()`, `ObjectStore()`, `Cost()`, `Destroy()`.
-  - `local`: kind on rootless Podman, Moto (the AWS emulator, for Secrets Manager), Zot registry, Ollama on the host.
-  - `aws`: Terraform via terraform-exec, AWS SDK v2, EKS + Karpenter (spot), ECR, Secrets Manager, EKS Pod Identity.
-- After bootstrap, GitOps owns everything: **Argo CD by default, Flux as the second option** (`gitops: argocd | flux`). Never run both except in the comparison lab.
+- The engine runs each stack through an `engine.Runner` (`Apply`, `Destroy`). A runner whose stack keeps something outside the cluster also implements `engine.Releaser` (`Release`, called instead of `Destroy` when the stack goes with the cluster). `cmd/lab` builds one `engine.Router` (stack → runner) per mode from:
+  - `internal/provider/local`: registry and cluster (Zot, kind on rootless Podman), plus Moto (the AWS emulator, for Secrets Manager) and the sample-db image build, wrapped around the GitOps runner. Ollama runs on the host.
+  - `internal/provider/aws`: registry and cluster through OpenTofu (terraform-exec) and AWS SDK v2: VPC, EKS, ECR, Pod Identity, and Karpenter (spot) and the Load Balancer Controller installed with the cluster.
+  - `internal/gitops`: the gitops stack (Argo CD via the Helm SDK) and every in-cluster stack as an Argo CD Application, in both modes.
+  - There is no cost interface; the Cost screen is planned.
+- After bootstrap, Argo CD owns everything. **Flux is planned, not built**: `gitops: flux` stays a known value, and `lab up`, `lab plan`, `lab start` and `lab doctor` refuse it ("gitops: flux is planned, not built; use argocd"). Once it exists, never run both except in a comparison lab.
 - Mode differences live only in `gitops/overlays/` and `internal/provider/`. If supporting one mode needs changes anywhere else, the design is leaking.
 
 ## Stacks
 
-core (cluster, CNI, metrics-server, Gateway API via Envoy Gateway, cert-manager) · gitops · registry · ci (GitHub Actions runners via ARC, Jenkins optional) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, Tempo, OTel Collector, Grafana, Sloth) · policy (Kyverno) · scaling (KEDA local, Karpenter cloud) · chaos (Chaos Mesh) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app.
+Built: registry · cluster · gitops (Argo CD) · core (metrics-server, Gateway API via Envoy Gateway, cert-manager) · secrets (External Secrets Operator) · obs (kube-prometheus-stack, Loki, OTel Collector, Grafana) · policy (Kyverno) · ai (local-only host Ollama, Langfuse, alpha ClickHouse operator and Moto S3) · sample-app · sample-db.
+
+**Planned, not built:** ci (GitHub Actions runners via ARC, Jenkins optional) · scaling (KEDA local; cloud clusters already get Karpenter with the cluster stack) · chaos (Chaos Mesh) · Tempo (traces in obs) · Sloth as a stack (lab 3 runs the Sloth CLI as an image) · Flux. Plans skip ci, scaling and chaos (`skip: not supported`); `gitops: flux` is refused.
 
 - ai is in the full profile, or add it with `lab up --stacks ai`; it depends on obs and secrets. e2e: `LAB_E2E_MAIN_KUBECONFIG=~/.lab/kubeconfig go test -tags e2e -run E2EAI -timeout 20m ./internal/ai/`.
-- The AI assistant's read-only tools and runner are in `internal/assist`; `ai/assist-tools` has no Secret or write grants. `lab assist alert|drill` and an in-cluster webhook draft evidence-backed notes with the local model; hosted inference requires an explicit CLI flag. Local receiver memory sampled at 3 MiB idle, 7 MiB peak. Drill notes need human review: valid citation IDs do not guarantee supported claims. The TUI and eval remain future work.
+- The AI assistant's read-only tools and runner are in `internal/assist`; `ai/assist-tools` has no Secret or write grants. `lab assist alert|drill` and an in-cluster webhook draft evidence-backed notes with the local model; hosted inference requires an explicit CLI flag. Local receiver memory sampled at 3 MiB idle, 7 MiB peak. Drill notes need human review: valid citation IDs do not guarantee supported claims. `lab assist eval` (#40) and the assistant TUI pane (#41) are shipped. The recorded eval on five diagnosable drill fixtures: rules-first 15/15 cause accuracy, model-only 0/15 for both 3B models; the rules were authored against those fixtures, so it measures the harness, not generalisation.
 
 Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (7.47 GiB median of three `podman stats` runs for the deployable full profile plus retained sample-db, with Ollama idle). AI pods used 1,664 MiB by `kubectl top`, included in the node totals. The full plan skips unsupported CI, chaos and scaling; those stacks were not measured. The default is `minimal` plus obs through `extraStacks: [obs]` in `lab.yaml` (4.6 GiB measured); `standard` becomes the default once its stacks exist. Harbor only when a lab needs it.
 
@@ -47,7 +51,7 @@ Local memory profiles: `minimal` (~4 GiB), `standard` (~10–12 GiB), `full` (7.
 - Watch Kubernetes with client-go informers; never poll `kubectl`.
 - Use libraries over CLIs: Helm SDK, kind library, terraform-exec, AWS SDK v2.
 - Log panes: ring buffer of 5,000 lines, at most 20 redraws a second.
-- k9s-style keys: `1`–`6` screens, `:` palette, `/` filter, `u`/`d` up/down the selected stack (`d` asks first), `U` the whole profile, `r` retry a failed stack, `l` logs, `K` open k9s, `m` mode, `v` verify, `?` help.
+- k9s-style keys: `1`–`5` screens (`6`, Cost, is planned), `:` palette, `/` filter, `u`/`d` up/down the selected stack (`d` asks first), `U` the whole profile, `r` retry a failed stack, `l` logs, `K` open k9s, `m` mode, `v` verify, `?` help.
 - State shown with symbol and colour together: ● healthy, ◐ progressing, ○ off, ✕ failed.
 - Labs screen (3): `enter` opens the current step, `v` verifies it, `h` shows the next hint, `n`/`p` move between steps; ● done, ◐ current, ○ not started.
 - Every TUI action logs the equivalent CLI command.
@@ -98,11 +102,11 @@ Makefile                 make install (to BINDIR, default ~/.local/bin); builds 
 0. Foundations (wk 1): repo skeleton, Cobra CLI, `lab doctor`. Gate: doctor all green.
 1. Local core (wk 2–3): engine + local provider; core, gitops, obs, sample-app. Gate: healthy in under 5 min.
 2. TUI v1 (wk 4–5): Home, Stacks, Ops log, palette, k9s handoff. Gate: first frame under 100 ms.
-3. Cloud mode (wk 6–7): Terraform VPC/EKS/ECR, TTL, reaper, budget, Cost screen. Gate: no leftovers after down.
+3. Cloud mode (wk 6–7): Terraform VPC/EKS/ECR, TTL, reaper, budget. The Cost screen is planned, not built (key `6` shows a later-release message). Gate: no leftovers after down.
 4. Labs and drills (wk 8–9): 6 labs, 7 drills with timers. Gate: labs pass in both modes.
 5. AI and release (wk 10–12): ai stack, AI On-Call Assistant, README, demo, binaries. Gate: v1.0 tag.
 
-If a phase slips, cut TUI screens before labs.
+If a phase slips, cut TUI screens before labs. What each phase delivered and deferred: `docs/design.md`, "Delivered vs planned".
 
 ## Labs
 
@@ -127,7 +131,7 @@ If a phase slips, cut TUI screens before labs.
 
 ## `lab doctor` checks (phase 0)
 
-Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 and its running image digest matches the compat pin · when ai is deployed: `ollama.ai.svc`, `llama3.2:3b`, Langfuse and its Argo CD apps are healthy · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against the chosen profile · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
+Podman rootless mode and version · `podman.socket` (user) · cgroup v2 controllers delegated to the user (cpuset cpu io memory pids) · inotify limits (`max_user_watches` ≥ 524288, `max_user_instances` ≥ 512) · iptables modules (`ip_tables`, `iptable_nat`, `ip6_tables`, `ip6table_nat`) · SELinux mode and `container_use_devices` · NVIDIA module loaded, `nvidia-smi`, free VRAM · `nvidia-ctk cdi list` shows `nvidia.com/gpu=all` · Ollama answers on 11434 and its running image digest matches the compat pin · when ai is deployed: `ollama.ai.svc`, `llama3.2:3b`, Langfuse and its Argo CD apps are healthy · Moto (`lab-moto`) runs, answers on 127.0.0.1:4566 and holds secrets, while the secrets stack is deployed · tool versions (go, kind, kubectl, helm, k9s, tofu/terraform, aws) · free RAM against lab.yaml's profile and extraStacks (`--profile` overrides; `--config`/`--state` as for plan) · ghcr.io blob download speed and the GitHub CDN address DNS returns (`zot.addHosts` in `lab.yaml` pins one inside lab-zot only, never `/etc/hosts`) · a drill still in the lab. Output: coloured table, `--json` flag, non-zero exit on failure.
 
 Doctor also checks that lab ports 11434, 5000, 4566, 8080 and 8443 listen on loopback only, using `/proc/net/tcp` and `tcp6`.
 

@@ -127,7 +127,7 @@ repo:
 
 This is a fragment, not a replacement for the whole file. The source must
 contain this repository's `gitops/` tree on `main`. A plain up syncs `main`.
-Do not run Argo CD and Flux together outside their comparison exercise.
+Keep `gitops: argocd`. Flux is planned, not built, and lab refuses `gitops: flux`.
 
 Config discovery checks `./lab.yaml`, then `~/.lab/lab.yaml`. Run from the
 checkout. A remote shell can use a symlink from `~/.lab/lab.yaml` to this

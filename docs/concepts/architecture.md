@@ -19,7 +19,7 @@ flowchart LR
     Engine --> AWS["AWS provider: OpenTofu and SDK"]
     Local --> Cluster["Kubernetes: kind or EKS"]
     AWS --> Cluster
-    Cluster --> GitOps["Argo CD; Flux alternative"]
+    Cluster --> GitOps["Argo CD (Flux planned)"]
     Source["Private Git source"] --> GitOps
     GitOps --> Apps["Workloads and observability"]
     Apps --> Gateway["Envoy Gateway"]
@@ -43,8 +43,9 @@ The sample app depends on core; observability adds Prometheus, Grafana and
 other telemetry services. Dependencies are added when you request a stack.
 
 After bootstrap, change workload definitions through GitOps, not competing
-manual installs. Argo CD is the default. Flux is the alternative, not an
-extra controller to run beside it.
+manual installs. Argo CD is the only GitOps controller built. Flux is
+planned, not built; `gitops: flux` is refused by `lab up`, `lab plan`,
+`lab start` and `lab doctor`.
 
 ## What changes between modes
 

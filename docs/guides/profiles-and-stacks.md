@@ -27,8 +27,10 @@ profile: minimal
 extraStacks: [obs]
 ```
 
-Doctor's `--profile` selects a readiness threshold; it does not change
-`lab.yaml` or deploy a profile. There is no up `--profile` flag.
+Doctor reads `profile` and `extraStacks` from `lab.yaml` (or `--config`).
+Its `--profile` overrides both for that report: it selects a readiness
+threshold and does not change `lab.yaml` or deploy a profile. There is no up
+`--profile` flag.
 Total RAM below the profile threshold fails. Available RAM below it warns,
 even when total RAM is sufficient; a zero exit status can still need review.
 
@@ -67,14 +69,14 @@ Real host failures still block, including GPU checks when AI is requested.
 | --- | --- | --- | --- |
 | registry | none | Zot/cache locally; ECR in AWS | Both |
 | cluster | registry | kind or EKS, CNI and storage | Both |
-| gitops | cluster | Argo CD by default; Flux alternative | Both |
+| gitops | cluster | Argo CD; Flux is planned, not built (`gitops: flux` is refused) | Both |
 | core | gitops | metrics-server, Envoy Gateway, cert-manager | Both |
 | secrets | gitops | External Secrets Operator and Secrets Manager integration | Both; local Moto is provider-managed |
-| obs | gitops, core | Prometheus, Grafana, Loki, Tempo, OTel and SLO tooling | Both |
+| obs | gitops, core | Prometheus, Alertmanager, Grafana, Loki, OTel Collector and SLO alert rules; Tempo and Sloth are planned, not built | Both |
 | policy | gitops | Kyverno | Both |
-| scaling | gitops, obs | Intended KEDA/Karpenter exercise stack | Skipped; cloud Karpenter is installed during cluster bootstrap, not this stack |
-| ci | gitops, registry, secrets | Intended ARC/Jenkins stack | Skipped |
-| chaos | obs | Intended Chaos Mesh stack | Skipped |
+| scaling | gitops, obs | Planned, not built: KEDA/Karpenter exercise stack | Skipped; cloud Karpenter is installed during cluster bootstrap, not this stack |
+| ci | gitops, registry, secrets | Planned, not built: ARC/Jenkins stack | Skipped |
+| chaos | obs | Planned, not built: Chaos Mesh stack | Skipped |
 | ai | obs, secrets | Host Ollama access, Langfuse and tracing dependencies | Local only; cloud stub is skipped |
 | sample-app | core, registry | podinfo sample application | Both |
 | sample-db | core, secrets, registry | Database-backed app, Postgres and TLS | Both |

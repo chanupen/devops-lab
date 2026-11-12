@@ -14,7 +14,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 ## Order and status
 
-| File | Phase | Builds | Status (9 Nov 2026) |
+| File | Phase | Builds | Status (12 Nov 2026) |
 | --- | --- | --- | --- |
 | `01-phase0-foundations.md` | 0 | Repo skeleton, Cobra CLI, `lab doctor` | Done (#1, #4) |
 | `02-phase1-local-core.md` | 1 | Engine, state, local provider, gitops, core, obs, sample-app | Done (#2–#7) |
@@ -68,7 +68,16 @@ Implementation uses small reviewed PRs; none is merged by the agent.
 | B1.1 | Ignore accepted doctor warnings in next; regression fixtures, goldens and docs | Approved and merged (#54) |
 | B2 | Durable lab/drill completion, best times, in-memory version-1 to 2 migration, list aliases and cached Home summary | Approved and merged (#55); fixture-only validation |
 | B1 recovery | Stopped-runtime detection, restart guidance and deferred API health without hiding host failures | Approved and merged (#56) |
-| B3 | Print-only `doctor --fix`, typed commands, sudo/approval labels, text/JSON and next suggestions | Implemented; draft review pending, fixture-only validation |
+| B3 | Print-only `doctor --fix`, typed commands, sudo/approval labels, text/JSON and next suggestions | Approved and merged (#57); fixture-only validation |
+
+## Accuracy fixes and v1.1.0
+
+From the 10 Nov end-to-end review. Small reviewed PRs; none is merged by the agent.
+
+| PR | Scope | Status |
+| --- | --- | --- |
+| Accuracy | Refuse `gitops: flux` (planned, not built); doctor reads profile and extraStacks from `lab.yaml`; CLAUDE.md, design and reader docs match the code; delivered-vs-planned table | Open for review |
+| v1.1.0 | CHANGELOG for everything after v1.0.0, version references and install examples; the owner tags, then the release assets are verified | Not started; after the accuracy PR merges |
 
 ## To rebuild from nothing
 
