@@ -76,8 +76,8 @@ From the 10 Nov end-to-end review. Small reviewed PRs; none is merged by the age
 
 | PR | Scope | Status |
 | --- | --- | --- |
-| Accuracy | Refuse `gitops: flux` (planned, not built); doctor reads profile and extraStacks from `lab.yaml`; CLAUDE.md, design and reader docs match the code; delivered-vs-planned table | Open for review |
-| v1.1.0 | CHANGELOG for everything after v1.0.0, version references and install examples; the owner tags, then the release assets are verified | Not started; after the accuracy PR merges |
+| Accuracy | Refuse `gitops: flux` (planned, not built); doctor reads profile and extraStacks from `lab.yaml`; CLAUDE.md, design and reader docs match the code; delivered-vs-planned table | Approved and merged (#58) |
+| v1.1.0 | CHANGELOG for everything after v1.0.0, version references and install examples, doctor memory threshold per extra stack; the owner tags, then the release assets are verified | Open for review; tag and asset verification follow the merge |
 
 ## To rebuild from nothing
 

@@ -71,8 +71,8 @@ make lint test
 Opt-in e2e tests mutate a lab and are not part of this command.
 Documentation checks need Python 3.10+ and make, with no downloads or secrets.
 
-[v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
-on 2026-11-08. Linux/amd64 and Intel macOS binaries come with `SHA256SUMS`;
+[v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
+release ([changes](CHANGELOG.md)). Linux/amd64 and Intel macOS binaries come with `SHA256SUMS`;
 [verify your download](docs/README.md#release-binaries) before executing it.
 The [release workflow](.github/workflows/release.yml) builds tagged releases.
 Branch-only dispatch builds artifacts without publishing.

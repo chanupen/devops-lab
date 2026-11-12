@@ -47,9 +47,20 @@ Do not copy credentials, private keys, kubeconfigs or state into Git.
 
 ## Release binaries
 
-[v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
-on 2026-11-08. Download your platform's binary and `SHA256SUMS` from the same
-release. Also retain its `LICENSE` and `THIRD_PARTY_NOTICES.txt`.
+[v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
+release; [CHANGELOG.md](../CHANGELOG.md) lists what changed. Download your
+platform's binary and `SHA256SUMS` from the same release. Also retain its
+`LICENSE` and `THIRD_PARTY_NOTICES.txt`. While the repository is private,
+download with an authenticated `gh`:
+
+```sh
+gh release download v1.1.0 --repo chanupen/devops-lab \
+  --pattern lab-linux-amd64 --pattern SHA256SUMS \
+  --pattern LICENSE --pattern THIRD_PARTY_NOTICES.txt
+```
+
+**What you will see:** no output; the four files are in the current directory.
+Use `--pattern lab-darwin-amd64` instead of `lab-linux-amd64` on Intel macOS.
 Run the following in the download directory before executing the binary.
 
 Linux:

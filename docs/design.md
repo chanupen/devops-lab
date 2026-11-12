@@ -870,7 +870,7 @@ Recorded on 12 Nov 2026 from merged PRs. "Deferred" items are planned, not built
 | 3 Cloud mode | No leftovers after down | #12–#16 (1–2 Nov); a clean `lab down` with nothing tagged `lab=true` left outside the baseline in #16 and again in #32/#33 (6 Nov) | Cost screen |
 | 4 Labs and drills | Labs pass in both modes | #17–#33; passed 6 Nov (above). 6 labs, 7 drills | chaos (drills inject faults without Chaos Mesh) |
 | 5 AI and release | v1.0 tag | #35–#47; v1.0.0 released 8 Nov | — |
-| After v1.0 | — | Docs #48–#52 (9 Nov); guided `lab start`/`lab next` #53, #56; durable progress #55; accepted doctor warnings #54; print-only `doctor --fix` #57 (9 Nov); accuracy fixes (this release) | — |
+| After v1.0 | — | Docs #48–#52 (9 Nov); guided `lab start`/`lab next` #53, #56; durable progress #55; accepted doctor warnings #54; print-only `doctor --fix` #57 (9 Nov); accuracy fixes #58 and the doctor memory threshold, released as v1.1.0 | — |
 
 Planned, not built, in total: the Cost screen, Flux, the ci, scaling (KEDA) and chaos stacks, Tempo, and Sloth as an obs component. ci and scaling had no phase of their own. Plans skip ci, scaling and chaos; `gitops: flux` is refused.
 
@@ -966,6 +966,8 @@ Sources: [RPM Fusion NVIDIA howto](https://rpmfusion.org/Howto/NVIDIA), [RPM Fus
 
 ## Public readiness and release
 
+[v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
+release ([CHANGELOG](../CHANGELOG.md)).
 [v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
 on 2026-11-08. The repository remains private. Both binaries, LICENSE and
 THIRD_PARTY_NOTICES.txt passed verification against the release's
