@@ -4,7 +4,7 @@
 
 Reader pages explain how to use the lab without reading design.md.
 The design remains the engineering reference. Keep both accurate when
-behavior changes. The repository stays private.
+behavior changes. The repository is public under the MIT licence.
 
 ## Writing
 

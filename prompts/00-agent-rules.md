@@ -22,7 +22,7 @@ Hard rules
 1. Container runtime is rootless Podman, always. Never install or call
    Docker. kind runs with KIND_EXPERIMENTAL_PROVIDER=podman.
 2. Keep everything generic: no company names, code or data. The repo is
-   private today and will be public later.
+   public under the MIT licence.
 3. Never commit secrets, AWS keys, kubeconfigs, Terraform state or
    binaries. Check `git status` before every commit.
 4. Ask before anything destructive on the host: deleting files outside

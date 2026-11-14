@@ -20,7 +20,7 @@ flowchart LR
     Local --> Cluster["Kubernetes: kind or EKS"]
     AWS --> Cluster
     Cluster --> GitOps["Argo CD (Flux planned)"]
-    Source["Private Git source"] --> GitOps
+    Source["Git source"] --> GitOps
     GitOps --> Apps["Workloads and observability"]
     Apps --> Gateway["Envoy Gateway"]
     Client["Browser or SSH client"] --> Loopback["Loopback ports or tunnel"]

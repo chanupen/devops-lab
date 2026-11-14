@@ -23,7 +23,7 @@ over SSH; it does not run the local provider.
 | kind 0.30+, kubectl compatible with Kubernetes 1.36, Helm 3.15+, k9s 0.40+ | Tools checked by doctor; k9s is the TUI handoff |
 | jq, curl, OpenSSH and base64 | Exercises, access and certificate extraction |
 | OpenTofu 1.10+ or Terraform 1.9+, and AWS CLI v2 | Doctor checks these even locally; local mode does not use real AWS |
-| Private repository access and a read-only GitOps deploy key | Clone the source and let Argo CD read it |
+| A read-only GitOps deploy key | Lets Argo CD read the repository over SSH |
 
 The default deployment measured about 4.6 GiB of container memory. Leave
 headroom for the host, image pulls and builds. Doctor checks a 4 GiB memory
@@ -36,14 +36,13 @@ GPU, NVIDIA CDI and host Ollama are optional unless you select `ai` or `full`.
 
 ## Get the source and install
 
-Use your normal authenticated Git setup for this private repository.
+The repository is public; cloning needs no login.
 
 ```sh
 git clone https://github.com/chanupen/devops-lab.git
 ```
 
-**What you will see:** clone progress and a `devops-lab` directory. An access
-error means your Git identity does not have repository access.
+**What you will see:** clone progress and a `devops-lab` directory.
 
 ```sh
 cd devops-lab

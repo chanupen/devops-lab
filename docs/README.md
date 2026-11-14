@@ -1,7 +1,7 @@
 # Documentation
 
 Start with the local guide. Use cloud mode only for an approved AWS session.
-The repository is private; you need access to clone it.
+The repository is public under the MIT licence.
 
 ## I want to...
 
@@ -50,17 +50,17 @@ Do not copy credentials, private keys, kubeconfigs or state into Git.
 [v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
 release; [CHANGELOG.md](../CHANGELOG.md) lists what changed. Download your
 platform's binary and `SHA256SUMS` from the same release. Also retain its
-`LICENSE` and `THIRD_PARTY_NOTICES.txt`. While the repository is private,
-download with an authenticated `gh`:
+`LICENSE` and `THIRD_PARTY_NOTICES.txt`. Downloads need no GitHub login:
 
 ```sh
-gh release download v1.1.0 --repo chanupen/devops-lab \
-  --pattern lab-linux-amd64 --pattern SHA256SUMS \
-  --pattern LICENSE --pattern THIRD_PARTY_NOTICES.txt
+base=https://github.com/chanupen/devops-lab/releases/download/v1.1.0
+for f in lab-linux-amd64 SHA256SUMS LICENSE THIRD_PARTY_NOTICES.txt; do
+  curl -fsSLO "$base/$f"
+done
 ```
 
 **What you will see:** no output; the four files are in the current directory.
-Use `--pattern lab-darwin-amd64` instead of `lab-linux-amd64` on Intel macOS.
+Use `lab-darwin-amd64` instead of `lab-linux-amd64` on Intel macOS.
 Run the following in the download directory before executing the binary.
 
 Linux:
