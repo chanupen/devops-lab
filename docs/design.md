@@ -32,7 +32,7 @@ tests cover broken targets/anchors, code-fence exclusion and diagram failures.
 [Documentation contributions](contributing-docs.md) defines style and safety.
 The accuracy pass runs local read-only reports; cloud and mutation commands
 are verified with help/code only. Host-specific audit output stays outside Git.
-Each PR is reviewed separately; the repository stays private.
+Each PR is reviewed separately; the repository is public under the MIT licence.
 Command examples are checked against help and code without cloud operations,
 drill injection or live-lab changes.
 
@@ -139,7 +139,7 @@ The lab exists to practise the Senior/Staff platform stack on real systems, rehe
 - **GitOps after bootstrap.** The tool creates the cluster and installs Argo CD. Everything else is an Argo CD Application from Git, so the lab teaches the real pattern.
 - **Never block the screen.** Every action runs in the background and streams output to a pane. Keys stay responsive while Terraform runs.
 - **Destroy is cheap and safe.** Any environment can be rebuilt from Git in minutes, so nothing in the lab is precious.
-- **Generic and public-ready.** No company names, code or data, so the private repo can be made public for students later.
+- **Generic and public.** No company names, code or data. The repo is public under the MIT licence.
 
 ## Lab modes
 
@@ -730,7 +730,7 @@ zot:                       # optional; only lab-zot uses it (podman --add-host),
     pkg-containers.githubusercontent.com: 185.199.109.154
 
 repo:                      # what Argo CD syncs from (gitops/bootstrap is the app-of-apps)
-  url: git@github.com:chanupen/devops-lab.git        # private; SSH for the deploy key; lab-bootstrap tracks main
+  url: git@github.com:chanupen/devops-lab.git        # SSH for the deploy key; lab-bootstrap tracks main
   sshKeyFile: ~/.ssh/devops-lab-deploy   # read-only deploy key, loaded as a Secret at bootstrap; never committed
 ```
 
@@ -969,7 +969,7 @@ Sources: [RPM Fusion NVIDIA howto](https://rpmfusion.org/Howto/NVIDIA), [RPM Fus
 [v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) is the current
 release ([CHANGELOG](../CHANGELOG.md)).
 [v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
-on 2026-11-08. The repository remains private. Both binaries, LICENSE and
+on 2026-11-08. Both binaries, LICENSE and
 THIRD_PARTY_NOTICES.txt passed verification against the release's
 [SHA256SUMS](https://github.com/chanupen/devops-lab/releases/download/v1.0.0/SHA256SUMS);
 the verified hashes are recorded in [prompts/README.md](../prompts/README.md#current-release).
@@ -1036,7 +1036,7 @@ The biggest risk is spending the time on TUI polish instead of labs; build the C
 
 | Decision | Choice |
 | --- | --- |
-| Repo | Private repo `github.com/chanupen/devops-lab`; kept generic so it can go public later |
+| Repo | Public repo `github.com/chanupen/devops-lab` under the MIT licence; kept generic |
 | Container runtime | Rootless Podman on Fedora, always; no Docker |
 | GitOps | Argo CD by default; Flux as the second option (planned, not built as of 12 Nov 2026) |
 | Fedora RAM | 22 GiB + 8 GiB swap; default profile `minimal` + obs |

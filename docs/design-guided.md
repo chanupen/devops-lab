@@ -12,7 +12,6 @@ Start/next examples below are fixture output, not live-run evidence.
 Make local startup understandable. Give one useful next action. Keep completion
 records after exercise cleanup. Print actionable doctor fixes without running them.
 Do not add cloud startup, a new TUI screen, inference or an automatic installer.
-The repository stays private.
 
 Existing code is the starting point:
 

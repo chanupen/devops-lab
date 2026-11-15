@@ -1,6 +1,6 @@
 # 01 — Phase 0: foundations
 
-Needs: an empty private repo, Go installed on Fedora, `00-agent-rules.md` sent. Gate: `lab doctor` all green on the Fedora host.
+Needs: an empty repo, Go installed on Fedora, `00-agent-rules.md` sent. Gate: `lab doctor` all green on the Fedora host.
 
 ```text
 Phase 0: repo skeleton, Cobra CLI and `lab doctor`.

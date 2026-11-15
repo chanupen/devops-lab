@@ -7,7 +7,7 @@ The design lives in `docs/design.md`; update it in the same PR as the change.
 ## Hard rules
 
 - **Container runtime is rootless Podman, always.** Never install or call Docker. kind runs with `KIND_EXPERIMENTAL_PROVIDER=podman`.
-- Keep everything generic: no company names, code or data. The repo is private today but must be publishable later.
+- Keep everything generic: no company names, code or data. The repo is public.
 - Never commit secrets, AWS keys, kubeconfigs or Terraform state.
 - Ask before anything destructive on the host (deleting files outside the repo, `sudo` changes, removing Podman volumes) and before any `terraform apply`/`destroy` against AWS.
 - Cloud work stays in **ap-south-1** and every AWS resource gets the tags `lab=true`, `owner=chanupen`, `expires-at=<RFC3339>`.

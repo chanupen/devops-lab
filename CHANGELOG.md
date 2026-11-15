@@ -3,6 +3,15 @@
 Notable changes per release. Binaries and `SHA256SUMS` are on each
 [GitHub release](https://github.com/chanupen/devops-lab/releases).
 
+## Unreleased
+
+### Docs
+
+- The repository is public: removed statements that it is private, added
+  `SECURITY.md` (private vulnerability reporting) and weekly Dependabot
+  updates for Go modules and GitHub Actions. Release downloads use anonymous
+  `curl` instead of `gh` (#61).
+
 ## v1.1.0 (2026-11-12)
 
 ### Added

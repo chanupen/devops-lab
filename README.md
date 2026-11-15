@@ -25,7 +25,7 @@ Its assistant provides read-only hypotheses that need human review.
 Cloud stays in `ap-south-1`, defaults to a **2h TTL**, and needs approval before
 apply or destroy. TTL and budget alerts are not a hard spending cap.
 Credentials, kubeconfigs and infrastructure state stay outside Git.
-The repository remains private.
+The repository is public under the MIT licence.
 
 ## TUI
 

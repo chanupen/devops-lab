@@ -36,7 +36,7 @@ These prompts rebuild `devops-lab` from an empty repo, or continue it from where
 
 [v1.1.0](https://github.com/chanupen/devops-lab/releases/tag/v1.1.0) was released
 on 2026-11-12 from ebe0ce1 (#59); see [CHANGELOG.md](../CHANGELOG.md). The
-repository remains private. The release has all five assets. All four
+release has all five assets. All four
 downloaded copies passed `sha256sum --check SHA256SUMS`:
 
 ```text

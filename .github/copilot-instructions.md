@@ -42,8 +42,7 @@ the complete operational constraints.
   background commands, and retain the log ring-buffer/redraw limits.
 - Provider-unsupported stacks are skipped during planning, not failed at run
   time.
-- Keep examples, names, code, and data generic so the repository remains
-  publishable.
+- Keep examples, names, code, and data generic. The repository is public.
 - Write plain, concise documentation. Keep commits small and conventional.
   Never push directly to `main`.
 
