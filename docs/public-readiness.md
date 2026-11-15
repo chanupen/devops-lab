@@ -1,5 +1,11 @@
 # Public-readiness audit
 
+> **14 Nov 2026:** the repository was made public under the MIT licence.
+> Secret scanning, push protection, Dependabot alerts, private vulnerability
+> reporting and the `main` ruleset (no force push, no deletion, changes
+> through pull requests only) are enabled. The audit below is kept as a
+> record.
+
 7 Nov 2026. Baseline: `f29cb38` on `main`. This is release PR 1 only.
 It is not a declaration that the repository is ready to publish.
 
