@@ -204,6 +204,6 @@ lab drills status
 **What you will see:** no active drill after successful restoration.
 A restore error is not success; retain its state and investigate.
 
-These symptom/cause/fix entries come from doctor messages and
-[known issues](../../prompts/91-known-issues.md). That engineering log retains
-the historical details; this page is the reader-facing starting point.
+These symptom/cause/fix entries come from doctor messages and the
+maintainer's engineering log of known issues, which is kept privately.
+This page is the reader-facing starting point.

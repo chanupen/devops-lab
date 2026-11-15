@@ -524,7 +524,7 @@ Do not create B2/B3 merely because B1 is open.
 
 Each implementation PR updates quickstart pages, generated
 [CLI help](guides/cli.md), [TUI guide](guides/tui.md), relevant task guides,
-[docs/design.md](design.md) and [prompts/README.md](../prompts/README.md).
+[docs/design.md](design.md) and [CHANGELOG.md](../CHANGELOG.md).
 The first design-only PR intentionally leaves those files unchanged.
 
 Run the help generator and `make docs-check`; run `make lint test` before each

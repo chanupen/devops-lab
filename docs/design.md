@@ -971,8 +971,21 @@ release ([CHANGELOG](../CHANGELOG.md)).
 [v1.0.0](https://github.com/chanupen/devops-lab/releases/tag/v1.0.0) was released
 on 2026-11-08. Both binaries, LICENSE and
 THIRD_PARTY_NOTICES.txt passed verification against the release's
-[SHA256SUMS](https://github.com/chanupen/devops-lab/releases/download/v1.0.0/SHA256SUMS);
-the verified hashes are recorded in [prompts/README.md](../prompts/README.md#current-release).
+[SHA256SUMS](https://github.com/chanupen/devops-lab/releases/download/v1.0.0/SHA256SUMS).
+v1.1.0 was released on 2026-11-12 from ebe0ce1 (#59) with all five assets;
+the downloaded linux binary prints `v1.1.0` for `lab version`. Verified
+hashes (`sha256sum --check SHA256SUMS` passed on downloaded copies):
+
+| Asset | v1.1.0 | v1.0.0 |
+| --- | --- | --- |
+| `lab-linux-amd64` | `d934d0fb67b0e56087dd1feeaf3c2036d4ce32a2a7cb1bc8ffa1e226cd4cba48` | `ef22df3d083f66ded69d086c43e42eeb35c44320b04e49d1733a1eb717642447` |
+| `lab-darwin-amd64` | `01caf18b80a13829c1c9853a03a5a165748b387a34a77b1ef4eb9a9216d9af82` | `cccf5d698caf7990b76fd0073404f0e3ce62835112cec082e7c8f53f906be1ea` |
+| `LICENSE` | `47645d336159ac26585408aae879dbc64ed4fe0a1b6a0488dcdf768fcd190e71` | same |
+| `THIRD_PARTY_NOTICES.txt` | `bad535c73e2b4440012f1d61338836c47fd45f1c3d1b536151dc7fb70d2283a0` | same |
+
+The agent prompts that drove each phase, the engineering known-issues log
+and the raw audit hit list moved to a private repository on 2026-11-15.
+They remain in this repository's Git history; history is not rewritten.
 
 The 7 Nov 2026 audit is recorded in [public-readiness.md](public-readiness.md).
 It scans all fetched branch, tag and PR-head history, including merge-parent
