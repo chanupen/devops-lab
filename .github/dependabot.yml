@@ -6,8 +6,13 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # Kubernetes libraries, Helm and controller-runtime share
+      # structured-merge-diff and kube-openapi; they must move in one PR.
+      kubernetes:
+        patterns: ["k8s.io/*", "sigs.k8s.io/*", "helm.sh/*"]
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["k8s.io/*", "sigs.k8s.io/*", "helm.sh/*"]
 
   - package-ecosystem: gomod
     directory: /apps/sample-db

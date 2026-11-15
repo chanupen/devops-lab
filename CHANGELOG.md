@@ -5,6 +5,17 @@ Notable changes per release. Binaries and `SHA256SUMS` are on each
 
 ## Unreleased
 
+### Dependencies
+
+- November updates: AWS SDK v2, charmbracelet/x/ansi, creack/pty,
+  go.yaml.in/yaml/v3 and other minor/patch modules, and every `k8s.io`
+  module to v0.37.2 together. kustomize stays on api v0.21.1/kyaml v0.21.2:
+  v0.21.3 needs a kube-openapi built on structured-merge-diff v7, which
+  Kubernetes v0.37 and Helm v4.3.1 do not use. spf13/pflag stays on
+  v1.0.10: v1.1.0 prints every bool flag as `--flag[=true|false]` in
+  `lab --help`. Dependabot now groups
+  `k8s.io/*`, `sigs.k8s.io/*` and `helm.sh/*` in one PR (supersedes #67).
+
 ### Docs
 
 - The repository is public: removed statements that it is private, added
