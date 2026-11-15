@@ -160,7 +160,7 @@ Pay particular attention to `lan listeners`, `memory`, `ghcr.io download`,
 `gitops revision` and `drill`. A LAN listener is unsafe. Low available memory
 or a slow image CDN can make the first install fail. An old active drill is
 not a clean starting point. Use the reported fix and
-[known issues](../../prompts/91-known-issues.md); do not disable checks.
+[troubleshooting guide](../guides/troubleshooting.md); do not disable checks.
 Memory compares both total and available RAM with the profile threshold:
 insufficient total fails, while low available memory warns. Do not treat
 a zero exit status as proof of enough free memory for every selected stack.

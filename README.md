@@ -77,5 +77,5 @@ release ([changes](CHANGELOG.md)). Linux/amd64 and Intel macOS binaries come wit
 The [release workflow](.github/workflows/release.yml) builds tagged releases.
 Branch-only dispatch builds artifacts without publishing.
 
-[Engineering reference](docs/design.md) · [Build status](prompts/README.md) ·
+[Engineering reference](docs/design.md) · [Build status](docs/design.md#delivered-vs-planned) ·
 [MIT licence](LICENSE) · [Component and model terms](docs/licences.md)

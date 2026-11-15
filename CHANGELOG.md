@@ -11,6 +11,10 @@ Notable changes per release. Binaries and `SHA256SUMS` are on each
   `SECURITY.md` (private vulnerability reporting) and weekly Dependabot
   updates for Go modules and GitHub Actions. Release downloads use anonymous
   `curl` instead of `gh` (#61).
+- Moved the agent prompts (`prompts/`) and the raw public-readiness hit list
+  (`docs/public-readiness-hits.tsv`) to a private repository. The verified
+  v1.0.0 and v1.1.0 release hashes now live in `docs/design.md`; the summary
+  tables stay in `docs/public-readiness.md`. Git history is not rewritten.
 
 ## v1.1.0 (2026-11-12)
 

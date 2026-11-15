@@ -42,8 +42,8 @@ The text scan examined **1,717 distinct blob/path versions** (1,697 blobs)
 and commit messages across those 282 commits. Author headers were excluded;
 co-author trailers were reviewed. Binary blobs were not interpreted as text.
 
-[public-readiness-hits.tsv](public-readiness-hits.tsv) lists every grouped
-match, all observed historical locations and baseline-main line numbers.
+The raw hit list is kept privately. It lists every grouped match, all
+observed historical locations and baseline-main line numbers.
 The key is category, literal and file; repeated appearances across revisions
 are grouped, not omitted. Private identifying literals are redacted in the
 report to avoid republishing them. The cited original commits remain readable.
